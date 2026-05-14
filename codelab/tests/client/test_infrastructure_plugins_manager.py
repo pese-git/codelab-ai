@@ -11,9 +11,9 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
+from dishka import Provider, Scope, make_container
 
 from codelab.client.domain.events import SessionCreatedEvent
-from codelab.client.infrastructure.di_container import DIContainer
 from codelab.client.infrastructure.events.bus import EventBus
 from codelab.client.infrastructure.handler_registry import HandlerRegistry
 from codelab.client.infrastructure.plugins.base import (
@@ -26,6 +26,15 @@ from codelab.client.infrastructure.plugins.base import (
 )
 from codelab.client.infrastructure.plugins.context import PluginContext
 from codelab.client.infrastructure.plugins.manager import PluginManager
+
+
+def _make_test_container() -> Any:
+    """Создаёт минимальный dishka контейнер для тестов."""
+
+    class TestProvider(Provider):
+        scope = Scope.APP
+
+    return make_container(TestProvider())
 
 # ============================================================================
 # Mock Plugin Classes for Testing
@@ -183,7 +192,7 @@ class TestPluginBasics:
 
         # Создать минимальный контекст
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -202,7 +211,7 @@ class TestPluginManagerBasics:
     def test_plugin_manager_creation(self) -> None:
         """Тест: PluginManager успешно создаётся."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -214,7 +223,7 @@ class TestPluginManagerBasics:
     def test_register_plugin(self) -> None:
         """Тест: можно зарегистрировать плагин."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -229,7 +238,7 @@ class TestPluginManagerBasics:
     def test_register_duplicate_plugin_raises_error(self) -> None:
         """Тест: попытка зарегистрировать плагин с таким же именем вызывает ошибку."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -246,7 +255,7 @@ class TestPluginManagerBasics:
     def test_list_plugins(self) -> None:
         """Тест: можно получить список всех плагинов."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -273,7 +282,7 @@ class TestPluginInitialization:
     async def test_initialize_single_plugin(self) -> None:
         """Тест: можно инициализировать один плагин."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -291,7 +300,7 @@ class TestPluginInitialization:
     async def test_initialize_all_plugins(self) -> None:
         """Тест: можно инициализировать все плагины сразу."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -315,7 +324,7 @@ class TestPluginInitialization:
     async def test_initialize_nonexistent_plugin_raises_error(self) -> None:
         """Тест: попытка инициализировать несуществующий плагин вызывает ошибку."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -329,7 +338,7 @@ class TestPluginInitialization:
     async def test_failing_plugin_raises_initialization_error(self) -> None:
         """Тест: ошибка в инициализации плагина вызывает PluginInitializationError."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -351,7 +360,7 @@ class TestHandlerPluginIntegration:
         """Тест: HandlerPlugin регистрирует handlers в HandlerRegistry."""
         handler_registry = HandlerRegistry()
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=handler_registry,
             logger=None,
@@ -376,7 +385,7 @@ class TestEventPluginIntegration:
         """Тест: EventPlugin подписывается на события при инициализации."""
         event_bus = EventBus()
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=event_bus,
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -410,7 +419,7 @@ class TestPluginShutdown:
     async def test_shutdown_single_plugin(self) -> None:
         """Тест: можно завершить один плагин."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -432,7 +441,7 @@ class TestPluginShutdown:
     async def test_shutdown_all_plugins(self) -> None:
         """Тест: можно завершить все плагины сразу."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -460,7 +469,7 @@ class TestPluginShutdown:
     async def test_shutdown_nonexistent_plugin_raises_error(self) -> None:
         """Тест: попытка завершить несуществующий плагин вызывает ошибку."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -506,7 +515,7 @@ class MyPlugin(Plugin):
             )
 
             context = PluginContext(
-                di_container=DIContainer(),
+                container=_make_test_container(),
                 event_bus=EventBus(),
                 handler_registry=HandlerRegistry(),
                 logger=None,
@@ -521,7 +530,7 @@ class MyPlugin(Plugin):
     def test_load_plugin_nonexistent_file_raises_error(self) -> None:
         """Тест: попытка загрузить несуществующий файл вызывает ошибку."""
         context = PluginContext(
-            di_container=DIContainer(),
+            container=_make_test_container(),
             event_bus=EventBus(),
             handler_registry=HandlerRegistry(),
             logger=None,
@@ -538,7 +547,7 @@ class MyPlugin(Plugin):
             plugin_file.write_text("# No Plugin class here\n")
 
             context = PluginContext(
-                di_container=DIContainer(),
+                container=_make_test_container(),
                 event_bus=EventBus(),
                 handler_registry=HandlerRegistry(),
                 logger=None,
@@ -600,7 +609,7 @@ class SecondPlugin(Plugin):
             )
 
             context = PluginContext(
-                di_container=DIContainer(),
+                container=_make_test_container(),
                 event_bus=EventBus(),
                 handler_registry=HandlerRegistry(),
                 logger=None,

@@ -13,7 +13,6 @@ from codelab.server.protocol.handlers.global_policy_manager import GlobalPolicyM
 from codelab.server.storage.global_policy_storage import GlobalPolicyStorage
 
 
-
 @pytest.fixture
 def mock_storage() -> AsyncMock:
     """Mock GlobalPolicyStorage."""
