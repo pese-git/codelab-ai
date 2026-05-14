@@ -9,7 +9,7 @@ import base64
 import pytest
 from pydantic import ValidationError
 
-from codelab.server.protocol.content import (
+from codelab.shared.content import (
     BlobResource,
     EmbeddedResourceContent,
     TextResource,

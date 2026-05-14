@@ -29,7 +29,7 @@
 | Категория | Критичных | Высоких | Средних | Низких |
 |-----------|-----------|---------|---------|--------|
 | Безопасность | ~~1~~ ✅ 0 | ~~2~~ ✅ 0 | 1 | — |
-| Архитектура | — | 2 | 3 | 2 |
+| Архитектура | — | ~~2~~ ✅ 1 | 3 | 2 |
 | Сложность | — | ~~1~~ ✅ 0 | 1 | 1 |
 | Best practices | — | 1 | 3 | ~~2~~ ✅ 1 |
 | Тесты | — | — | 2 | 1 |
@@ -169,21 +169,14 @@ self._web_ui_process = subprocess.Popen(
 
 ---
 
-### 🟠 ARCH-02 — Дублирование модулей `content` ❌ НЕ ИСПРАВЛЕНО
+### ~~🟠 ARCH-02 — Дублирование модулей `content`~~ ✅ ИСПРАВЛЕНО
 
-> **Статус:** Не исправлено. По-прежнему существуют три пакета с пересекающимися файлами:
-> `server/protocol/content/`, `shared/content/`, `client/domain/content/`.
-
-В проекте два пакета с пересекающимися файлами:
-
-| Путь | Файлы |
-|------|-------|
-| `server/protocol/content/` | `base`, `audio`, `embedded`, `image`, `text`, `resource_link`, `extractor`, `formatter`, `validator` |
-| `shared/content/` | `base`, `audio`, `embedded`, `image`, `text`, `resource_link` |
-
-Шесть файлов дублируются. При изменении бизнес-логики в одном месте второе место останется устаревшим. Пакет `shared/` явно задумывался как общий, но `server/protocol/content/` продолжает существовать с расширенным набором утилит.
-
-**Исправление:** Объединить в `shared/content/`. Из `server/protocol/content/` оставить только специфичное для протокола (`extractor`, `formatter`, `validator`) со ссылками на `shared/content/`.
+> **Статус:** Исправлено. `server/protocol/content/` содержит только серверные утилиты
+> (`extractor`, `formatter`, `validator`) с реэкспортом типов из `shared/content/`.
+> `client/domain/content/` не существует. Unit-тесты дедуплицированы в `tests/shared/content/`.
+> Server-specific тесты (`test_content_formatting.py`, `test_content_extraction.py`)
+> и server integration тесты остались в `tests/server/`.
+> Client integration тесты остались в `tests/client/`.
 
 ---
 
@@ -681,7 +674,7 @@ because it has a __init__ constructor
 | # | Задача | Файл | Оценка | Статус |
 |---|--------|------|--------|--------|
 | 2.1 | Устранить двойной кэш: убрать `_sessions` из `ACPProtocol`, добавить LRU в Storage | `core.py`, `storage/` | 1.5 дня | ✅ |
-| 2.2 | Объединить дублирующиеся `content` пакеты | `server/protocol/content/`, `shared/content/` | 1 день | ❌ |
+| 2.2 | Дедуплицировать unit-тесты content, оставить server-specific | `tests/shared/content/` | 30 мин | ✅ |
 | 2.3 | Заменить ручную сериализацию в `JsonFileStorage` на Pydantic | `json_file.py` | 1.5 дня | ✅ |
 | 2.4 | Разбить `PromptOrchestrator` на Pipeline stages | `prompt_orchestrator.py` | 2 дня | ✅ |
 | 2.5 | Заменить цепочку `if method ==` в `handle()` на реестр обработчиков | `core.py` | 1 день | ✅ |
@@ -712,13 +705,12 @@ because it has a __init__ constructor
 ### Итоговый roadmap
 
 ```
-Выполнено (13 из 23 задач):
+Выполнено (14 из 23 задач):
   ✅ Фаза 1: 6/6 — безопасность и критические баги
-  ✅ Фаза 2: 6/8 — кэш, сериализация, Pipeline, реестр обработчиков
+  ✅ Фаза 2: 7/8 — кэш, сериализация, Pipeline, реестр обработчиков, дедупликация content
   ✅ Фаза 3: 2/9 — security тесты, фикстура GlobalPolicyManager
 
-Осталось (9 задач, ~9 рабочих дней):
-  ❌ 2.2 — объединить content пакеты (1 день)
+Осталось (8 задач, ~8 рабочих дней):
   ❌ 2.8 — миграция DI-контейнера на dishka (2 дня)
   ❌ 3.1 — аудит 109 # type: ignore (3 дня)
   ❌ 3.3 — mcp_manager: Any → строгий тип (1 ч)
@@ -729,7 +721,7 @@ because it has a __init__ constructor
   ⚠️ 3.5 — дублирование в PermissionManager (2 ч, требует проверки)
 ```
 
-**Общая оценка:** **~9 рабочих дней** для одного разработчика (осталось 9 задач из 23).
+**Общая оценка:** **~8 рабочих дней** для одного разработчика (осталось 8 задач из 23).
 
 ---
 

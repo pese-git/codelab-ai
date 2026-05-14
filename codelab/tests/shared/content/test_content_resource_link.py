@@ -7,7 +7,7 @@
 import pytest
 from pydantic import ValidationError
 
-from codelab.server.protocol.content import ResourceLinkContent
+from codelab.shared.content import ResourceLinkContent
 
 
 class TestResourceLinkContent:

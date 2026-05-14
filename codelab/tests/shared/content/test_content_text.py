@@ -7,7 +7,7 @@
 import pytest
 from pydantic import ValidationError
 
-from codelab.server.protocol.content import TextContent
+from codelab.shared.content import TextContent
 
 
 class TestTextContent:
