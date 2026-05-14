@@ -1,4 +1,4 @@
-# OpenSpec: acp-protocol (CodeLab)
+# OpenSpec: codelab (ACP-протокол)
 
 ## 1. Обзор проекта
 
