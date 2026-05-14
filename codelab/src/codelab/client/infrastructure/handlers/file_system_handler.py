@@ -32,6 +32,20 @@ class FileSystemHandler:
 
     Класс обрабатывает входящие RPC запросы от агента для файловых операций.
 
+    Модель разрешений (согласно ACP спецификации 08-Tool Calls#Requesting Permission):
+    Проверка разрешений выполняется на сервере ДО отправки RPC клиенту.
+    Корректный поток:
+
+        1. LLM → Agent: tool call (например, edit kind)
+        2. Agent → Client: session/request_permission (PermissionHandler)
+        3. Client → Agent: пользователь выбирает allow/reject
+        4. Если allow → Agent → Client: fs/write_text_file RPC (этот handler)
+        5. Client → Agent: {result: null}
+
+    Таким образом, когда Agent отправляет fs/write_text_file RPC, разрешение
+    уже получено от пользователя. Клиент доверяет серверу и выполняет
+    операцию без дополнительной проверки.
+
     Attributes:
         executor: FileSystemExecutor для выполнения операций
     """
@@ -109,8 +123,10 @@ class FileSystemHandler:
     async def handle_write_text_file(self, params: dict[str, Any]) -> dict[str, Any]:
         """Обработать fs/write_text_file request от агента.
 
-        Агент запрашивает запись файла. В реальной системе здесь нужна
-        проверка разрешения (TODO: Фаза 5).
+        Агент запрашивает запись файла. Проверка разрешения выполняется
+        на стороне сервера через PermissionManager перед отправкой RPC
+        клиенту, поэтому клиент доверяет серверу и выполняет операцию
+        без дополнительной проверки.
 
         Args:
             params: Request параметры
