@@ -1,7 +1,7 @@
 # Комплексное ревью кодовой базы: CodeLab (`codelab/`)
 
 **Дата:** 2026-04-25  
-**Последнее обновление:** 2026-05-14 (ARCH-07 ✅, BP-02 ✅)  
+**Последнее обновление:** 2026-05-14 (ARCH-07 ✅, BP-02 ✅, BP-05 ✅, 3.3 ✅)  
 **Область проверки:** `codelab/` (единый пакет сервера и клиента)  
 **Метрики:** 215 файлов Python · ~52 000 строк кода · 147 тестовых файлов · 109 `# type: ignore`
 
@@ -31,7 +31,7 @@
 | Безопасность | ~~1~~ ✅ 0 | ~~2~~ ✅ 0 | 1 | — |
 | Архитектура | — | ~~2~~ ✅ 0 | ~~3~~ ✅ 2 | 2 |
 | Сложность | — | ~~1~~ ✅ 0 | 1 | 1 |
-| Best practices | — | ~~1~~ ✅ 0 | ~~3~~ ✅ 2 | ~~2~~ ✅ 1 |
+| Best practices | — | ~~1~~ ✅ 0 | ~~3~~ ✅ 1 | ~~2~~ ✅ 2 |
 | Тесты | — | — | 2 | 1 |
 
 ---
@@ -587,9 +587,10 @@ ws = web.WebSocketResponse(max_msg_size=1 * 1024 * 1024)  # 1 MB
 
 ---
 
-### 🟡 BP-05 — Логирование через f-strings в structlog ❌ НЕ ИСПРАВЛЕНО
+### ~~🟡 BP-05 — Логирование через f-strings в structlog~~ ✅ ИСПРАВЛЕНО
 
-> **Статус:** Не исправлено. `global_policy_manager.py:100,102,142` — `logger.debug(f"...")`.
+> **Статус:** Исправлено. 11 вызовов logger заменены на структурированный формат:
+> `global_policy_manager.py` (4), `global_policy_storage.py` (6), `plugins/base.py` (1).
 
 В `global_policy_storage.py` и ряде других файлов structlog используется с f-strings вместо ключевых аргументов — теряется структурированность и возможность машинной обработки логов:
 
@@ -707,7 +708,7 @@ because it has a __init__ constructor
 | 3.1 | Аудит и устранение 109 `# type: ignore` (было 34) | Весь проект | 3 дня | ✅ |
 | 3.2 | Исправить нарушение LSP в `ACPTransportService.listen()` | `acp_transport_service.py` | 3 ч | ⚠️ |
 | 3.3 | Заменить `mcp_manager: Any` на строгий тип через `TYPE_CHECKING` | `state.py` | 1 ч | ❌ |
-| 3.4 | Унифицировать structlog — убрать f-strings | `global_policy_storage.py` и др. | 2 ч | ❌ |
+| 3.4 | Унифицировать structlog — убрать f-strings | `global_policy_storage.py` и др. | 2 ч | ✅ |
 | 3.5 | Объединить дублирующуюся логику в `PermissionManager` | `permission_manager.py` | 2 ч | ⚠️ |
 | 3.6 | Добавить тесты для security-путей (path traversal, shell injection) | `tests/` | 1 день | ✅ |
 | 3.7 | Добавить фикстуру сброса `GlobalPolicyManager` между тестами | `tests/conftest.py` | 1 ч | ✅ |
@@ -719,21 +720,19 @@ because it has a __init__ constructor
 ### Итоговый roadmap
 
 ```
-Выполнено (16 из 23 задач):
+Выполнено (18 из 23 задач):
   ✅ Фаза 1: 6/6 — безопасность и критические баги
   ✅ Фаза 2: 8/8 — кэш, сериализация, Pipeline, реестр обработчиков, дедупликация content, DI-контейнер
-  ✅ Фаза 3: 3/9 — security тесты, фикстура GlobalPolicyManager, аудит type: ignore
+  ✅ Фаза 3: 5/9 — security тесты, фикстура GlobalPolicyManager, аудит type: ignore, mcp_manager тип, structlog f-strings
 
-Осталось (6 задач, ~3.5 рабочих дней):
-  ❌ 3.3 — mcp_manager: Any → строгий тип (1 ч)
-  ❌ 3.4 — убрать f-strings в structlog (2 ч)
+Осталось (4 задачи, ~1.5 рабочих дней):
   ❌ 3.8 — rate limiting на authenticate (4 ч)
   ❌ 3.9 — переименовать TestViewModel (30 мин)
   ⚠️ 3.2 — LSP в ACPTransportService (3 ч, требует проверки)
   ⚠️ 3.5 — дублирование в PermissionManager (2 ч, требует проверки)
 ```
 
-**Общая оценка:** **~3.5 рабочих дней** для одного разработчика (осталось 6 задач из 23).
+**Общая оценка:** **~1.5 рабочих дней** для одного разработчика (осталось 4 задачи из 23).
 
 ---
 
