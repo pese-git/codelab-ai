@@ -1,7 +1,7 @@
 # Комплексное ревью кодовой базы: CodeLab (`codelab/`)
 
 **Дата:** 2026-04-25  
-**Последнее обновление:** 2026-05-15 (ARCH-07 ✅, BP-02 ✅, BP-05 ✅, 3.3 ✅, 3.5 ✅, 3.9 ✅)  
+**Последнее обновление:** 2026-05-15 (ARCH-07 ✅, BP-02 ✅, BP-05 ✅, 3.2 ✅, 3.3 ✅, 3.5 ✅, 3.9 ✅)  
 **Область проверки:** `codelab/` (единый пакет сервера и клиента)  
 **Метрики:** 215 файлов Python · ~52 000 строк кода · 147 тестовых файлов · 109 `# type: ignore`
 
@@ -30,8 +30,8 @@
 |-----------|-----------|---------|---------|--------|
 | Безопасность | ~~1~~ ✅ 0 | ~~2~~ ✅ 0 | 1 | — |
 | Архитектура | — | ~~2~~ ✅ 0 | ~~3~~ ✅ 2 | 2 |
-| Сложность | — | ~~1~~ ✅ 0 | 1 | 1 |
-| Best practices | — | ~~1~~ ✅ 0 | ~~3~~ ✅ 1 | ~~2~~ ✅ 2 |
+| Сложность | — | ~~1~~ ✅ 0 | ~~1~~ ✅ 0 | 1 |
+| Best practices | — | ~~1~~ ✅ 0 | ~~3~~ ✅ 2 | ~~2~~ ✅ 2 |
 | Тесты | — | — | 2 | 1 |
 
 ---
@@ -507,22 +507,26 @@ def get_remembered_permission(self, session, tool_kind) -> str:
 
 ## 4. Нарушения best practices
 
-### 🟠 BP-01 — Нарушение Liskov Substitution Principle в `ACPTransportService` ⚠️ ТРЕБУЕТ ПРОВЕРКИ
+### ~~🟠 BP-01 — Нарушение Liskov Substitution Principle в `ACPTransportService`~~ ✅ ИСПРАВЛЕНО
 
-> **Статус:** Требуется проверка актуального состояния `acp_transport_service.py`.
+> **Статус:** Исправлено. Сигнатуры базового класса и реализации совместимы.
+> `ty check` проходит без ошибок. `# type: ignore[override]` больше не требуется.
+> Метод `listen()` корректно возвращает `AsyncIterator[dict[str, Any]]`.
 
 **Файл:** `src/codelab/client/infrastructure/services/acp_transport_service.py`
 
-Из `type_errors.txt`:
+Базовый класс и реализация имеют одинаковые сигнатуры:
+```python
+# Базовый класс (services.py):
+def listen(self) -> AsyncIterator[dict[str, Any]]: ...
 
+# Реализация (acp_transport_service.py):
+def listen(self) -> AsyncIterator[dict[str, Any]]:
+    async def _message_stream() -> AsyncIterator[dict[str, Any]]: ...
+    return _message_stream()
 ```
-error[invalid-method-override]: Invalid override of method `listen`
-async def listen(self) -> AsyncIterator[dict[str, Any]]:  # type: ignore[override]
-```
 
-`ACPTransportService.listen()` переопределяет `TransportService.listen()` с несовместимой сигнатурой, нарушая LSP. Клиентский код, работающий через абстракцию `TransportService`, не сможет корректно использовать конкретную реализацию. `# type: ignore[override]` скрывает проблему, не решая её.
-
-**Исправление:** Привести сигнатуру `ACPTransportService.listen()` в соответствие с контрактом базового класса либо скорректировать контракт в `TransportService`.
+Type checker не видит нарушений LSP. Метод работает корректно.
 
 ---
 
@@ -703,7 +707,7 @@ because it has a __init__ constructor
 | # | Задача | Файл | Оценка | Статус |
 |---|--------|------|--------|--------|
 | 3.1 | Аудит и устранение 109 `# type: ignore` (было 34) | Весь проект | 3 дня | ✅ |
-| 3.2 | Исправить нарушение LSP в `ACPTransportService.listen()` | `acp_transport_service.py` | 3 ч | ⚠️ |
+| 3.2 | Исправить нарушение LSP в `ACPTransportService.listen()` | `acp_transport_service.py` | 3 ч | ✅ |
 | 3.3 | Заменить `mcp_manager: Any` на строгий тип через `TYPE_CHECKING` | `state.py` | 1 ч | ✅ |
 | 3.4 | Унифицировать structlog — убрать f-strings | `global_policy_storage.py` и др. | 2 ч | ✅ |
 | 3.5 | Объединить дублирующуюся логику в `PermissionManager` | `permission_manager.py` | 2 ч | ✅ |
@@ -717,17 +721,16 @@ because it has a __init__ constructor
 ### Итоговый roadmap
 
 ```
-Выполнено (20 из 23 задач):
+Выполнено (21 из 23 задач):
   ✅ Фаза 1: 6/6 — безопасность и критические баги
   ✅ Фаза 2: 8/8 — кэш, сериализация, Pipeline, реестр обработчиков, дедупликация content, DI-контейнер
-  ✅ Фаза 3: 7/9 — security тесты, фикстура GlobalPolicyManager, аудит type: ignore, mcp_manager тип, structlog f-strings, TestViewModel, PermissionManager дублирование
+  ✅ Фаза 3: 8/9 — security тесты, фикстура GlobalPolicyManager, аудит type: ignore, mcp_manager тип, structlog f-strings, TestViewModel, PermissionManager дублирование, LSP в ACPTransportService
 
-Осталось (2 задачи, ~7 часов):
+Осталось (1 задача, ~4 часа):
   ❌ 3.8 — rate limiting на authenticate (4 ч)
-  ⚠️ 3.2 — LSP в ACPTransportService (3 ч, требует проверки)
 ```
 
-**Общая оценка:** **~7 часов** для одного разработчика (осталось 2 задачи из 23).
+**Общая оценка:** **~4 часа** для одного разработчика (осталась 1 задача из 23).
 
 ---
 
