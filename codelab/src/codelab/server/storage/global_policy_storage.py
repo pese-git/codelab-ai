@@ -64,13 +64,13 @@ class GlobalPolicyStorage:
         """
         try:
             if not self._storage_path.exists():
-                logger.debug(f"Policy file {self._storage_path} does not exist")
+                logger.debug("policy_file_not_found", path=str(self._storage_path))
                 return {"version": self.SCHEMA_VERSION, "policies": {}, "metadata": {}}
 
             async with aiofiles.open(self._storage_path) as f:
                 content = await f.read()
                 if not content.strip():
-                    logger.debug(f"Policy file {self._storage_path} is empty")
+                    logger.debug("policy_file_empty", path=str(self._storage_path))
                     return {"version": self.SCHEMA_VERSION, "policies": {}, "metadata": {}}
 
                 data = json.loads(content)
@@ -116,7 +116,7 @@ class GlobalPolicyStorage:
 
             # Atomically rename
             temp_path.replace(self._storage_path)
-            logger.debug(f"Successfully wrote policies to {self._storage_path}")
+            logger.debug("policies_written", path=str(self._storage_path))
 
         except OSError as e:
             error_msg = f"Cannot write policy file {self._storage_path}: {e}"
@@ -144,12 +144,14 @@ class GlobalPolicyStorage:
                 version = data.get("version", 1)
                 if version != self.SCHEMA_VERSION:
                     logger.warning(
-                        f"Policy file version {version}, expected {self.SCHEMA_VERSION}"
+                        "policy_version_mismatch",
+                        file_version=version,
+                        expected_version=self.SCHEMA_VERSION,
                     )
 
                 policies = data.get("policies", {})
                 self._cache = policies
-                logger.debug(f"Loaded {len(policies)} policies")
+                logger.debug("policies_loaded", count=len(policies))
                 return policies
 
             except StorageError:
@@ -227,7 +229,7 @@ class GlobalPolicyStorage:
             # Сохранить
             await self._write_file(policies)
             self._cache = dict(policies)
-            logger.debug(f"Set policy {tool_kind} = {decision}")
+            logger.debug("policy_set", tool_kind=tool_kind, decision=decision)
 
     async def delete_policy(self, tool_kind: str) -> bool:
         """Удалить policy.
@@ -256,7 +258,7 @@ class GlobalPolicyStorage:
             # Сохранить
             await self._write_file(policies)
             self._cache = dict(policies)
-            logger.debug(f"Deleted policy for {tool_kind}")
+            logger.debug("policy_deleted", tool_kind=tool_kind)
             return True
 
     async def list_policies(self) -> dict[str, str]:

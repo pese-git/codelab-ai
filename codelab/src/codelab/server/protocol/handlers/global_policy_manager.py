@@ -97,9 +97,9 @@ class GlobalPolicyManager:
         """
         try:
             self._cache = await self._storage.load()
-            logger.debug(f"Initialized with {len(self._cache)} policies")
+            logger.debug("global_policy_manager_initialized", policy_count=len(self._cache))
         except Exception as e:
-            logger.error(f"Failed to initialize GlobalPolicyManager: {e}")
+            logger.error("global_policy_manager_init_failed", error=str(e))
             raise
 
     async def get_global_policy(self, tool_kind: str) -> str | None:
@@ -139,7 +139,7 @@ class GlobalPolicyManager:
 
         await self._storage.set_policy(tool_kind, decision)
         self._cache[tool_kind] = decision
-        logger.debug(f"Set global policy {tool_kind} = {decision}")
+        logger.debug("global_policy_set", tool_kind=tool_kind, decision=decision)
 
     async def delete_global_policy(self, tool_kind: str) -> bool:
         """Удалить global policy.
@@ -160,7 +160,7 @@ class GlobalPolicyManager:
 
         if deleted and tool_kind in self._cache:
             del self._cache[tool_kind]
-            logger.debug(f"Deleted global policy for {tool_kind}")
+            logger.debug("global_policy_deleted", tool_kind=tool_kind)
 
         return deleted
 
