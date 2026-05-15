@@ -42,9 +42,6 @@ class JsonFileStorage(SessionStorage):
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
 
-        # Кэш для быстрого доступа
-        self._cache: dict[str, SessionState] = {}
-
     def _session_file_path(self, session_id: str) -> Path:
         """Возвращает путь к файлу сессии."""
         # Экранировать session_id для безопасности
@@ -74,9 +71,6 @@ class JsonFileStorage(SessionStorage):
             async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
                 await f.write(json.dumps(data, indent=2, ensure_ascii=False))
 
-            # Обновить кэш
-            self._cache[session.session_id] = session
-
         except Exception as e:
             raise StorageError(f"Failed to save session {session.session_id}: {e}") from e
 
@@ -95,10 +89,6 @@ class JsonFileStorage(SessionStorage):
         Raises:
             StorageError: При ошибке загрузки.
         """
-        # Проверить кэш
-        if session_id in self._cache:
-            return self._cache[session_id]
-
         try:
             file_path = self._session_file_path(session_id)
             if not file_path.exists():
@@ -111,7 +101,6 @@ class JsonFileStorage(SessionStorage):
 
             # model_validate автоматически применяет миграцию схемы
             session = SessionState.model_validate(data)
-            self._cache[session_id] = session
             return session
 
         except json.JSONDecodeError as e:
@@ -137,7 +126,6 @@ class JsonFileStorage(SessionStorage):
             file_path = self._session_file_path(session_id)
             if file_path.exists():
                 file_path.unlink()
-                self._cache.pop(session_id, None)
                 return True
             return False
         except Exception as e:

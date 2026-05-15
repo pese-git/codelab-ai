@@ -273,26 +273,6 @@ async def test_json_file_format(temp_storage_dir: Path) -> None:
     assert "updated_at" in data
 
 
-@pytest.mark.asyncio
-async def test_cache_functionality(temp_storage_dir: Path) -> None:
-    """Тест работы кэша при загрузке сессий."""
-    storage = JsonFileStorage(temp_storage_dir)
-    session = SessionState(session_id="sess_cache", cwd="/tmp", mcp_servers=[])
-
-    await storage.save_session(session)
-
-    # Первая загрузка - из файла
-    loaded1 = await storage.load_session("sess_cache")
-    assert loaded1 is not None
-
-    # Вторая загрузка - из кэша
-    loaded2 = await storage.load_session("sess_cache")
-    assert loaded2 is loaded1  # Должен быть тот же объект из кэша
-
-    # После удаления кэш должен быть очищен
-    await storage.delete_session("sess_cache")
-    assert "sess_cache" not in storage._cache
-
 
 @pytest.mark.asyncio
 async def test_invalid_json_file_error(temp_storage_dir: Path) -> None:
