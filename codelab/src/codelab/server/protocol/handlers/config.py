@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ...messages import ACPMessage, JsonRpcId
+from ...storage import SessionStorage
 from ..state import ProtocolOutcome, SessionState
 from .session import (
     build_config_options,
@@ -17,10 +18,10 @@ from .session import (
 )
 
 
-def session_set_config_option(
+async def session_set_config_option(
     request_id: JsonRpcId | None,
     params: dict[str, Any],
-    sessions: dict[str, SessionState],
+    storage: SessionStorage,
     config_specs: dict[str, dict[str, Any]],
 ) -> ProtocolOutcome:
     """Изменяет значение конфигурационной опции сессии.
@@ -29,10 +30,10 @@ def session_set_config_option(
     `config_option_update` + `session_info_update`.
 
     Пример использования:
-        outcome = session_set_config_option(
+        outcome = await session_set_config_option(
             "req_1",
             {"sessionId": "sess_1", "configId": "mode", "value": "code"},
-            sessions,
+            storage,
             config_specs,
         )
     """
@@ -59,7 +60,7 @@ def session_set_config_option(
             )
         )
 
-    session = sessions.get(session_id)
+    session = await storage.load_session(session_id)
     if session is None:
         return ProtocolOutcome(
             response=ACPMessage.error_response(
@@ -108,6 +109,9 @@ def session_set_config_option(
         },
     )
 
+    # Сохраняем изменённое состояние сессии
+    await storage.save_session(session)
+
     return ProtocolOutcome(
         response=ACPMessage.response(
             request_id,
@@ -126,19 +130,19 @@ def session_set_config_option(
     )
 
 
-def session_set_mode(
+async def session_set_mode(
     request_id: JsonRpcId | None,
     params: dict[str, Any],
-    sessions: dict[str, SessionState],
+    storage: SessionStorage,
     config_specs: dict[str, dict[str, Any]],
 ) -> ProtocolOutcome:
     """Legacy-совместимый метод смены режима через `session/set_mode`.
 
     Пример использования:
-        outcome = session_set_mode(
+        outcome = await session_set_mode(
             "req_1",
             {"sessionId": "sess_1", "modeId": "code"},
-            sessions,
+            storage,
             config_specs,
         )
     """
@@ -154,14 +158,14 @@ def session_set_mode(
             )
         )
 
-    mapped = session_set_config_option(
+    mapped = await session_set_config_option(
         request_id,
         {
             "sessionId": session_id,
             "configId": "mode",
             "value": mode_id,
         },
-        sessions,
+        storage,
         config_specs,
     )
     if mapped.response is None or mapped.response.error is not None:

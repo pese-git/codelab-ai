@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.12+, asyncio, Pydantic 2.11+, aiohttp 3.12+, structlog, websockets
+  Package manager: uv
+  Linter: ruff (E, F, I, UP, B, SIM), line-length=100
+  Type checker: ty
+  Test framework: pytest + pytest-asyncio, asyncio_mode=auto
+  
+  Domain: Agent Client Protocol (ACP) — AI coding agent interaction with code editors
+  Project: CodeLab — unified ACP server (LLM agent) + ACP client (TUI) in one package
+  
+  Key conventions:
+  - Russian documentation, English code
+  - Strict type hints (Python 3.12+)
+  - Every change must be covered by a test
+  - Full asyncio/async-await for all I/O operations
+  - Mermaid diagrams for architecture documentation
+  - NEVER modify files in doc/Agent Client Protocol/ (official spec)
+  - NEVER violate ACP protocol spec
+  - Clean Architecture 5 layers for client (Domain → Application → Infrastructure → Presentation → TUI)
+
+rules:
+  proposal:
+    - Must reference ACP protocol specification methods
+    - Must include Mermaid sequence diagram for new flows
+    - Must specify which files/layers are affected
+  task:
+    - One logical change per commit
+    - Run `make check` before committing
+    - Include test coverage for new functionality
+    - Update ARCHITECTURE.md if architecture changes
+    - Update openspec/specs/ if public interfaces change

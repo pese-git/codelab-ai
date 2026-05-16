@@ -1,7 +1,7 @@
 """Главное Textual приложение ACP-Client TUI с Clean Architecture.
 
 Приложение использует новую архитектуру:
-- DIBootstrapper для инициализации контейнера зависимостей
+- create_client_container для инициализации dishka контейнера
 - ViewModels для управления состоянием UI
 - Use Cases для бизнес-логики
 - Event Bus для слабо связанной коммуникации между компонентами
@@ -17,7 +17,7 @@ from pathlib import Path
 import structlog
 from textual.app import App, ComposeResult
 
-from codelab.client.infrastructure.di_bootstrapper import DIBootstrapper
+from codelab.client.infrastructure.container_factory import create_client_container
 from codelab.client.messages import PermissionOption, PermissionToolCall
 from codelab.client.presentation.chat_view_model import ChatViewModel
 from codelab.client.presentation.file_viewer_view_model import FileViewerViewModel
@@ -55,7 +55,7 @@ from .themes import ThemeManager, ThemeType
 class ACPClientApp(App[None]):
     """Главное TUI приложение с Clean Architecture.
 
-    Все компоненты инициализируются через DIBootstrapper.
+    Все компоненты инициализируются через dishka контейнер.
     State management осуществляется через ViewModels.
     """
 
@@ -132,9 +132,9 @@ class ACPClientApp(App[None]):
         # перемешивать `session/update` между конкурентными запросами.
         self._session_history_load_lock = asyncio.Lock()
 
-        # Инициализируем DIContainer
+        # Инициализируем DI контейнер через dishka
         try:
-            self._container = DIBootstrapper.build(
+            self._container = create_client_container(
                 host=host,
                 port=port,
                 cwd=cwd,
@@ -149,17 +149,17 @@ class ACPClientApp(App[None]):
             )
             raise RuntimeError(f"Failed to initialize DI container: {e}") from e
 
-        # Разрешаем все ViewModels
+        # Разрешаем все ViewModels через dishka
         try:
-            self._ui_vm = self._container.resolve(UIViewModel)
-            self._session_vm = self._container.resolve(SessionViewModel)
-            self._chat_vm = self._container.resolve(ChatViewModel)
-            self._plan_vm = self._container.resolve(PlanViewModel)
-            self._filesystem_vm = self._container.resolve(FileSystemViewModel)
-            self._terminal_log_vm = self._container.resolve(TerminalLogViewModel)
-            self._file_viewer_vm = self._container.resolve(FileViewerViewModel)
-            self._permission_vm = self._container.resolve(PermissionViewModel)
-            self._terminal_vm = self._container.resolve(TerminalViewModel)
+            self._ui_vm = self._container.get(UIViewModel)
+            self._session_vm = self._container.get(SessionViewModel)
+            self._chat_vm = self._container.get(ChatViewModel)
+            self._plan_vm = self._container.get(PlanViewModel)
+            self._filesystem_vm = self._container.get(FileSystemViewModel)
+            self._terminal_log_vm = self._container.get(TerminalLogViewModel)
+            self._file_viewer_vm = self._container.get(FileViewerViewModel)
+            self._permission_vm = self._container.get(PermissionViewModel)
+            self._terminal_vm = self._container.get(TerminalViewModel)
 
             self._app_logger.info("all_view_models_resolved")
 
@@ -281,7 +281,7 @@ class ACPClientApp(App[None]):
 
             # Получаем SessionCoordinator из DI контейнера
             self._app_logger.debug("resolving_session_coordinator")
-            coordinator = self._container.resolve(SessionCoordinator)
+            coordinator = self._container.get(SessionCoordinator)
 
             # Инициализируем подключение
             self._app_logger.info("initializing_server_connection")
@@ -308,7 +308,7 @@ class ACPClientApp(App[None]):
                     ACPTransportService,
                 )
 
-                transport = self._container.resolve(ACPTransportService)
+                transport = self._container.get(ACPTransportService)
                 transport.set_permission_callback(self.show_permission_modal)
                 self._app_logger.info("permission_callback_registered_in_transport")
             except Exception as e:
@@ -614,7 +614,7 @@ class ACPClientApp(App[None]):
             try:
                 from codelab.client.application.session_coordinator import SessionCoordinator
 
-                coordinator = self._container.resolve(SessionCoordinator)
+                coordinator = self._container.get(SessionCoordinator)
                 loaded = await coordinator.load_session(
                     session_id,
                     self._host,
@@ -806,18 +806,18 @@ class ACPClientApp(App[None]):
                 ACPTransportService,
             )
 
-            transport_service = self._container.resolve(ACPTransportService)
+            transport_service = self._container.get(ACPTransportService)
             await transport_service.disconnect()
             self._app_logger.info("websocket_disconnected")
         except Exception as e:
             self._app_logger.error("websocket_disconnect_failed", error=str(e))
 
-        # Dispose DI контейнера
+        # Закрываем DI контейнер (dishka вызывает финализаторы)
         try:
-            self._container.dispose()
-            self._app_logger.info("di_container_disposed")
+            self._container.close()
+            self._app_logger.info("di_container_closed")
         except Exception as e:
-            self._app_logger.error("di_container_dispose_failed", error=str(e))
+            self._app_logger.error("di_container_close_failed", error=str(e))
 
         self._app_logger.info("app_unmounted")
 

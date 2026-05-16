@@ -14,6 +14,19 @@ if TYPE_CHECKING:
     from codelab.client.presentation.terminal_view_model import TerminalViewModel
 
 
+# === Автосброс singleton между тестами ===
+
+
+@pytest.fixture(autouse=True)
+def reset_global_policy_manager():
+    """Сбрасывать GlobalPolicyManager singleton перед каждым тестом."""
+    from codelab.server.protocol.handlers.global_policy_manager import GlobalPolicyManager
+
+    GlobalPolicyManager.reset_for_testing()
+    yield
+    GlobalPolicyManager.reset_for_testing()
+
+
 # === Общие фикстуры ===
 
 

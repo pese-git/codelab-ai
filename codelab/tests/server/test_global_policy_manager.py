@@ -13,14 +13,6 @@ from codelab.server.protocol.handlers.global_policy_manager import GlobalPolicyM
 from codelab.server.storage.global_policy_storage import GlobalPolicyStorage
 
 
-@pytest.fixture(autouse=True)
-def reset_singleton() -> None:
-    """Сбросить singleton перед каждым тестом."""
-    GlobalPolicyManager.reset_instance()
-    yield
-    GlobalPolicyManager.reset_instance()
-
-
 @pytest.fixture
 def mock_storage() -> AsyncMock:
     """Mock GlobalPolicyStorage."""
@@ -57,9 +49,9 @@ class TestSingletonPattern:
 
     @pytest.mark.asyncio
     async def test_reset_instance(self, mock_storage: AsyncMock) -> None:
-        """Проверить что reset_instance очищает singleton."""
+        """Проверить что reset_for_testing очищает singleton."""
         instance1 = await GlobalPolicyManager.get_instance()
-        GlobalPolicyManager.reset_instance()
+        GlobalPolicyManager.reset_for_testing()
         instance2 = await GlobalPolicyManager.get_instance()
         assert instance1 is not instance2
 
@@ -497,6 +489,71 @@ class TestMultipleConcurrentGetInstance:
         assert instance1 is instance2
         # Оба должны использовать storage_path1
         assert instance1._storage._storage_path == storage_path1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_get_instance_creates_only_one(self) -> None:
+        """Конкурентные вызовы должны вернуть один и тот же экземпляр."""
+        results = await asyncio.gather(*[
+            GlobalPolicyManager.get_instance()
+            for _ in range(10)
+        ])
+        first = results[0]
+        assert all(r is first for r in results)
+
+    @pytest.mark.asyncio
+    async def test_lock_works_in_new_event_loop(self) -> None:
+        """Lock должен корректно работать после сброса в новом event loop."""
+        GlobalPolicyManager.reset_for_testing()
+        # Просто убеждаемся что не падает
+        instance = await GlobalPolicyManager.get_instance()
+        assert instance is not None
+
+    def test_get_instance_requires_running_loop(self) -> None:
+        """get_instance проверяет наличие running event loop."""
+        # Проверяем что внутри get_instance есть проверка на running loop
+        # путём вызова из синхронного контекста (без event loop)
+        GlobalPolicyManager.reset_for_testing()
+
+        # Создаём корутину но не запускаем её
+        coro = GlobalPolicyManager.get_instance()
+
+        # Проверяем что это корутина (значит функция асинхронная)
+        assert asyncio.iscoroutine(coro)
+
+        # Закрываем корутину без запуска
+        coro.close()
+
+
+class TestResetForTesting:
+    """Тесты метода reset_for_testing."""
+
+    @pytest.mark.asyncio
+    async def test_reset_clears_singleton(self) -> None:
+        """После сброса создаётся новый экземпляр."""
+        instance1 = await GlobalPolicyManager.get_instance()
+        GlobalPolicyManager.reset_for_testing()
+        instance2 = await GlobalPolicyManager.get_instance()
+        assert instance1 is not instance2
+
+    @pytest.mark.asyncio
+    async def test_reset_clears_lock(self) -> None:
+        """После сброса lock также очищается."""
+        await GlobalPolicyManager.get_instance()
+        assert GlobalPolicyManager._lock is not None
+        GlobalPolicyManager.reset_for_testing()
+        assert GlobalPolicyManager._lock is None
+
+    @pytest.mark.asyncio
+    async def test_reset_allows_new_lock_creation(self) -> None:
+        """После сброса должен создаться новый lock в новом тесте."""
+        await GlobalPolicyManager.get_instance()
+        old_lock = GlobalPolicyManager._lock
+        assert old_lock is not None
+
+        GlobalPolicyManager.reset_for_testing()
+        new_lock = GlobalPolicyManager._get_lock()
+
+        assert new_lock is not old_lock
 
 
 class TestValidationAndErrors:

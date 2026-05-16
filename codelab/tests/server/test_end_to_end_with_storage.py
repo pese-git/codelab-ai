@@ -152,7 +152,8 @@ class TestEndToEndWithStorage:
         assert event["update"]["sessionUpdate"] == "user_message_chunk"
         assert event["update"]["content"]["text"] == "Test message"
 
-    def test_session_load_works_with_new_format_events(
+    @pytest.mark.asyncio
+    async def test_session_load_works_with_new_format_events(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -166,7 +167,10 @@ class TestEndToEndWithStorage:
             runtime_capabilities=None,
         )
 
-        sessions = {session.session_id: session}
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
+
         orchestrator = create_prompt_orchestrator()
 
         # Act - Заполняем session с правильным форматом
@@ -182,15 +186,18 @@ class TestEndToEndWithStorage:
                 },
             )
 
+        # Сохраняем обновлённую сессию
+        await storage.save_session(session)
+
         # Act - Загружаем сессию
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_load",
             params={"sessionId": session.session_id, "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert - Проверяем что события воспроизведены правильно

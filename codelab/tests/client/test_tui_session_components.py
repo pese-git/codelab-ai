@@ -39,12 +39,12 @@ class TestInlineMarkdown:
         assert "[reverse]" in result and "code" in result
     
     def test_convert_link(self) -> None:
-        """Конвертация [text](url) в Rich markup."""
+        """Конвертация [text](url) в текст с URL в скобках."""
         from codelab.client.tui.components.markdown import InlineMarkdown
-        
+
         md = InlineMarkdown("[link](https://example.com)")
         result = md._convert_to_rich("[link](https://example.com)")
-        assert "[link=https://example.com]link[/link]" in result
+        assert "link (https://example.com)" in result
     
     def test_convert_strikethrough(self) -> None:
         """Конвертация ~~text~~ в Rich markup."""

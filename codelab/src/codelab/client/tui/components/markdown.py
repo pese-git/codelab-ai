@@ -120,47 +120,48 @@ class InlineMarkdown(Static):
     
     def _convert_to_rich(self, text: str) -> str:
         """Конвертирует Markdown в Rich markup.
-        
+
         Args:
             text: Markdown текст
-            
+
         Returns:
             Rich markup строка
         """
         import re
-        
+
         if not text:
             return ""
-        
+
         result = text
-        
-        # Экранируем Rich markup в исходном тексте (но не наши конвертации)
-        # Сначала временно заменяем легитимные квадратные скобки
-        result = result.replace("\\[", "\x00LBRACKET\x00")
-        result = result.replace("\\]", "\x00RBRACKET\x00")
-        
+
         # Bold: **text** -> [bold]text[/bold]
         result = re.sub(r'\*\*([^*]+)\*\*', r'[bold]\1[/bold]', result)
-        
+
         # Italic: *text* -> [italic]text[/italic] (но не **bold**)
         result = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'[italic]\1[/italic]', result)
-        
+
         # Inline code: `code` -> [reverse]code[/reverse]
         result = re.sub(r'`([^`]+)`', r'[reverse] \1 [/reverse]', result)
-        
-        # Links: [text](url) -> [link=url]text[/link]
-        result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'[link=\2]\1[/link]', result)
-        
+
+        # Links: [text](url) -> text (url) — не используем [link=url] из-за
+        # несовместимости Textual markup parser с https:// в значении атрибута
+        result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', result)
+
         # Strikethrough: ~~text~~ -> [strike]text[/strike]
         result = re.sub(r'~~([^~]+)~~', r'[strike]\1[/strike]', result)
-        
+
         # Headers: # text -> [bold]text[/bold] (упрощенно для inline)
         result = re.sub(r'^#{1,6}\s+(.+)$', r'[bold]\1[/bold]', result, flags=re.MULTILINE)
-        
-        # Восстанавливаем экранированные скобки
-        result = result.replace("\x00LBRACKET\x00", "[")
-        result = result.replace("\x00RBRACKET\x00", "]")
-        
+
+        # Экранируем все [ что не являются нашими сгенерированными тегами:
+        # [bold], [/bold], [italic], [/italic], [reverse], [/reverse],
+        # [strike], [/strike]
+        result = re.sub(
+            r'\[(?!/?(?:bold|italic|reverse|strike)\])',
+            r'\[',
+            result,
+        )
+
         return result
 
 

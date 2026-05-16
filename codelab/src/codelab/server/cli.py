@@ -24,7 +24,7 @@ from codelab.shared.logging import setup_logging
 
 from .config import AppConfig
 from .http_server import ACPHttpServer
-from .storage import InMemoryStorage, JsonFileStorage, SessionStorage
+from .storage import CachedSessionStorage, InMemoryStorage, JsonFileStorage, SessionStorage
 
 
 def parse_storage_arg(storage_arg: str) -> SessionStorage:
@@ -241,13 +241,18 @@ def run_server() -> None:
     elif args.require_auth:
         logger.warning("authentication required but no api key configured")
 
-    # Парсим и создаём storage backend
+    # Парсим и создаём storage backend, оборачиваем в LRU-кэш
     logger.debug("initializing storage backend", storage_type=args.storage)
-    storage = parse_storage_arg(args.storage)
+    raw_storage = parse_storage_arg(args.storage)
+    storage = CachedSessionStorage(
+        backend=raw_storage,
+        max_size=config.storage.session_cache_size,
+    )
     logger.info(
         "storage_backend_initialized",
-        storage_type=type(storage).__name__,
-        storage_target=describe_storage(storage),
+        storage_type=type(raw_storage).__name__,
+        storage_target=describe_storage(raw_storage),
+        session_cache_size=config.storage.session_cache_size,
     )
 
     # Создаём и запускаем сервер

@@ -28,7 +28,7 @@ class TestGlobalPolicyFallbackChain:
     def cleanup(self) -> None:
         """Очистить singleton после каждого теста."""
         yield
-        GlobalPolicyManager.reset_instance()
+        GlobalPolicyManager.reset_for_testing()
 
     @pytest_asyncio.fixture
     async def temp_policy_storage(self) -> Path:
@@ -335,7 +335,7 @@ class TestGlobalPolicyFallbackChain:
         await manager1.set_global_policy("test_tool", "allow_always")
 
         # Сбросить singleton
-        GlobalPolicyManager.reset_instance()
+        GlobalPolicyManager.reset_for_testing()
 
         # Создать второй manager с тем же storage
         manager2 = await GlobalPolicyManager.get_instance(storage_path=temp_policy_storage)
@@ -378,4 +378,4 @@ class TestGlobalPolicyFallbackChain:
             import shutil
 
             shutil.rmtree(tmpdir, ignore_errors=True)
-            GlobalPolicyManager.reset_instance()
+            GlobalPolicyManager.reset_for_testing()

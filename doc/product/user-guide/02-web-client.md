@@ -56,12 +56,12 @@ graph TB
     subgraph "Server"
         TextualWeb[textual-web<br/>Renderer]
         TUIApp[TUI App]
-        ACPServer[ACP Server]
+        ACPHttpServer[ACP HTTP/WS Server]
     end
     
     WebApp -->|HTTP/WebSocket| TextualWeb
     TextualWeb --> TUIApp
-    TUIApp -->|ACP Protocol| ACPServer
+    TUIApp -->|ACP Protocol| ACPHttpServer
 ```
 
 ### Компоненты интерфейса

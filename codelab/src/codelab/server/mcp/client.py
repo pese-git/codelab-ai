@@ -196,10 +196,10 @@ class MCPClient:
         
         try:
             # Формируем параметры инициализации
-            params = MCPInitializeParams(  # type: ignore[call-arg]
-                protocol_version=MCP_PROTOCOL_VERSION,
-                capabilities={},  # Наши capabilities (пока пустые)
-                client_info=ACP_CLIENT_INFO,
+            params = MCPInitializeParams(
+                protocolVersion=MCP_PROTOCOL_VERSION,
+                capabilities={},
+                clientInfo=ACP_CLIENT_INFO,
             )
             
             # Отправляем initialize

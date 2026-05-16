@@ -44,6 +44,26 @@ class PermissionManager:
         },
     ]
 
+    def _resolve_policy(self, session: SessionState, tool_kind: str) -> str:
+        """Разрешает политику для данного tool kind в единой точке.
+
+        Args:
+            session: Состояние сессии
+            tool_kind: Категория tool
+
+        Returns:
+            'allow' если policy == 'allow_always'
+            'reject' если policy == 'reject_always'
+            'ask' если policy не установлена или неизвестна
+        """
+        match session.permission_policy.get(tool_kind):
+            case "allow_always":
+                return "allow"
+            case "reject_always":
+                return "reject"
+            case _:
+                return "ask"
+
     def should_request_permission(
         self,
         session: SessionState,
@@ -62,9 +82,7 @@ class PermissionManager:
         Returns:
             True если нужно запросить разрешение у пользователя
         """
-        policy = session.permission_policy.get(tool_kind)
-        # Только если явно разрешено без запроса или явно отклонено
-        return policy not in {"allow_always", "reject_always"}
+        return self._resolve_policy(session, tool_kind) == "ask"
 
     def get_remembered_permission(
         self,
@@ -82,12 +100,7 @@ class PermissionManager:
             'reject' если policy == 'reject_always'
             'ask' если policy не установлена или неизвестна
         """
-        policy = session.permission_policy.get(tool_kind)
-        if policy == "allow_always":
-            return "allow"
-        if policy == "reject_always":
-            return "reject"
-        return "ask"
+        return self._resolve_policy(session, tool_kind)
 
     def build_permission_options(self) -> list[dict[str, Any]]:
         """Возвращает варианты решения для permission request.

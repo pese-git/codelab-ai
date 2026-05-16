@@ -136,7 +136,7 @@ async def test_conformance_permission_selected_completes_turn() -> None:
     )
     assert permission_request.id is not None
 
-    permission_resolved = protocol.handle_client_response(
+    permission_resolved = await protocol.handle_client_response(
         ACPMessage.response(
             permission_request.id,
             {
@@ -239,7 +239,7 @@ async def test_conformance_fs_client_rpc_error_marks_tool_failed() -> None:
     )
     assert fs_request.id is not None
 
-    resolved = protocol.handle_client_response(
+    resolved = await protocol.handle_client_response(
         ACPMessage.error_response(
             fs_request.id,
             code=-32050,
@@ -287,7 +287,7 @@ async def test_conformance_terminal_client_rpc_lifecycle_completes() -> None:
     )
     assert create_request.id is not None
 
-    create_resolved = protocol.handle_client_response(
+    create_resolved = await protocol.handle_client_response(
         ACPMessage.response(create_request.id, {"terminalId": "term_1"})
     )
     output_request = next(
@@ -297,7 +297,7 @@ async def test_conformance_terminal_client_rpc_lifecycle_completes() -> None:
     )
     assert output_request.id is not None
 
-    output_resolved = protocol.handle_client_response(
+    output_resolved = await protocol.handle_client_response(
         ACPMessage.response(output_request.id, {"output": "ok"})
     )
     wait_request = next(
@@ -307,7 +307,7 @@ async def test_conformance_terminal_client_rpc_lifecycle_completes() -> None:
     )
     assert wait_request.id is not None
 
-    wait_resolved = protocol.handle_client_response(
+    wait_resolved = await protocol.handle_client_response(
         ACPMessage.response(wait_request.id, {"exitCode": 0})
     )
     release_request = next(
@@ -317,7 +317,7 @@ async def test_conformance_terminal_client_rpc_lifecycle_completes() -> None:
     )
     assert release_request.id is not None
 
-    released = protocol.handle_client_response(ACPMessage.response(release_request.id, {}))
+    released = await protocol.handle_client_response(ACPMessage.response(release_request.id, {}))
     assert len(released.followup_responses) == 1
     assert released.followup_responses[0].result == {"stopReason": "end_turn"}
     assert any(

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from textual.app import ComposeResult
@@ -164,7 +164,7 @@ class ChatView(VerticalScroll):
         # Скроллируем вниз
         self.scroll_end()
 
-    def _render_message(self, message: object) -> None:
+    def _render_message(self, message: Any) -> None:
         """Отобразить одно сообщение через MessageBubble.
 
         Использует MessageBubble для улучшенного рендеринга сообщений с аватарами
@@ -178,13 +178,11 @@ class ChatView(VerticalScroll):
 
         # Извлекаем роль и содержимое из сообщения
         if isinstance(message, dict):
-            # Поддерживаем оба варианта: "role" (предпочтительно) и "type" (для совместимости)
-            msg_dict = dict(message)  # type: ignore[arg-type]
-            msg_role_value = msg_dict.get("role")
+            msg_role_value = message.get("role")
             if msg_role_value is None:
-                msg_role_value = msg_dict.get("type", "unknown")
+                msg_role_value = message.get("type", "unknown")
             msg_role_str: str = str(msg_role_value)
-            content: str = str(msg_dict.get("content", ""))
+            content: str = str(message.get("content", ""))
 
             # Конвертируем строковую роль в MessageRole enum
             role_map = {
@@ -219,8 +217,9 @@ class ChatView(VerticalScroll):
             return
 
         # Используем timestamp для streaming виджета
+        from rich.markup import escape as markup_escape
         streaming_widget = Static(
-            f"[bold green]⟳ {text}[/bold green]",
+            f"[bold green]⟳ {markup_escape(text)}[/bold green]",
             id=f"stream_{time.time_ns()}",
             classes="message",
         )
@@ -236,8 +235,9 @@ class ChatView(VerticalScroll):
             return
 
         # Используем timestamp для tool call виджета
+        from rich.markup import escape as markup_escape
         tool_widget = Static(
-            f"[italic]Tool: {tool_call}[/italic]",
+            f"[italic]Tool: {markup_escape(str(tool_call))}[/italic]",
             id=f"tool_{time.time_ns()}",
             classes="message",
         )

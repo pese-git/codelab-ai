@@ -219,3 +219,51 @@ class TestFileSystemExecutorWithoutSandbox:
         )
         assert result is True
         assert test_file.read_text() == "Test content\n"
+
+
+class TestPathTraversalValidation:
+    """Тесты защиты от path traversal в _validate_path."""
+
+    @pytest.fixture
+    def sandbox(self, tmp_path: Path) -> Path:
+        """Создаёт sandbox директорию с тестовым файлом."""
+        (tmp_path / "safe.txt").write_text("safe content")
+        return tmp_path
+
+    async def test_read_file_inside_sandbox(self, sandbox: Path) -> None:
+        """Должно работать без ошибок для файлов внутри sandbox."""
+        executor = FileSystemExecutor(base_path=sandbox)
+        content = await executor.read_text_file("safe.txt")
+        assert content == "safe content"
+
+    async def test_path_traversal_dotdot_blocked(self, sandbox: Path) -> None:
+        """../../../etc/passwd должен быть заблокирован."""
+        executor = FileSystemExecutor(base_path=sandbox)
+        with pytest.raises(ValueError, match="Path traversal"):
+            executor._validate_path("../../../etc/passwd")
+
+    async def test_path_traversal_similar_name_blocked(
+        self, sandbox: Path, tmp_path: Path
+    ) -> None:
+        """Директория с похожим именем должна быть заблокирована."""
+        # Создаём директорию рядом с sandbox с похожим именем
+        evil_dir = tmp_path.parent / (tmp_path.name + "_evil")
+        evil_dir.mkdir(exist_ok=True)
+        (evil_dir / "secret.txt").write_text("secret")
+
+        executor = FileSystemExecutor(base_path=sandbox)
+        with pytest.raises(ValueError, match="Path traversal"):
+            # Попытка выйти в директорию с похожим именем
+            executor._validate_path(str(evil_dir / "secret.txt"))
+
+    async def test_absolute_path_inside_sandbox_allowed(self, sandbox: Path) -> None:
+        """Абсолютный путь внутри санобокса должен быть разрешён."""
+        executor = FileSystemExecutor(base_path=sandbox)
+        result = executor._validate_path(str(sandbox / "safe.txt"))
+        assert result == (sandbox / "safe.txt").resolve()
+
+    async def test_no_sandbox_allows_absolute_paths(self) -> None:
+        """Без санобокса абсолютные пути разрешены."""
+        executor = FileSystemExecutor(base_path=None)
+        result = executor._validate_path("/tmp")
+        assert result == Path("/tmp").resolve()

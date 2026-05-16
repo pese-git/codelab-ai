@@ -32,7 +32,8 @@ class TestFullSessionLifecycle:
             }
         }
 
-    def test_session_lifecycle_with_events_replay(
+    @pytest.mark.asyncio
+    async def test_session_lifecycle_with_events_replay(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -45,8 +46,6 @@ class TestFullSessionLifecycle:
             available_commands=[],
             runtime_capabilities=None,
         )
-
-        sessions = {session.session_id: session}
 
         # Act - Симулируем использование сессии (добавляем события вручную)
         orchestrator = create_prompt_orchestrator()
@@ -98,15 +97,20 @@ class TestFullSessionLifecycle:
         ]
         assert len(agent_events) == 1
 
+        # Сохраняем сессию в storage
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
+
         # Act - Загружаем сессию через session/load (симулирует переподключение клиента)
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_load",
             params={"sessionId": session.session_id, "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert - Проверяем что notifications содержат полную историю
@@ -139,7 +143,8 @@ class TestFullSessionLifecycle:
         agent_text = replayed_agent_notifications[0].params["update"]["content"]["text"]
         assert agent_text == "I'm doing great, thank you!"
 
-    def test_session_lifecycle_multiple_turns(
+    @pytest.mark.asyncio
+    async def test_session_lifecycle_multiple_turns(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -153,7 +158,6 @@ class TestFullSessionLifecycle:
             runtime_capabilities=None,
         )
 
-        sessions = {session.session_id: session}
         orchestrator = create_prompt_orchestrator()
 
         # Act - Первый turn (пользователь)
@@ -215,15 +219,20 @@ class TestFullSessionLifecycle:
         # Assert - Проверяем что все события сохранены
         assert len(session.events_history) == 4  # 2 user + 2 agent
 
+        # Сохраняем сессию в storage
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
+
         # Act - Загружаем сессию
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_load",
             params={"sessionId": session.session_id, "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert - Проверяем что все сообщения воспроизведены в правильном порядке
@@ -251,7 +260,8 @@ class TestFullSessionLifecycle:
         assert agent_notifications[0].params["update"]["content"]["text"] == agent_response_1
         assert agent_notifications[1].params["update"]["content"]["text"] == agent_response_2
 
-    def test_session_lifecycle_order_preservation(
+    @pytest.mark.asyncio
+    async def test_session_lifecycle_order_preservation(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -265,7 +275,6 @@ class TestFullSessionLifecycle:
             runtime_capabilities=None,
         )
 
-        sessions = {session.session_id: session}
         orchestrator = create_prompt_orchestrator()
 
         # Act - Добавляем события в строгом порядке
@@ -303,15 +312,20 @@ class TestFullSessionLifecycle:
                     },
                 )
 
+        # Сохраняем сессию в storage
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
+
         # Act - Загружаем сессию
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_load",
             params={"sessionId": session.session_id, "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert - Проверяем порядок событий в notifications

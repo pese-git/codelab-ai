@@ -1,29 +1,35 @@
 """Content extraction и validation для ACP протокола.
 
 Модули для работы с content типами и extraction/validation.
+Типы контента реэкспортируются из shared для обратной совместимости.
 """
 
-from .audio import AudioContent
-from .base import BlobResource, TextResource
-from .embedded import EmbeddedResourceContent
+# Реэкспортируем из shared для обратной совместимости внутренних импортов
+from codelab.shared.content import (
+    AudioContent,
+    BlobResource,
+    EmbeddedResourceContent,
+    ImageContent,
+    ResourceLinkContent,
+    TextContent,
+    TextResource,
+)
+
+# Специфичные для сервера утилиты остаются здесь:
 from .extractor import ContentExtractor, ExtractedContent
 from .formatter import ContentFormatter
-from .image import ImageContent
-from .resource_link import ResourceLinkContent
-from .text import TextContent
 from .validator import ContentValidator
 
 __all__ = [
-    # Content types
+    # из shared (реэкспорт):
     "TextContent",
     "AudioContent",
     "ImageContent",
     "EmbeddedResourceContent",
     "ResourceLinkContent",
-    # Base resources
     "TextResource",
     "BlobResource",
-    # Extraction and validation
+    # специфичные для сервера:
     "ContentExtractor",
     "ExtractedContent",
     "ContentValidator",

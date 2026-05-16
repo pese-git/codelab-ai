@@ -4,6 +4,7 @@ import asyncio
 import socket
 from typing import Any
 
+import aiohttp
 import pytest
 from aiohttp import ClientSession, web
 
@@ -552,6 +553,175 @@ async def test_ws_prompt_is_processed_in_background_and_does_not_block_ping(
                 second_response = await asyncio.wait_for(ws.receive_json(), timeout=1.0)
                 assert second_response.get("id") == "prompt_1"
                 assert second_response.get("result") == {"stopReason": "end_turn"}
+            finally:
+                await ws.close()
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_oversized_message_rejected() -> None:
+    """Тест: сообщение, превышающее лимит размера, приводит к закрытию соединения."""
+    from codelab.server.config import AppConfig, WebSocketConfig
+
+    port = _get_free_port()
+    config = AppConfig(
+        websocket=WebSocketConfig(max_msg_size=1024, heartbeat_interval=30.0),
+    )
+    server = ACPHttpServer(host="127.0.0.1", port=port, config=config)
+    app = web.Application()
+    app.router.add_get("/acp/ws", server.handle_ws_request)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="127.0.0.1", port=port)
+    await site.start()
+
+    try:
+        async with ClientSession() as session:
+            ws = await session.ws_connect(f"http://127.0.0.1:{port}/acp/ws")
+            try:
+                oversized = "x" * (2 * 1024)
+                await ws.send_str(oversized)
+
+                msg = await asyncio.wait_for(ws.receive(), timeout=5.0)
+                assert msg.type in {
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.ERROR,
+                }
+            finally:
+                if not ws.closed:
+                    await ws.close()
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_message_within_limit_accepted() -> None:
+    """Тест: сообщение в пределах лимита принимается нормально."""
+    from codelab.server.config import AppConfig, WebSocketConfig
+
+    port = _get_free_port()
+    config = AppConfig(
+        websocket=WebSocketConfig(max_msg_size=4 * 1024 * 1024, heartbeat_interval=30.0),
+    )
+    server = ACPHttpServer(host="127.0.0.1", port=port, config=config)
+    app = web.Application()
+    app.router.add_get("/acp/ws", server.handle_ws_request)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="127.0.0.1", port=port)
+    await site.start()
+
+    try:
+        async with ClientSession() as session:
+            ws = await session.ws_connect(f"http://127.0.0.1:{port}/acp/ws")
+            try:
+                await _ws_initialize(ws)
+
+                normal_msg = "x" * 1024
+                await ws.send_str(normal_msg)
+
+                msg = await asyncio.wait_for(ws.receive(), timeout=2.0)
+                assert msg.type == aiohttp.WSMsgType.TEXT
+                assert '"error"' in msg.data
+                assert "Parse error" in msg.data
+            finally:
+                await ws.close()
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_prompt_text_too_long_rejected() -> None:
+    """Тест: промпт с текстом, превышающим лимит длины, отклоняется."""
+    from codelab.server.protocol.handlers.prompt import MAX_PROMPT_TEXT_LENGTH
+
+    runner, port = await _start_test_server()
+
+    try:
+        async with ClientSession() as session:
+            ws = await session.ws_connect(f"http://127.0.0.1:{port}/acp/ws")
+            try:
+                await _ws_initialize(ws)
+                await ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "new_1",
+                        "method": "session/new",
+                        "params": {"cwd": "/tmp", "mcpServers": []},
+                    }
+                )
+                new_payload = await asyncio.wait_for(ws.receive_json(), timeout=1.0)
+                session_id = new_payload["result"]["sessionId"]
+
+                long_text = "x" * (MAX_PROMPT_TEXT_LENGTH + 1)
+                await ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "prompt_1",
+                        "method": "session/prompt",
+                        "params": {
+                            "sessionId": session_id,
+                            "prompt": [{"type": "text", "text": long_text}],
+                        },
+                    }
+                )
+
+                response = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+                assert response.get("id") == "prompt_1"
+                assert response.get("error") is not None
+                assert "too long" in response["error"]["message"]
+            finally:
+                await ws.close()
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_prompt_text_within_length_limit_accepted() -> None:
+    """Тест: промпт с текстом в пределах лимита длины принимается."""
+    from codelab.server.protocol.handlers.prompt import MAX_PROMPT_TEXT_LENGTH
+
+    runner, port = await _start_test_server()
+
+    try:
+        async with ClientSession() as session:
+            ws = await session.ws_connect(f"http://127.0.0.1:{port}/acp/ws")
+            try:
+                await _ws_initialize(ws)
+                await ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "new_1",
+                        "method": "session/new",
+                        "params": {"cwd": "/tmp", "mcpServers": []},
+                    }
+                )
+                new_payload = await asyncio.wait_for(ws.receive_json(), timeout=1.0)
+                session_id = new_payload["result"]["sessionId"]
+
+                normal_text = "x" * (MAX_PROMPT_TEXT_LENGTH - 1)
+                await ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "prompt_1",
+                        "method": "session/prompt",
+                        "params": {
+                            "sessionId": session_id,
+                            "prompt": [{"type": "text", "text": normal_text}],
+                        },
+                    }
+                )
+
+                while True:
+                    response = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
+                    if response.get("id") == "prompt_1":
+                        break
+
+                assert response.get("error") is None
+                assert response.get("result") is not None
             finally:
                 await ws.close()
     finally:

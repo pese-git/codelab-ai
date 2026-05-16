@@ -7,4 +7,27 @@ __pycache__/
 .env
 **/data
 .vscode/
+.zed/
 opencode/
+
+
+# --- OpenCode & AI Configs ---
+# Блокируем локальные файлы конфигурации с секретами
+.opencode.local.json
+opencode.local.json
+.opencode/local.json
+
+# Блокируем файлы окружения, где хранятся API-ключи
+.env
+.env.local
+.env.*.local
+
+# Блокируем логи работы AI-агента и историю диалогов
+.opencode/logs/
+.opencode/history/
+opencode_debug.log
+
+# --- System Files ---
+# Файлы операционных систем, которые могут содержать кэш
+.DS_Store
+Thumbs.db

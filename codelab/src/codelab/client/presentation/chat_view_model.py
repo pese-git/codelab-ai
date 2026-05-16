@@ -9,6 +9,7 @@
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -174,6 +175,48 @@ class ChatViewModel(BaseViewModel):
         self._set_last_stop_reason(session_id, None)
 
         try:
+            # Build terminal lifecycle callbacks backed by the sync executor.
+            # Results are cached by terminal_id so the multi-step protocol
+            # (create → output → wait_for_exit → release) maps onto a single
+            # blocking execute() call made on terminal/create.
+            terminal_callbacks: dict[str, Any] = {}
+            if self._terminal_executor is not None:
+                _results: dict[str, dict[str, Any]] = {}
+                _executor = self._terminal_executor
+
+                def _on_terminal_create(command: str) -> str:
+                    tid = str(uuid.uuid4())
+                    _results[tid] = _executor.execute(command)
+                    return tid
+
+                def _on_terminal_output(terminal_id: str) -> dict[str, Any]:
+                    r = _results.get(terminal_id, {})
+                    return {
+                        "output": r.get("output", ""),
+                        "isComplete": True,
+                        "exitCode": r.get("exit_code"),
+                    }
+
+                def _on_terminal_wait_for_exit(
+                    terminal_id: str,
+                ) -> tuple[int | None, str | None]:
+                    r = _results.get(terminal_id, {})
+                    return (r.get("exit_code"), r.get("output", ""))
+
+                def _on_terminal_release(terminal_id: str) -> None:
+                    _results.pop(terminal_id, None)
+
+                def _on_terminal_kill(terminal_id: str) -> bool:
+                    return _results.pop(terminal_id, None) is not None
+
+                terminal_callbacks = {
+                    "on_terminal_create": _on_terminal_create,
+                    "on_terminal_output": _on_terminal_output,
+                    "on_terminal_wait_for_exit": _on_terminal_wait_for_exit,
+                    "on_terminal_release": _on_terminal_release,
+                    "on_terminal_kill": _on_terminal_kill,
+                }
+
             # Отправить prompt через coordinator с callback для обработки обновлений
             # SessionCoordinator должен обработать updates и опубликовать события
             await self.coordinator.send_prompt(
@@ -182,7 +225,7 @@ class ChatViewModel(BaseViewModel):
                 on_update=self._handle_session_update,
                 on_fs_read=self._handle_fs_read,
                 on_fs_write=self._handle_fs_write,
-                on_terminal_execute=self._handle_terminal_execute,
+                **terminal_callbacks,
                 **kwargs,
             )
 

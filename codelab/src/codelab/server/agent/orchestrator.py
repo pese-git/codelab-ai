@@ -166,10 +166,12 @@ class AgentOrchestrator:
         messages: list[LLMMessage] = []
 
         for entry in history:
-            # Конвертировать Pydantic модель в dict если необходимо
-            entry_dict = (
-                entry if isinstance(entry, dict) else entry.model_dump()  # type: ignore[attr-defined]
-            )
+            if isinstance(entry, dict):
+                entry_dict = entry
+            elif hasattr(entry, "model_dump"):
+                entry_dict = entry.model_dump()
+            else:
+                continue
 
             # Определить роль сообщения
             role = entry_dict.get("role", "user")
@@ -220,7 +222,42 @@ class AgentOrchestrator:
             if content:
                 messages.append(LLMMessage(role=role, content=str(content)))
 
-        return messages
+        return self._sanitize_orphaned_tool_calls(messages)
+
+    def _sanitize_orphaned_tool_calls(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        """Add synthetic error results for orphaned tool_calls in history.
+
+        Handles corrupted session histories where an assistant message has tool_calls
+        but the corresponding tool result messages are missing (e.g. due to a crash
+        or failed RPC during the previous session).
+        """
+        result: list[LLMMessage] = []
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            if msg.role == "assistant" and msg.tool_calls:
+                expected_ids = {tc.id for tc in msg.tool_calls}
+                j = i + 1
+                tool_msgs: list[LLMMessage] = []
+                while j < len(messages) and messages[j].role == "tool":
+                    tool_msgs.append(messages[j])
+                    j += 1
+                satisfied_ids = {m.tool_call_id for m in tool_msgs if m.tool_call_id}
+                orphaned_ids = expected_ids - satisfied_ids
+                result.append(msg)
+                result.extend(tool_msgs)
+                for oid in orphaned_ids:
+                    logger.warning("orphaned_tool_call_in_history", tool_call_id=oid)
+                    result.append(LLMMessage(
+                        role="tool",
+                        content="Error: Tool execution did not complete",
+                        tool_call_id=oid,
+                    ))
+                i = j
+            else:
+                result.append(msg)
+                i += 1
+        return result
 
     def _convert_from_llm_messages(
         self,

@@ -70,8 +70,8 @@ class TestPermissionResponseRouting:
         **Критическое исправление**: Ранее responses с method=None отклонялись как ошибка.
         Теперь они маршрутизируются на handle_client_response().
         """
-        # Добавляем сессию в протокол
-        protocol._sessions["test_session"] = test_session
+        # Сохраняем сессию в storage
+        await protocol._storage.save_session(test_session)
 
         # Создаём permission response (method=None, есть id и result)
         response = ACPMessage(
@@ -107,8 +107,8 @@ class TestPermissionResponseRouting:
         - Notifications отправляются клиенту
         - Followup response завершает turn
         """
-        # Добавляем сессию
-        protocol._sessions["test_session"] = test_session
+        # Сохраняем сессию в storage
+        await protocol._storage.save_session(test_session)
 
         # Создаём permission response с разрешением
         response = ACPMessage(
@@ -132,7 +132,7 @@ class TestPermissionResponseRouting:
 
         # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: permission_request_id должен быть очищен
         # это позволяет prompt turn завершиться
-        updated_session = protocol._sessions["test_session"]
+        updated_session = await protocol._storage.load_session("test_session")
         # После завершения turn, active_turn может быть None
         if updated_session.active_turn is not None:
             assert updated_session.active_turn.permission_request_id is None
@@ -155,8 +155,8 @@ class TestPermissionResponseRouting:
         Notifications информируют клиент об изменении статуса tool call.
         Followup response завершает turn с end_turn stop_reason.
         """
-        # Добавляем сессию
-        protocol._sessions["test_session"] = test_session
+        # Сохраняем сессию в storage
+        await protocol._storage.save_session(test_session)
 
         # Создаём permission response
         response = ACPMessage(
@@ -194,7 +194,7 @@ class TestPermissionResponseRouting:
         Когда permission отклоняется, turn завершается (active_turn=None).
         Но tool call status обновляется на 'cancelled'.
         """
-        protocol._sessions["test_session"] = test_session
+        await protocol._storage.save_session(test_session)
 
         # Создаём response с отклонением
         response = ACPMessage(
@@ -216,7 +216,7 @@ class TestPermissionResponseRouting:
         assert isinstance(outcome, ProtocolOutcome)
 
         # Когда permission отклоняется, turn завершается
-        updated_session = protocol._sessions["test_session"]
+        updated_session = await protocol._storage.load_session("test_session")
         # active_turn может быть завершен (None), что нормально для rejected
         # Главное - tool call status должен быть 'cancelled'
         tool_call = updated_session.tool_calls.get("tool_call_1")
@@ -230,7 +230,7 @@ class TestPermissionResponseRouting:
         test_session: SessionState,
     ) -> None:
         """✅ Проверяет, что allow_always сохраняет policy для будущих tool calls."""
-        protocol._sessions["test_session"] = test_session
+        await protocol._storage.save_session(test_session)
 
         # Создаём response с allow_always
         response = ACPMessage(
@@ -249,7 +249,7 @@ class TestPermissionResponseRouting:
 
         # Проверяем, что policy сохранен
         assert outcome is not None
-        updated_session = protocol._sessions["test_session"]
+        updated_session = await protocol._storage.load_session("test_session")
         assert updated_session.permission_policy.get("read") == "allow_always"
 
     @pytest.mark.asyncio
@@ -263,7 +263,7 @@ class TestPermissionResponseRouting:
         Если turn был отменен, но приходит ответ на старый permission request,
         это не должно вызывать ошибку.
         """
-        protocol._sessions["test_session"] = test_session
+        await protocol._storage.save_session(test_session)
 
         # Добавляем ID в tombstone отмененных requests
         test_session.cancelled_permission_requests.add("perm_req_1")
@@ -339,8 +339,8 @@ class TestPermissionResponseIntegration:
             status="pending",
         )
 
-        # Добавляем сессию
-        protocol._sessions["sess_1"] = session
+        # Добавляем сессию в storage
+        await protocol._storage.save_session(session)
 
         # Этап 4: Клиент отправляет permission response с разрешением
         permission_response = ACPMessage(
@@ -363,7 +363,7 @@ class TestPermissionResponseIntegration:
         assert isinstance(outcome, ProtocolOutcome)
 
         # Этап 5: Проверяем, что разрешение обработано корректно
-        updated_session = protocol._sessions["sess_1"]
+        updated_session = await protocol._storage.load_session("sess_1")
         
         # ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Когда permission allowed
         # 1. Permission request ID очищен
@@ -431,8 +431,8 @@ class TestPermissionResponseIntegration:
             status="pending",
         )
 
-        protocol._sessions["sess_1"] = session1
-        protocol._sessions["sess_2"] = session2
+        await protocol._storage.save_session(session1)
+        await protocol._storage.save_session(session2)
 
         # Отправляем responses для обеих сессий
         response1 = ACPMessage(
@@ -468,13 +468,13 @@ class TestPermissionResponseIntegration:
         assert outcome2 is not None
 
         # Сессия 1 разрешила выполнение (allow_once)
-        sess1_updated = protocol._sessions["sess_1"]
+        sess1_updated = await protocol._storage.load_session("sess_1")
         # Permission request ID должен быть очищен
         if sess1_updated.active_turn is not None:
             assert sess1_updated.active_turn.permission_request_id is None
 
         # Сессия 2 отклонила разрешение (reject_once), поэтому turn завершился
-        sess2_updated = protocol._sessions["sess_2"]
+        sess2_updated = await protocol._storage.load_session("sess_2")
         # После отклонения permission, turn может быть завершен
         # Главное - tool call status должен быть обновлен на 'cancelled'
         tool_call_2 = sess2_updated.tool_calls.get("tool_2")
@@ -538,12 +538,12 @@ class TestDeferredTurnScenarios:
             status="pending",
         )
         
-        protocol._sessions["sess_1"] = session
+        await protocol._storage.save_session(session)
         
         # Act: имитируем ситуацию, когда turn уже в фазе awaiting_permission
         # (например, после обработки prompt, который требует permission)
         # Проверяем состояние turn
-        current_session = protocol._sessions["sess_1"]
+        current_session = await protocol._storage.load_session("sess_1")
         
         # Assert: Проверяем, что turn НЕ завершен
         assert current_session.active_turn is not None
@@ -591,7 +591,7 @@ class TestDeferredTurnScenarios:
             status="pending",
         )
         
-        protocol._sessions["sess_1"] = session
+        await protocol._storage.save_session(session)
         
         # Этап 2: Проверяем начальное состояние - turn ждет permission
         assert session.active_turn is not None
@@ -618,7 +618,7 @@ class TestDeferredTurnScenarios:
         assert isinstance(outcome, ProtocolOutcome)
         
         # Этап 4: Проверяем, что permission request ID очищен
-        updated_session = protocol._sessions["sess_1"]
+        updated_session = await protocol._storage.load_session("sess_1")
         if updated_session.active_turn is not None:
             # После обработки permission, ID должен быть очищен
             assert updated_session.active_turn.permission_request_id is None
@@ -665,12 +665,12 @@ class TestDeferredTurnScenarios:
             phase="running",  # Остается в фазе running, не переходит в awaiting_permission
         )
         
-        protocol._sessions["sess_1"] = session
+        await protocol._storage.save_session(session)
         
         # Act: Имитируем завершение turn без permission
         # В реальном сценарии это происходит в prompt_orchestrator.handle_prompt()
         # когда условие "if session.active_turn.phase == 'awaiting_permission'" ложно
-        current_session = protocol._sessions["sess_1"]
+        current_session = await protocol._storage.load_session("sess_1")
         
         # Выполняем очистку turn (как это делает turn_lifecycle_manager.clear_active_turn)
         # Для теста просто устанавливаем active_turn в None

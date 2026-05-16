@@ -153,7 +153,7 @@ class EventPlugin(Plugin):
             async def _on_session_created(
                 self, event: SessionCreatedEvent
             ) -> None:
-                logger.info(f"Session {event.session_id} created")
+                logger.info("session_created", session_id=event.session_id)
     """
 
     @abstractmethod

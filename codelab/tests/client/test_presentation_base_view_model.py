@@ -7,7 +7,7 @@ import pytest
 from codelab.client.presentation.base_view_model import BaseViewModel
 
 
-class TestViewModel(BaseViewModel):
+class MockViewModel(BaseViewModel):
     """Тестовая реализация BaseViewModel."""
     pass
 
@@ -17,25 +17,25 @@ class TestBaseViewModel:
 
     def test_viewmodel_initialization(self) -> None:
         """Проверить инициализацию BaseViewModel."""
-        vm = TestViewModel()
+        vm = MockViewModel()
         assert vm.event_bus is None
         assert vm.logger is not None
 
     def test_viewmodel_with_event_bus(self) -> None:
         """Проверить инициализацию с event_bus."""
         event_bus = Mock()
-        vm = TestViewModel(event_bus=event_bus)
+        vm = MockViewModel(event_bus=event_bus)
         assert vm.event_bus is event_bus
 
     def test_viewmodel_with_logger(self) -> None:
         """Проверить инициализацию с logger."""
         logger = Mock()
-        vm = TestViewModel(logger=logger)
+        vm = MockViewModel(logger=logger)
         assert vm.logger is logger
 
     def test_viewmodel_on_event_without_bus(self) -> None:
         """Проверить подписку на событие без event_bus."""
-        vm = TestViewModel()
+        vm = MockViewModel()
         handler = Mock()
         
         # Должно выбросить RuntimeError если EventBus не инициализирован
@@ -48,7 +48,7 @@ class TestBaseViewModel:
     def test_viewmodel_on_event_with_bus(self) -> None:
         """Проверить подписку на событие с event_bus."""
         event_bus = Mock()
-        vm = TestViewModel(event_bus=event_bus)
+        vm = MockViewModel(event_bus=event_bus)
         handler = Mock()
         event_type = Mock
         
@@ -59,7 +59,7 @@ class TestBaseViewModel:
 
     def test_viewmodel_publish_event_without_bus(self) -> None:
         """Проверить публикацию события без event_bus."""
-        vm = TestViewModel()
+        vm = MockViewModel()
         event = Mock()
         
         # Должно выбросить RuntimeError если EventBus не инициализирован
@@ -69,7 +69,7 @@ class TestBaseViewModel:
     def test_viewmodel_publish_event_with_bus(self) -> None:
         """Проверить публикацию события с event_bus."""
         event_bus = Mock()
-        vm = TestViewModel(event_bus=event_bus)
+        vm = MockViewModel(event_bus=event_bus)
         event = Mock()
         
         vm.publish_event(event)
@@ -79,7 +79,7 @@ class TestBaseViewModel:
 
     def test_viewmodel_cleanup(self) -> None:
         """Проверить cleanup метод."""
-        vm = TestViewModel()
+        vm = MockViewModel()
         mock_unsubscribe = Mock()
         vm._subscriptions['test'] = mock_unsubscribe
         
@@ -90,7 +90,7 @@ class TestBaseViewModel:
 
     def test_viewmodel_cleanup_with_error(self) -> None:
         """Проверить cleanup при ошибке в unsubscribe."""
-        vm = TestViewModel()
+        vm = MockViewModel()
         mock_unsubscribe = Mock(side_effect=Exception("Cleanup error"))
         vm._subscriptions['test'] = mock_unsubscribe
         
@@ -99,7 +99,7 @@ class TestBaseViewModel:
 
     def test_viewmodel_multiple_subscriptions_cleanup(self) -> None:
         """Проверить cleanup для множества subscriptions."""
-        vm = TestViewModel()
+        vm = MockViewModel()
         
         unsubscribers = [Mock() for _ in range(3)]
         for i, unsubscriber in enumerate(unsubscribers):
@@ -117,7 +117,7 @@ class TestBaseViewModel:
         event_bus = Mock()
         event_bus.subscribe.return_value = Mock()  # unsubscribe функция
         
-        vm = TestViewModel(event_bus=event_bus)
+        vm = MockViewModel(event_bus=event_bus)
         handler = Mock()
         event_type = Mock
         

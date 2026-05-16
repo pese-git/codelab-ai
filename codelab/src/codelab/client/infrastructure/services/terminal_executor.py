@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 import subprocess
 import uuid
 from dataclasses import dataclass, field
@@ -361,8 +362,12 @@ class TerminalExecutor:
 
         Используется для синхронных callbacks (не требует asyncio event loop).
 
+        Команда разбивается на аргументы через shlex.split.
+        Shell-операторы (; && || | > >>) НЕ поддерживаются намеренно
+        для предотвращения shell injection.
+
         Args:
-            command: Команда для выполнения (shell command string)
+            command: Команда для выполнения. Разбивается на аргументы через shlex.split.
             cwd: Рабочая директория (опционально)
 
         Returns:
@@ -377,32 +382,58 @@ class TerminalExecutor:
         """
         try:
             logger.debug("execute_command_sync", command=command, cwd=cwd)
-            
-            # Выполнить команду синхронно
+
+            # Безопасно разбиваем строку команды на список аргументов
+            # без интерпретации shell-операторов
+            try:
+                args = shlex.split(command)
+            except ValueError as e:
+                logger.error("invalid_command_syntax", command=command, error=str(e))
+                return {
+                    "exit_code": -1,
+                    "output": f"Invalid command syntax: {e}",
+                    "success": False,
+                }
+
+            if not args:
+                return {
+                    "exit_code": -1,
+                    "output": "Empty command",
+                    "success": False,
+                }
+
+            # Выполняем команду без оболочки (shell=False)
             process = subprocess.run(
-                command,
-                shell=True,
+                args,
+                shell=False,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
             )
-            
+
             output = process.stdout
             if process.stderr:
-                # Объединить stderr с stdout
                 output = output + process.stderr if output else process.stderr
-            
+
             logger.info(
                 "execute_command_sync_complete",
                 command=command,
                 exit_code=process.returncode,
                 output_size=len(output),
             )
-            
+
             return {
                 "exit_code": process.returncode,
                 "output": output,
                 "success": process.returncode == 0,
+            }
+        except FileNotFoundError:
+            executable = shlex.split(command)[0] if command.strip() else command
+            logger.error("command_not_found", executable=executable)
+            return {
+                "exit_code": 127,
+                "output": f"Command not found: {executable}",
+                "success": False,
             }
         except Exception as e:
             logger.error("execute_command_sync_error", command=command, error=str(e))

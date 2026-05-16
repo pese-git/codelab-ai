@@ -240,6 +240,7 @@ async def test_serialize_complex_session(temp_storage_dir: Path) -> None:
     assert loaded.tool_call_counter == 5
     assert "call_001" in loaded.tool_calls
     assert loaded.tool_calls["call_001"].title == "Test Call"
+    # active_turn сериализуется для корректного сопоставления permission/client_rpc ответов
     assert loaded.active_turn is not None
     assert loaded.active_turn.prompt_request_id == "req_001"
     assert loaded.runtime_capabilities is not None
@@ -273,26 +274,6 @@ async def test_json_file_format(temp_storage_dir: Path) -> None:
     assert "updated_at" in data
 
 
-@pytest.mark.asyncio
-async def test_cache_functionality(temp_storage_dir: Path) -> None:
-    """Тест работы кэша при загрузке сессий."""
-    storage = JsonFileStorage(temp_storage_dir)
-    session = SessionState(session_id="sess_cache", cwd="/tmp", mcp_servers=[])
-
-    await storage.save_session(session)
-
-    # Первая загрузка - из файла
-    loaded1 = await storage.load_session("sess_cache")
-    assert loaded1 is not None
-
-    # Вторая загрузка - из кэша
-    loaded2 = await storage.load_session("sess_cache")
-    assert loaded2 is loaded1  # Должен быть тот же объект из кэша
-
-    # После удаления кэш должен быть очищен
-    await storage.delete_session("sess_cache")
-    assert "sess_cache" not in storage._cache
-
 
 @pytest.mark.asyncio
 async def test_invalid_json_file_error(temp_storage_dir: Path) -> None:
@@ -324,3 +305,36 @@ async def test_update_session_updates_timestamp(temp_storage_dir: Path) -> None:
     assert loaded.updated_at != original_time
     # И она должна быть более свежей
     assert loaded.updated_at > original_time
+
+
+@pytest.mark.asyncio
+async def test_active_turn_serialized_for_permission_matching(temp_storage_dir: Path) -> None:
+    """Тест что active_turn сериализуется (нужен для find_session_by_permission_request_id)."""
+    storage = JsonFileStorage(temp_storage_dir)
+
+    session = SessionState(
+        session_id="sess_active",
+        cwd="/tmp",
+        mcp_servers=[],
+    )
+    session.active_turn = ActiveTurnState(
+        prompt_request_id="req_1",
+        session_id="sess_active",
+    )
+    session.active_turn.permission_request_id = "perm_1"
+
+    await storage.save_session(session)
+
+    # active_turn должен быть в JSON
+    file_path = temp_storage_dir / "sess_active.json"
+    with open(file_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    assert "active_turn" in data, "active_turn должен сериализоваться в JSON"
+    assert data["active_turn"]["permission_request_id"] == "perm_1"
+
+    # При загрузке active_turn восстанавливается (для сопоставления ответов)
+    loaded = await storage.load_session("sess_active")
+    assert loaded is not None
+    assert loaded.active_turn is not None
+    assert loaded.active_turn.permission_request_id == "perm_1"

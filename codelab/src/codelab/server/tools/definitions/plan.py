@@ -99,7 +99,7 @@ class PlanToolDefinitions:
 
         # Зарегистрировать инструмент в реестре
         # Используем метод register() из SimpleToolRegistry
-        tool_registry.register(  # type: ignore[attr-defined]
+        tool_registry.register(
             PlanToolDefinitions.update_plan(),
             plan_handler,
         )

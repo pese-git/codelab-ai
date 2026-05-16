@@ -562,7 +562,7 @@ class TestSessionMCPIntegration:
         session_id = outcome.response.result["sessionId"]
         
         # Проверяем, что сессия создана и MCPManager инициализирован
-        session_state = protocol._sessions.get(session_id)
+        session_state = await protocol._storage.load_session(session_id)
         assert session_state is not None
         assert session_state.mcp_manager is not None
         assert isinstance(session_state.mcp_manager, MCPManager)
@@ -606,7 +606,7 @@ class TestSessionMCPIntegration:
         session_id = outcome.response.result["sessionId"]
         
         # Проверяем, что MCPManager НЕ создан (нет mcpServers)
-        session_state = protocol._sessions.get(session_id)
+        session_state = await protocol._storage.load_session(session_id)
         assert session_state is not None
         assert session_state.mcp_manager is None
 
@@ -643,7 +643,7 @@ class TestSessionMCPIntegration:
         session_id = outcome.response.result["sessionId"]
         
         # Пустой список - MCPManager не создаётся
-        session_state = protocol._sessions.get(session_id)
+        session_state = await protocol._storage.load_session(session_id)
         assert session_state is not None
         assert session_state.mcp_manager is None
 
@@ -691,7 +691,7 @@ class TestSessionMCPIntegration:
         session_id = outcome.response.result["sessionId"]
         
         # MCPManager создан, но без серверов (все были невалидные)
-        session_state = protocol._sessions.get(session_id)
+        session_state = await protocol._storage.load_session(session_id)
         assert session_state is not None
         # MCPManager создаётся, но без успешных подключений
         assert session_state.mcp_manager is not None

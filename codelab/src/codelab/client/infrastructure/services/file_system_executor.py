@@ -84,13 +84,20 @@ class FileSystemExecutor:
         # Если задан base_path, проверить что путь внутри него
         if self.base_path:
             base_resolved = self.base_path.resolve()
-            file_path_str = str(file_path)
-            base_str = str(base_resolved)
-            
-            # Проверяем что путь начинается с base_path
-            if not file_path_str.startswith(base_str):
-                msg = f"Path traversal detected: {path} outside {base_resolved}"
-                logger.warning("path_traversal_attempt", path=path, base_path=str(base_resolved))
+
+            # is_relative_to() проверяет компоненты пути, а не строковый префикс.
+            # /home/user/projects_evil НЕ является относительным к /home/user/projects
+            if not file_path.is_relative_to(base_resolved):
+                msg = (
+                    f"Path traversal detected: '{path}' "
+                    f"resolves outside sandbox '{base_resolved}'"
+                )
+                logger.warning(
+                    "path_traversal_attempt",
+                    path=path,
+                    resolved=str(file_path),
+                    base_path=str(base_resolved),
+                )
                 raise ValueError(msg)
 
         return file_path

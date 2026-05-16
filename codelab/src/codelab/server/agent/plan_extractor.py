@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 
@@ -260,8 +260,8 @@ class PlanExtractor:
             valid_entries.append(
                 PlanEntry(
                     content=content.strip(),
-                    priority=priority,  # type: ignore[arg-type]
-                    status=status,  # type: ignore[arg-type]
+                    priority=cast(Literal["low", "medium", "high"], priority),
+                    status=cast(Literal["pending", "in_progress", "completed"], status),
                 )
             )
         

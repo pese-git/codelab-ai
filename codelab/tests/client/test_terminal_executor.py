@@ -6,6 +6,7 @@
 - Ожидание завершения
 - Убийство процесса
 - Освобождение ресурсов
+- Синхронное выполнение команд (безопасность)
 """
 
 import asyncio
@@ -15,9 +16,6 @@ import pytest
 from codelab.client.infrastructure.services.terminal_executor import (
     TerminalExecutor,
 )
-
-# Маркируем все async тесты в модуле
-pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
@@ -212,3 +210,102 @@ class TestTerminalExecutorCleanup:
         """Тест очистки когда терминалов нет."""
         await executor.cleanup_all()
         assert len(executor._terminals) == 0
+
+
+class TestTerminalExecutorExecuteSync:
+    """Тесты для синхронного выполнения команд (безопасность)."""
+
+    def test_execute_simple_command(self) -> None:
+        """Тест выполнения простой команды."""
+        executor = TerminalExecutor()
+        result = executor.execute("echo hello")
+
+        assert result["success"] is True
+        assert "hello" in result["output"]
+        assert result["exit_code"] == 0
+
+    def test_execute_shell_injection_is_blocked(self) -> None:
+        """Shell-операторы не должны интерпретироваться оболочкой.
+
+        Без shell=True строка "echo safe; echo injected" передаётся
+        как один аргумент программе echo, а не как две команды.
+        """
+        executor = TerminalExecutor()
+        # Попытка shell injection: весь текст — один аргумент для echo
+        result = executor.execute("echo safe; echo injected")
+
+        # Injection не происходит — вывод содержит всю строку целиком
+        assert "safe; echo injected" in result["output"]
+        # Но отдельной строки "injected" в выводе нет
+        assert "injected" not in result["output"].split("\n")
+
+    def test_execute_command_not_found(self) -> None:
+        """Тест ошибки когда команда не найдена."""
+        executor = TerminalExecutor()
+        result = executor.execute("nonexistent_command_xyz_12345")
+
+        assert result["success"] is False
+        assert result["exit_code"] == 127
+        assert "Command not found" in result["output"]
+
+    def test_execute_empty_command(self) -> None:
+        """Тест пустой команды."""
+        executor = TerminalExecutor()
+        result = executor.execute("")
+
+        assert result["success"] is False
+        assert result["exit_code"] == -1
+        assert "Empty command" in result["output"]
+
+    def test_execute_with_cwd(self, tmp_path) -> None:
+        """Тест выполнения команды с указанием рабочей директории."""
+        executor = TerminalExecutor()
+        result = executor.execute("pwd", cwd=str(tmp_path))
+
+        assert result["success"] is True
+        assert str(tmp_path) in result["output"]
+
+    def test_execute_with_pipe_blocked(self) -> None:
+        """Pipe оператор | не должен интерпретироваться."""
+        executor = TerminalExecutor()
+        # Без shell=True pipe не работает — всё передаётся как аргументы echo
+        result = executor.execute("echo hello | cat")
+
+        # Pipe не сработал — вывод содержит всю строку целиком
+        assert "hello | cat" in result["output"]
+
+    def test_execute_with_redirect_blocked(self) -> None:
+        """Redirect оператор > не должен интерпретироваться."""
+        executor = TerminalExecutor()
+        # Без shell=True redirect не работает
+        result = executor.execute("echo hello > /tmp/test_redirect_blocked")
+
+        # Redirect не сработал — команда выполнилась с аргументами
+        assert result["success"] is True
+        assert "hello > /tmp/test_redirect_blocked" in result["output"]
+
+    def test_execute_with_and_operator_blocked(self) -> None:
+        """Оператор && не должен интерпретироваться."""
+        executor = TerminalExecutor()
+        result = executor.execute("echo first && echo second")
+
+        # && не сработал — всё один аргумент
+        assert "first && echo second" in result["output"]
+
+    def test_execute_invalid_syntax(self) -> None:
+        """Тест команды с некорректным синтаксисом для shlex."""
+        executor = TerminalExecutor()
+        # Непарная кавычка — shlex.split выбросит ValueError
+        result = executor.execute('echo "unclosed quote')
+
+        assert result["success"] is False
+        assert result["exit_code"] == -1
+        assert "Invalid command syntax" in result["output"]
+
+    def test_execute_with_cwd_not_found(self, tmp_path) -> None:
+        """Тест команды с несуществующей рабочей директорией."""
+        executor = TerminalExecutor()
+        nonexistent_dir = tmp_path / "nonexistent"
+        result = executor.execute("pwd", cwd=str(nonexistent_dir))
+
+        assert result["success"] is False

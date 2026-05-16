@@ -252,6 +252,124 @@ class TestACPTransportServiceRequestWithCallbacks:
         assert "fs_read_rpc_error" in error_events
 
 
+class TestFsWriteTextFile:
+    """Тесты для обработки fs/write_text_file RPC."""
+
+    @pytest.mark.asyncio
+    async def test_fs_write_request_returns_success_true(self) -> None:
+        """Клиент возвращает {success: true} при успешной записи."""
+        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service._logger = MagicMock()  # noqa: SLF001 - test setup
+        transport = AsyncMock(spec=WebSocketTransport)
+        transport.is_connected.return_value = True
+        service._transport = transport  # noqa: SLF001 - test setup
+
+        written_files: list[tuple[str, str]] = []
+
+        def mock_write(path: str, content: str) -> bool:
+            written_files.append((path, content))
+            return True
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001 - test target
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-write-1",
+                "method": "fs/write_text_file",
+                "params": {"path": "/tmp/test.md", "content": "# Hello"},
+            },
+            on_update=None,
+            on_fs_read=None,
+            on_fs_write=mock_write,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        sent_payload = json.loads(transport.send_str.call_args[0][0])
+        assert sent_payload["id"] == "rpc-write-1"
+        assert sent_payload["result"] == {"success": True}
+        assert written_files == [("/tmp/test.md", "# Hello")]
+
+    @pytest.mark.asyncio
+    async def test_fs_write_request_returns_success_false_on_callback_failure(self) -> None:
+        """Клиент возвращает {success: false} если callback вернул False."""
+        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service._logger = MagicMock()  # noqa: SLF001 - test setup
+        transport = AsyncMock(spec=WebSocketTransport)
+        transport.is_connected.return_value = True
+        service._transport = transport  # noqa: SLF001 - test setup
+
+        def mock_write_failing(path: str, content: str) -> bool:
+            return False
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001 - test target
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-write-2",
+                "method": "fs/write_text_file",
+                "params": {"path": "/tmp/test.md", "content": "# Fail"},
+            },
+            on_update=None,
+            on_fs_read=None,
+            on_fs_write=mock_write_failing,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        sent_payload = json.loads(transport.send_str.call_args[0][0])
+        assert sent_payload["id"] == "rpc-write-2"
+        assert sent_payload["result"] == {"success": False}
+
+    @pytest.mark.asyncio
+    async def test_fs_write_request_error_sends_error_response(self) -> None:
+        """При исключении в callback клиент отправляет error response."""
+        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service._logger = MagicMock()  # noqa: SLF001 - test setup
+        transport = AsyncMock(spec=WebSocketTransport)
+        transport.is_connected.return_value = True
+        service._transport = transport  # noqa: SLF001 - test setup
+
+        def mock_write_error(path: str, content: str) -> bool:
+            raise OSError("Disk full")
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001 - test target
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-write-3",
+                "method": "fs/write_text_file",
+                "params": {"path": "/tmp/test.md", "content": "# Error"},
+            },
+            on_update=None,
+            on_fs_read=None,
+            on_fs_write=mock_write_error,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        sent_payload = json.loads(transport.send_str.call_args[0][0])
+        assert sent_payload["id"] == "rpc-write-3"
+        assert "error" in sent_payload
+        assert sent_payload["error"]["code"] == -32603
+        assert "Disk full" in sent_payload["error"]["message"]
+
+
 class TestPermissionCallback:
     """Тесты для установки и использования permission callback."""
 

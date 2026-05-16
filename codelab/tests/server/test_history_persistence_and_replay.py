@@ -184,7 +184,8 @@ class TestSessionLoadReplay:
             }
         }
 
-    def test_session_load_replays_user_messages(
+    @pytest.mark.asyncio
+    async def test_session_load_replays_user_messages(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -211,17 +212,19 @@ class TestSessionLoadReplay:
             active_turn=None,
         )
 
-        sessions = {"sess_1": session}
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
 
         # Act
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_1",
             params={"sessionId": "sess_1", "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert
@@ -241,7 +244,8 @@ class TestSessionLoadReplay:
         assert len(user_message_notifications) == 1
         assert user_message_notifications[0].params["update"]["content"]["text"] == "Hello"
 
-    def test_session_load_replays_agent_messages(
+    @pytest.mark.asyncio
+    async def test_session_load_replays_agent_messages(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -268,17 +272,19 @@ class TestSessionLoadReplay:
             active_turn=None,
         )
 
-        sessions = {"sess_1": session}
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
 
         # Act
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_1",
             params={"sessionId": "sess_1", "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert
@@ -295,7 +301,8 @@ class TestSessionLoadReplay:
         agent_content_text = agent_message_notifications[0].params["update"]["content"]["text"]
         assert agent_content_text == "I am ready to help!"
 
-    def test_session_load_replays_full_conversation(
+    @pytest.mark.asyncio
+    async def test_session_load_replays_full_conversation(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -330,17 +337,19 @@ class TestSessionLoadReplay:
             active_turn=None,
         )
 
-        sessions = {"sess_1": session}
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
 
         # Act
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_1",
             params={"sessionId": "sess_1", "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert
@@ -368,7 +377,8 @@ class TestSessionLoadReplay:
         assert len(agent_notifs) == 1
         assert agent_notifs[0].params["update"]["content"]["text"] == "2+2 equals 4"
 
-    def test_session_load_skips_non_session_update_events(
+    @pytest.mark.asyncio
+    async def test_session_load_skips_non_session_update_events(
         self,
         config_specs: dict[str, dict[str, Any]],
     ) -> None:
@@ -396,17 +406,19 @@ class TestSessionLoadReplay:
             active_turn=None,
         )
 
-        sessions = {"sess_1": session}
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
+        await storage.save_session(session)
 
         # Act
-        outcome = session_load(
+        outcome = await session_load(
             request_id="req_1",
             params={"sessionId": "sess_1", "cwd": "/tmp", "mcpServers": []},
             require_auth=False,
             authenticated=True,
             config_specs=config_specs,
             auth_methods=[],
-            sessions=sessions,
+            storage=storage,
         )
 
         # Assert

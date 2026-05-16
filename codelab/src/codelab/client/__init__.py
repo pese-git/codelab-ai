@@ -11,7 +11,6 @@
 # Основные модули клиента
 from codelab.client.application.state_machine import StateTransitionError, UIState
 from codelab.client.domain.entities import Message, Session
-from codelab.client.infrastructure.di_container import DIContainer
 from codelab.client.infrastructure.transport import Transport, WebSocketTransport
 
 __all__ = [
@@ -22,7 +21,6 @@ __all__ = [
     "UIState",
     "StateTransitionError",
     # Infrastructure
-    "DIContainer",
     "WebSocketTransport",
     "Transport",
 ]

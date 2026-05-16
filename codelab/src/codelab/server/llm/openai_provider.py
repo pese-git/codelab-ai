@@ -66,7 +66,7 @@ class OpenAIProvider(LLMProvider):
             has_base_url=bool(base_url),
         )
 
-    async def create_completion(  # type: ignore[no-untyped-def]
+    async def create_completion(
         self,
         messages: list[LLMMessage],
         tools: list[dict[str, Any]] | None = None,
@@ -122,7 +122,7 @@ class OpenAIProvider(LLMProvider):
 
         try:
             logger.debug("sending request to openai api")
-            response: ChatCompletion = await self._client.chat.completions.create(  # type: ignore[arg-type]
+            response: ChatCompletion = await self._client.chat.completions.create(
                 **request_params
             )
             logger.debug(
@@ -198,12 +198,12 @@ class OpenAIProvider(LLMProvider):
         try:
             # Получить потоковый ответ от OpenAI
             logger.debug("sending streaming request to openai api")
-            stream = await self._client.chat.completions.create(  # type: ignore[arg-type]
+            stream = await self._client.chat.completions.create(
                 **request_params
             )
             buffer = ""
             chunk_count = 0
-            async for chunk in stream:  # type: ignore[union-attr]
+            async for chunk in stream:
                 chunk_count += 1
                 if chunk.choices[0].delta.content:
                     buffer += chunk.choices[0].delta.content
@@ -232,7 +232,7 @@ class OpenAIProvider(LLMProvider):
             )
             raise
 
-    def _parse_completion(self, response: ChatCompletion) -> LLMResponse:  # type: ignore[no-untyped-def]  # noqa: C901
+    def _parse_completion(self, response: ChatCompletion) -> LLMResponse:  # noqa: C901
         """Преобразовать ответ OpenAI в LLMResponse.
 
         Args:
@@ -250,68 +250,68 @@ class OpenAIProvider(LLMProvider):
         logger.debug(
             "parsing openai completion",
             finish_reason=choice.finish_reason,
-            has_message_tool_calls=bool(message.tool_calls),  # type: ignore[union-attr]
+            has_message_tool_calls=bool(message.tool_calls),
             message_content_length=len(text),
         )
 
         # Извлечь tool calls
         tool_calls: list[LLMToolCall] = []
-        if message.tool_calls:  # type: ignore[union-attr]
+        if message.tool_calls:
             logger.debug(
                 "parsing tool_calls from message",
-                num_tool_calls=len(message.tool_calls),  # type: ignore[union-attr]
+                num_tool_calls=len(message.tool_calls),
             )
             
-            for idx, tool_call in enumerate(message.tool_calls):  # type: ignore[union-attr]
+            for idx, tool_call in enumerate(message.tool_calls):
                 logger.debug(
                     "parsing individual tool_call",
                     tool_call_index=idx,
-                    tool_call_id=tool_call.id,  # type: ignore[union-attr]
-                    tool_call_type=tool_call.type,  # type: ignore[union-attr]
+                    tool_call_id=tool_call.id,
+                    tool_call_type=tool_call.type,
                 )
                 
-                if tool_call.type == "function":  # type: ignore[union-attr]
+                if tool_call.type == "function":
                     # Получить функцию из tool_call
-                    func = tool_call.function  # type: ignore[union-attr]
+                    func = tool_call.function
                     # Преобразовать arguments из строки в dict если нужно
                     args: dict[str, Any] = {}
                     if hasattr(func, "arguments"):  # noqa: SIM118
-                        if isinstance(func.arguments, str):  # type: ignore[union-attr]
+                        if isinstance(func.arguments, str):
                             try:
-                                args = json.loads(func.arguments)  # type: ignore[union-attr]
+                                args = json.loads(func.arguments)
                                 logger.debug(
                                     "parsed tool arguments from json",
-                                    tool_name=func.name,  # type: ignore[union-attr]
+                                    tool_name=func.name,
                                     arguments=args,
                                 )
                             except (json.JSONDecodeError, TypeError) as e:
                                 logger.error(
                                     "failed to parse tool arguments json",
-                                    tool_name=func.name,  # type: ignore[union-attr]
-                                    raw_arguments=func.arguments,  # type: ignore[union-attr]
+                                    tool_name=func.name,
+                                    raw_arguments=func.arguments,
                                     error=str(e),
                                 )
                                 args = {}
-                        elif isinstance(func.arguments, dict):  # type: ignore[union-attr]
-                            args = func.arguments  # type: ignore[union-attr]
+                        elif isinstance(func.arguments, dict):
+                            args = func.arguments
                             logger.debug(
                                 "tool arguments already dict",
-                                tool_name=func.name,  # type: ignore[union-attr]
+                                tool_name=func.name,
                                 arguments=args,
                             )
 
                     tool_calls.append(
                         LLMToolCall(
-                            id=tool_call.id,  # type: ignore[union-attr]
-                            name=func.name,  # type: ignore[union-attr]
+                            id=tool_call.id,
+                            name=func.name,
                             arguments=args,
                         )
                     )
                     
                     logger.debug(
                         "tool_call parsed successfully",
-                        tool_call_id=tool_call.id,  # type: ignore[union-attr]
-                        tool_name=func.name,  # type: ignore[union-attr]
+                        tool_call_id=tool_call.id,
+                        tool_name=func.name,
                     )
 
         # Определить stop reason

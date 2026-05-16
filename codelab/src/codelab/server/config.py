@@ -11,6 +11,7 @@
     CODELAB_LLM_TEMPERATURE: Temperature для LLM (по умолчанию 0.7)
     CODELAB_LLM_MAX_TOKENS: Максимальное количество токенов (по умолчанию 8192)
     CODELAB_SYSTEM_PROMPT: Системный промпт для агента
+    CODELAB_SESSION_CACHE_SIZE: Размер LRU-кэша сессий (по умолчанию 200)
 
 Пример использования:
     config = AppConfig()
@@ -78,6 +79,34 @@ class AgentConfig(BaseModel):
     )
 
 
+class StorageConfig(BaseModel):
+    """Конфигурация хранилища сессий.
+
+    Атрибуты:
+        session_cache_size: Максимальное количество сессий в LRU-кэше
+    """
+
+    session_cache_size: int = Field(
+        default_factory=lambda: int(os.getenv("CODELAB_SESSION_CACHE_SIZE", "200"))
+    )
+
+
+class WebSocketConfig(BaseModel):
+    """Конфигурация WebSocket-соединения.
+
+    Атрибуты:
+        max_msg_size: Максимальный размер одного сообщения в байтах (по умолчанию 4 МБ)
+        heartbeat_interval: Интервал heartbeat-пинга в секундах (по умолчанию 30.0)
+    """
+
+    max_msg_size: int = Field(
+        default_factory=lambda: int(os.getenv("CODELAB_WS_MAX_MSG_SIZE", str(4 * 1024 * 1024))),
+    )
+    heartbeat_interval: float = Field(
+        default_factory=lambda: float(os.getenv("CODELAB_WS_HEARTBEAT_INTERVAL", "30.0")),
+    )
+
+
 class AppConfig(BaseModel):
     """Глобальная конфигурация ACP сервера.
 
@@ -96,6 +125,8 @@ class AppConfig(BaseModel):
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    websocket: WebSocketConfig = Field(default_factory=WebSocketConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
 
     @classmethod
     def from_env(cls) -> AppConfig:

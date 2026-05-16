@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 from ...messages import ACPMessage, JsonRpcId
+from ...storage import SessionStorage
 from ..session_factory import SessionFactory
 from ..state import ClientRuntimeCapabilities, ProtocolOutcome, SessionState
 from .replay_manager import ReplayManager
@@ -143,14 +144,14 @@ def session_new(
     )
 
 
-def session_load(
+async def session_load(
     request_id: JsonRpcId | None,
     params: dict[str, Any],
     require_auth: bool,
     authenticated: bool,
     config_specs: dict[str, dict[str, Any]],
     auth_methods: list[dict[str, Any]],
-    sessions: dict[str, SessionState],
+    storage: SessionStorage,
 ) -> ProtocolOutcome:
     """Загружает существующую сессию и реплеит состояние через updates.
 
@@ -158,14 +159,14 @@ def session_load(
     история сообщений, config options, команды и session info.
 
     Пример использования:
-        outcome = session_load(
+        outcome = await session_load(
             "req_1",
             {"sessionId": "sess_1", "cwd": "/tmp", "mcpServers": []},
             False,
             True,
             {},
             [],
-            {},
+            storage,
         )
     """
 
@@ -209,7 +210,7 @@ def session_load(
             )
         )
 
-    session = sessions.get(session_id)
+    session = await storage.load_session(session_id)
     if session is None:
         return ProtocolOutcome(
             response=ACPMessage.error_response(
@@ -329,16 +330,16 @@ def session_load(
     )
 
 
-def session_list(
+async def session_list(
     request_id: JsonRpcId | None,
     params: dict[str, Any],
-    sessions: dict[str, SessionState],
+    storage: SessionStorage,
     session_list_page_size: int = 50,
 ) -> ACPMessage:
     """Возвращает список сессий с опциональной фильтрацией по `cwd`.
 
     Пример использования:
-        response = session_list("req_1", {"cwd": "/tmp"}, {})
+        response = await session_list("req_1", {"cwd": "/tmp"}, storage)
     """
 
     # Поддерживаем фильтрацию сессий по cwd для клиентских списков.
@@ -370,18 +371,27 @@ def session_list(
             )
         start_index = decoded
 
+    # Загружаем сессии через storage с пагинацией
     sessions_list: list[dict[str, Any]] = []
-    for session in sessions.values():
-        if isinstance(cwd_filter, str) and session.cwd != cwd_filter:
-            continue
-        sessions_list.append(
-            {
-                "sessionId": session.session_id,
-                "cwd": session.cwd,
-                "title": session.title,
-                "updatedAt": session.updated_at,
-            }
+    storage_cursor = None
+    while True:
+        page, next_cursor = await storage.list_sessions(
+            cwd=cwd_filter if isinstance(cwd_filter, str) else None,
+            cursor=storage_cursor,
+            limit=100,
         )
+        for session in page:
+            sessions_list.append(
+                {
+                    "sessionId": session.session_id,
+                    "cwd": session.cwd,
+                    "title": session.title,
+                    "updatedAt": session.updated_at,
+                }
+            )
+        if next_cursor is None:
+            break
+        storage_cursor = next_cursor
 
     sorted_sessions = sorted(
         sessions_list, key=lambda item: str(item.get("updatedAt") or ""), reverse=True
