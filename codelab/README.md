@@ -132,6 +132,79 @@ cp .env.example .env
 | `CODELAB_HOST` | Хост сервера | `127.0.0.1` |
 | `CODELAB_LOG_LEVEL` | Уровень логирования | `INFO` |
 
+## Архитектура сервера
+
+Сервер использует DI-контейнер **Dishka** для управления зависимостями. Зависимости разделены на два уровня:
+
+- **APP scope** — живут всё время работы сервера (LLM-провайдер, реестр инструментов, оркестратор агента, менеджер политик).
+- **REQUEST scope** — создаются вручную при каждом WebSocket-подключении (оркестратор промптов, протокол ACP, сервис RPC к клиенту).
+
+```mermaid
+graph TD
+    subgraph APP Scope["APP Scope — одно на весь сервер"]
+        A[AppConfig]
+        S[SessionStorage]
+        LLM[LLMProvider]
+        TR[ToolRegistry]
+        AO[AgentOrchestrator]
+        GPS[GlobalPolicyStorage]
+        GPM[GlobalPolicyManager]
+    end
+
+    subgraph Request Scope["REQUEST Scope — одно на WS-подключение"]
+        CRPC[ClientRPCService]
+        SM[StateManager]
+        PB[PlanBuilder]
+        TLCM[TurnLifecycleManager]
+        TCH[ToolCallHandler]
+        PM[PermissionManager]
+        CRH[ClientRPCHandler]
+        PO[PromptOrchestrator]
+        AP[ACPProtocol]
+    end
+
+    %% APP scope dependencies
+    A -->|from_context| LLM
+    A -->|from_context| AO
+    LLM --> AO
+    TR --> AO
+    GPS --> GPM
+
+    %% REQUEST scope dependencies
+    SM --> PO
+    PB --> PO
+    TLCM --> PO
+    TCH --> PO
+    PM --> PO
+    CRH --> PO
+    TR --> PO
+    GPM --> PO
+    CRPC -->|holder| PO
+
+    A -->|from_context| AP
+    S -->|from_context| AP
+    AO --> AP
+    TR --> AP
+    CRPC -->|holder| AP
+    PO --> AP
+
+    %% Cross-scope
+    TR -.->|APP, используется в REQUEST| PO
+    AO -.->|APP, используется в REQUEST| AP
+    GPM -.->|APP, используется в REQUEST| PO
+
+    classDef app fill:#e1f5fe,stroke:#01579b
+    classDef request fill:#f3e5f5,stroke:#4a148c
+    class A,S,LLM,TR,AO,GPS,GPM app
+    class CRPC,SM,PB,TLCM,TCH,PM,CRH,PO,AP request
+```
+
+### Как это работает
+
+1. При запуске `codelab serve` создаётся DI-контейнер (`di.make_container`) с APP-зависимостями.
+2. При каждом WebSocket-подключении создаётся `ClientRPCService` и REQUEST-объекты вручную.
+3. `PromptOrchestrator` лениво регистрирует инструменты при первом `handle_prompt`, когда `ClientRPCService` уже доступен.
+
 ## Разработка
 
 ```bash
