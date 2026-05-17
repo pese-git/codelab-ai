@@ -52,6 +52,8 @@ class SessionState(BaseModel):
     # с сессией через find_session_by_permission_request_id.
     # Очищается при старте нового prompt-turn (см. session_prompt).
     active_turn: ActiveTurnState | None = None
+    # Отложенный response для prompt-turn (заполняется при cancel).
+    pending_prompt_response: dict[str, Any] | None = None
     # Локальный счетчик для стабильной генерации toolCallId.
     tool_call_counter: int = 0
     # Реестр созданных tool calls и их состояний.

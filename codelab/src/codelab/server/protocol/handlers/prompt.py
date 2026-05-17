@@ -31,6 +31,7 @@ from .permissions import (
     build_permission_options,
     resolve_remembered_permission_decision,
 )
+from .pipeline.stages import LLMLoopStage
 from .plan_builder import PlanBuilder
 from .prompt_orchestrator import PromptOrchestrator
 from .replay_manager import ReplayManager
@@ -58,34 +59,7 @@ def create_prompt_orchestrator(
     client_rpc_service: ClientRPCService | None = None,
     global_policy_manager: GlobalPolicyManager | None = None,
 ) -> PromptOrchestrator:
-    """Создает полностью инициализированный PromptOrchestrator со всеми компонентами.
-
-    Инициирует и собирает все необходимые компоненты:
-    - StateManager: управление состоянием сессии
-    - PlanBuilder: построение планов
-    - TurnLifecycleManager: управление фазами turn
-    - ToolCallHandler (Этап 2): управление tool calls
-    - PermissionManager (Этап 2): управление разрешениями
-    - ClientRPCHandler (Этап 2): управление client RPC запросами
-    - ToolRegistry: реестр инструментов для выполнения (опционально)
-    - ClientRPCService: сервис для выполнения RPC запросов (опционально)
-    - GlobalPolicyManager: для fallback chain при проверке разрешений (опционально)
-
-    Если tool_registry и client_rpc_service не переданы, оркестратор будет создан
-    в режиме совместимости без поддержки выполнения встроенных инструментов.
-
-    Args:
-        tool_registry: Реестр инструментов для регистрации и выполнения tools (опционально)
-        client_rpc_service: Сервис ClientRPC для выполнения инструментов (опционально)
-        global_policy_manager: GlobalPolicyManager для fallback chain (опционально)
-
-    Returns:
-        PromptOrchestrator: Готовый к использованию оркестратор
-
-    Пример использования:
-        orchestrator = create_prompt_orchestrator(registry, rpc_service, global_manager)
-        outcome = await orchestrator.handle_prompt(...)
-    """
+    """Создает полностью инициализированный PromptOrchestrator со всеми компонентами."""
     state_manager = StateManager()
     plan_builder = PlanBuilder()
     turn_lifecycle_manager = TurnLifecycleManager()
@@ -93,20 +67,25 @@ def create_prompt_orchestrator(
     permission_manager = PermissionManager()
     client_rpc_handler = ClientRPCHandler()
 
-    # Если tool_registry или client_rpc_service не переданы, создать dummy instances
     if tool_registry is None:
         from codelab.server.tools.registry import SimpleToolRegistry
-
         tool_registry = SimpleToolRegistry()
 
     if client_rpc_service is None:
-        # Создать minimal ClientRPCService для совместимости
-        # В реальном коде это должно быть передано из ACPProtocol
         logger.warning("client_rpc_service not provided, using None for compatibility")
-        # Для совместимости с session_cancel, который не нуждается в RPC
         client_rpc_service = None
     else:
         logger.info("client_rpc_service provided")
+
+    # Создаём LLMLoopStage
+    llm_loop_stage = LLMLoopStage(
+        tool_registry=tool_registry,
+        tool_call_handler=tool_call_handler,
+        permission_manager=permission_manager,
+        state_manager=state_manager,
+        plan_builder=plan_builder,
+        global_policy_manager=global_policy_manager,
+    )
 
     orchestrator = PromptOrchestrator(
         state_manager=state_manager,
@@ -116,6 +95,7 @@ def create_prompt_orchestrator(
         permission_manager=permission_manager,
         client_rpc_handler=client_rpc_handler,
         tool_registry=tool_registry,
+        llm_loop_stage=llm_loop_stage,
         client_rpc_service=client_rpc_service,
         global_policy_manager=global_policy_manager,
     )

@@ -14,6 +14,7 @@ import pytest
 from codelab.server.messages import JsonRpcId
 from codelab.server.protocol.handlers.client_rpc_handler import ClientRPCHandler
 from codelab.server.protocol.handlers.permission_manager import PermissionManager
+from codelab.server.protocol.handlers.pipeline.stages import LLMLoopStage
 from codelab.server.protocol.handlers.plan_builder import PlanBuilder
 from codelab.server.protocol.handlers.prompt_orchestrator import PromptOrchestrator
 from codelab.server.protocol.handlers.state_manager import StateManager
@@ -210,6 +211,14 @@ class TestPermissionFlowIntegration:
         client_rpc_handler = ClientRPCHandler()
         tool_registry = SimpleToolRegistry()
 
+        llm_loop_stage = LLMLoopStage(
+            tool_registry=tool_registry,
+            tool_call_handler=tool_call_handler,
+            permission_manager=permission_manager,
+            state_manager=state_manager,
+            plan_builder=plan_builder,
+        )
+
         return PromptOrchestrator(
             state_manager=state_manager,
             plan_builder=plan_builder,
@@ -218,6 +227,7 @@ class TestPermissionFlowIntegration:
             permission_manager=permission_manager,
             client_rpc_handler=client_rpc_handler,
             tool_registry=tool_registry,
+            llm_loop_stage=llm_loop_stage,
             client_rpc_service=None,
         )
 

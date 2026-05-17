@@ -37,9 +37,8 @@ async def _start_test_server(
     )
 
     # Инициализируем DI контейнер (как это делает run())
-    from codelab.server.storage import InMemoryStorage
     from codelab.server.di import make_container
-    from codelab.server.tools.base import ToolRegistry
+    from codelab.server.storage import InMemoryStorage
 
     if server.storage is None:
         server.storage = InMemoryStorage()
@@ -50,13 +49,6 @@ async def _start_test_server(
         require_auth=server.require_auth,
         auth_api_key=server.auth_api_key,
     )
-    server._app_scope = server._app_container()
-    await server._app_scope.__aenter__()
-
-    # Получаем зависимости из контейнера
-    from codelab.server.agent.orchestrator import AgentOrchestrator
-    server._agent_orchestrator = await server._app_scope.get(AgentOrchestrator | None)
-    server._tool_registry = await server._app_scope.get(ToolRegistry)
 
     app = web.Application()
     app.router.add_get("/acp/ws", server.handle_ws_request)
@@ -592,6 +584,19 @@ async def test_oversized_message_rejected() -> None:
         websocket=WebSocketConfig(max_msg_size=1024, heartbeat_interval=30.0),
     )
     server = ACPHttpServer(host="127.0.0.1", port=port, config=config)
+
+    # Инициализируем DI контейнер
+    from codelab.server.di import make_container
+    from codelab.server.storage import InMemoryStorage
+
+    server.storage = InMemoryStorage()
+    server._app_container = make_container(
+        config=server.config,
+        storage=server.storage,
+        require_auth=server.require_auth,
+        auth_api_key=server.auth_api_key,
+    )
+
     app = web.Application()
     app.router.add_get("/acp/ws", server.handle_ws_request)
 
@@ -629,6 +634,19 @@ async def test_message_within_limit_accepted() -> None:
         websocket=WebSocketConfig(max_msg_size=4 * 1024 * 1024, heartbeat_interval=30.0),
     )
     server = ACPHttpServer(host="127.0.0.1", port=port, config=config)
+
+    # Инициализируем DI контейнер
+    from codelab.server.di import make_container
+    from codelab.server.storage import InMemoryStorage
+
+    server.storage = InMemoryStorage()
+    server._app_container = make_container(
+        config=server.config,
+        storage=server.storage,
+        require_auth=server.require_auth,
+        auth_api_key=server.auth_api_key,
+    )
+
     app = web.Application()
     app.router.add_get("/acp/ws", server.handle_ws_request)
 

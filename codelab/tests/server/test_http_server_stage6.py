@@ -45,6 +45,21 @@ async def _start_test_server(
         require_auth=require_auth,
         auth_api_key=auth_api_key,
     )
+
+    # Инициализируем DI контейнер (как это делает run())
+    from codelab.server.di import make_container
+    from codelab.server.storage import InMemoryStorage
+
+    if server.storage is None:
+        server.storage = InMemoryStorage()
+
+    server._app_container = make_container(
+        config=server.config,
+        storage=server.storage,
+        require_auth=server.require_auth,
+        auth_api_key=server.auth_api_key,
+    )
+
     app = web.Application()
     app.router.add_get("/acp/ws", server.handle_ws_request)
 

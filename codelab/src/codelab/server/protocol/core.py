@@ -603,6 +603,58 @@ class ACPProtocol:
     async def _handle_session_prompt(self, message: ACPMessage) -> ProtocolOutcome:
         """Обрабатывает метод session/prompt."""
         params = message.params or {}
+        
+        # Попробовать использовать DI-injected orchestrator
+        orchestrator = await self._get_prompt_orchestrator()
+        if orchestrator is not None:
+            session_id = params.get("sessionId")
+            if not isinstance(session_id, str):
+                return ProtocolOutcome(
+                    response=ACPMessage.error_response(
+                        message.id,
+                        code=-32602,
+                        message="Invalid params: sessionId is required",
+                    )
+                )
+
+            session = await self._storage.load_session(session_id)
+            if session is None:
+                return ProtocolOutcome(
+                    response=ACPMessage.error_response(
+                        message.id,
+                        code=-32001,
+                        message=f"Session not found: {session_id}",
+                    )
+                )
+
+            # Очищаем stale active_turn от предыдущего незавершённого turn.
+            # Если turn был deferred (ожидает permission/client RPC), а соединение
+            # разорвалось или сервер перезапустился — active_turn остаётся в storage
+            # и блокирует новые запросы. Новый turn создаст свой active_turn.
+            session.active_turn = None
+
+            outcome = await orchestrator.handle_prompt(
+                request_id=message.id,
+                params=params,
+                session=session,
+                storage=self._storage,
+                agent_orchestrator=self._agent_orchestrator,  # type: ignore[arg-type]
+            )
+
+            # Сохраняем сессию (критично для permission flow)
+            try:
+                await self._storage.save_session(session)
+            except Exception as e:
+                logger.error(
+                    "failed_to_save_session_after_prompt",
+                    session_id=session_id,
+                    error=str(e),
+                )
+
+            return outcome
+        
+        # Fallback к legacy handler для обратной совместимости (тесты)
+        from .handlers import prompt
         return await prompt.session_prompt(
             message.id,
             params,
@@ -617,6 +669,36 @@ class ACPProtocol:
     async def _handle_session_cancel(self, message: ACPMessage) -> ProtocolOutcome:
         """Обрабатывает метод session/cancel."""
         params = message.params or {}
+        
+        # Попробовать использовать DI-injected orchestrator
+        orchestrator = await self._get_prompt_orchestrator()
+        if orchestrator is not None:
+            session_id = params.get("sessionId")
+            if not isinstance(session_id, str):
+                return ProtocolOutcome(response=None, notifications=[])
+
+            session = await self._storage.load_session(session_id)
+            if session is None:
+                return ProtocolOutcome(
+                    response=ACPMessage.response(message.id, None),
+                    notifications=[],
+                )
+
+            outcome = orchestrator.handle_cancel(
+                request_id=message.id,
+                params=params,
+                session=session,
+            )
+
+            await self._storage.save_session(session)
+
+            return ProtocolOutcome(
+                response=outcome.response or ACPMessage.response(message.id, None),
+                notifications=outcome.notifications,
+            )
+        
+        # Fallback к legacy handler для обратной совместимости (тесты)
+        from .handlers import prompt
         return await prompt.session_cancel(
             message.id,
             params,

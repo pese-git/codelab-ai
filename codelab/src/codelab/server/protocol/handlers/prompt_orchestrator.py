@@ -61,6 +61,7 @@ class PromptOrchestrator:
         permission_manager: PermissionManager,
         client_rpc_handler: ClientRPCHandler,
         tool_registry: ToolRegistry,
+        llm_loop_stage: LLMLoopStage,
         client_rpc_service_holder: ClientRPCServiceHolder | None = None,
         client_rpc_service: ClientRPCService | None = None,  # backward compatibility
         global_policy_manager: GlobalPolicyManager | None = None,
@@ -98,21 +99,17 @@ class PromptOrchestrator:
         self._command_registry.register(ModeCommandHandler())
         self._command_registry.register(HelpCommandHandler(self._command_registry))
 
-        # LLMLoopStage хранится отдельно для делегирования из execute_pending_tool
-        self._llm_loop_stage = LLMLoopStage(
-            tool_registry=tool_registry,
-            tool_call_handler=tool_call_handler,
-            permission_manager=permission_manager,
-            state_manager=state_manager,
-            plan_builder=plan_builder,
-            global_policy_manager=global_policy_manager,
-        )
+        # LLMLoopStage инжектируется из DI (SOLID: DIP)
+        self._llm_loop_stage = llm_loop_stage
+
+        from .pipeline.stages.directives import DirectivesStage
 
         self._pipeline = PromptPipeline(stages=[
             ValidationStage(state_manager),
             SlashCommandStage(self._slash_router),
             PlanBuildingStage(plan_builder),
             TurnLifecycleStage(turn_lifecycle_manager, action="open"),
+            DirectivesStage(tool_registry, permission_manager),
             self._llm_loop_stage,
             TurnLifecycleStage(turn_lifecycle_manager, action="close"),
         ])
@@ -214,7 +211,8 @@ class PromptOrchestrator:
             if session.active_turn is not None:
                 self.turn_lifecycle_manager.finalize_turn(session, "end_turn")
                 self.turn_lifecycle_manager.clear_active_turn(session)
-            return ProtocolOutcome(response=result.error_response, notifications=result.notifications)
+            # Не отправляем notifications при ошибке валидации
+            return ProtocolOutcome(response=result.error_response, notifications=[])
 
         # Добавить session info независимо от того, завершён turn или отложен
         summary = self.state_manager.get_session_summary(session)
@@ -300,6 +298,14 @@ class PromptOrchestrator:
                 logger.debug("cancelled pending RPC requests", session_id=session_id, cancelled_count=cancelled_rpc_count)
 
         self.turn_lifecycle_manager.finalize_turn(session, "cancelled")
+
+        # Сохраняем prompt response до очистки active_turn
+        if session.active_turn is not None and session.active_turn.prompt_request_id is not None:
+            session.pending_prompt_response = {
+                "request_id": session.active_turn.prompt_request_id,
+                "stop_reason": "cancelled",
+            }
+
         self.turn_lifecycle_manager.clear_active_turn(session)
 
         logger.debug("cancel request handled", session_id=session_id, notifications_count=len(notifications))

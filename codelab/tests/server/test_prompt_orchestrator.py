@@ -13,6 +13,7 @@ from codelab.server.agent.base import AgentResponse
 from codelab.server.llm.base import LLMToolCall
 from codelab.server.protocol.handlers.client_rpc_handler import ClientRPCHandler
 from codelab.server.protocol.handlers.permission_manager import PermissionManager
+from codelab.server.protocol.handlers.pipeline.stages import LLMLoopStage
 from codelab.server.protocol.handlers.plan_builder import PlanBuilder
 from codelab.server.protocol.handlers.prompt_orchestrator import PromptOrchestrator
 from codelab.server.protocol.handlers.state_manager import StateManager
@@ -65,6 +66,24 @@ def tool_registry() -> SimpleToolRegistry:
 
 
 @pytest.fixture
+def llm_loop_stage(
+    tool_registry: SimpleToolRegistry,
+    tool_call_handler: ToolCallHandler,
+    permission_manager: PermissionManager,
+    state_manager: StateManager,
+    plan_builder: PlanBuilder,
+) -> LLMLoopStage:
+    """Создаёт LLMLoopStage."""
+    return LLMLoopStage(
+        tool_registry=tool_registry,
+        tool_call_handler=tool_call_handler,
+        permission_manager=permission_manager,
+        state_manager=state_manager,
+        plan_builder=plan_builder,
+    )
+
+
+@pytest.fixture
 def orchestrator(
     state_manager: StateManager,
     plan_builder: PlanBuilder,
@@ -73,6 +92,7 @@ def orchestrator(
     permission_manager: PermissionManager,
     client_rpc_handler: ClientRPCHandler,
     tool_registry: SimpleToolRegistry,
+    llm_loop_stage: LLMLoopStage,
 ) -> PromptOrchestrator:
     """Создает PromptOrchestrator со всеми компонентами."""
     return PromptOrchestrator(
@@ -83,6 +103,7 @@ def orchestrator(
         permission_manager=permission_manager,
         client_rpc_handler=client_rpc_handler,
         tool_registry=tool_registry,
+        llm_loop_stage=llm_loop_stage,
         client_rpc_service=None,
     )
 
