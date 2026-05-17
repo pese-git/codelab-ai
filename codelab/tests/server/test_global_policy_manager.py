@@ -1,6 +1,7 @@
 """Unit тесты для GlobalPolicyManager.
 
-Тестирует singleton pattern, кэширование, валидацию и операции с policies.
+Тестирует создание через DI, кэширование, валидацию и операции с policies.
+GlobalPolicyManager больше не singleton — создаётся через DI контейнер.
 """
 
 import asyncio
@@ -24,36 +25,6 @@ def mock_storage() -> AsyncMock:
     storage.get_policy = AsyncMock(return_value=None)
     storage.list_policies = AsyncMock(return_value={})
     return storage
-
-
-class TestSingletonPattern:
-    """Тесты singleton pattern."""
-
-    @pytest.mark.asyncio
-    async def test_singleton_instance(self, tmp_path: Path) -> None:
-        """Проверить что get_instance возвращает один экземпляр."""
-        storage_path = tmp_path / "policies.json"
-        instance1 = await GlobalPolicyManager.get_instance(storage_path=storage_path)
-        instance2 = await GlobalPolicyManager.get_instance(storage_path=storage_path)
-        assert instance1 is instance2
-
-    @pytest.mark.asyncio
-    async def test_get_instance_initializes_storage(
-        self, tmp_path: Path
-    ) -> None:
-        """Проверить что get_instance инициализирует storage."""
-        storage_path = tmp_path / "policies.json"
-        instance = await GlobalPolicyManager.get_instance(storage_path=storage_path)
-        assert instance is not None
-        assert instance._cache is not None
-
-    @pytest.mark.asyncio
-    async def test_reset_instance(self, mock_storage: AsyncMock) -> None:
-        """Проверить что reset_for_testing очищает singleton."""
-        instance1 = await GlobalPolicyManager.get_instance()
-        GlobalPolicyManager.reset_for_testing()
-        instance2 = await GlobalPolicyManager.get_instance()
-        assert instance1 is not instance2
 
 
 class TestInitialization:
@@ -99,6 +70,22 @@ class TestInitialization:
         manager = GlobalPolicyManager(mock_storage)
         with pytest.raises(StorageError):
             await manager.initialize()
+
+    @pytest.mark.asyncio
+    async def test_create_multiple_instances(self, tmp_path: Path) -> None:
+        """Проверить что можно создать несколько независимых экземпляров."""
+        storage_path1 = tmp_path / "policies1.json"
+        storage_path2 = tmp_path / "policies2.json"
+
+        manager1 = GlobalPolicyManager(GlobalPolicyStorage(storage_path=storage_path1))
+        manager2 = GlobalPolicyManager(GlobalPolicyStorage(storage_path=storage_path2))
+
+        await manager1.initialize()
+        await manager2.initialize()
+
+        assert manager1 is not manager2
+        assert manager1._storage._storage_path == storage_path1
+        assert manager2._storage._storage_path == storage_path2
 
 
 class TestGetGlobalPolicy:
@@ -456,104 +443,51 @@ class TestConcurrentAccess:
         assert isinstance(results[2], dict)
 
 
-class TestMultipleConcurrentGetInstance:
-    """Тесты concurrent calls к get_instance."""
+class TestDIIntegration:
+    """Тесты интеграции с DI контейнером."""
 
     @pytest.mark.asyncio
-    async def test_multiple_concurrent_get_instance(
-        self, tmp_path: Path
-    ) -> None:
-        """Concurrent get_instance возвращает один экземпляр."""
+    async def test_create_manager_directly(self, tmp_path: Path) -> None:
+        """Проверить создание GlobalPolicyManager напрямую."""
+        from codelab.server.storage.global_policy_storage import GlobalPolicyStorage
+
         storage_path = tmp_path / "policies.json"
+        storage = GlobalPolicyStorage(storage_path=storage_path)
+        manager = GlobalPolicyManager(storage=storage)
+        await manager.initialize()
 
-        instances = await asyncio.gather(
-            GlobalPolicyManager.get_instance(storage_path=storage_path),
-            GlobalPolicyManager.get_instance(storage_path=storage_path),
-            GlobalPolicyManager.get_instance(storage_path=storage_path),
-        )
-
-        assert instances[0] is instances[1]
-        assert instances[1] is instances[2]
+        assert manager is not None
+        assert manager._cache is not None
 
     @pytest.mark.asyncio
-    async def test_get_instance_storage_path_ignored_after_init(
+    async def test_multiple_independent_managers(
         self, tmp_path: Path
     ) -> None:
-        """Параметр storage_path игнорируется после первого создания."""
+        """Проверить что можно создать несколько независимых manager."""
+        from codelab.server.storage.global_policy_storage import GlobalPolicyStorage
+
         storage_path1 = tmp_path / "policies1.json"
         storage_path2 = tmp_path / "policies2.json"
 
-        instance1 = await GlobalPolicyManager.get_instance(storage_path=storage_path1)
-        instance2 = await GlobalPolicyManager.get_instance(storage_path=storage_path2)
+        storage1 = GlobalPolicyStorage(storage_path=storage_path1)
+        storage2 = GlobalPolicyStorage(storage_path=storage_path2)
 
-        assert instance1 is instance2
-        # Оба должны использовать storage_path1
-        assert instance1._storage._storage_path == storage_path1
+        manager1 = GlobalPolicyManager(storage=storage1)
+        manager2 = GlobalPolicyManager(storage=storage2)
 
-    @pytest.mark.asyncio
-    async def test_concurrent_get_instance_creates_only_one(self) -> None:
-        """Конкурентные вызовы должны вернуть один и тот же экземпляр."""
-        results = await asyncio.gather(*[
-            GlobalPolicyManager.get_instance()
-            for _ in range(10)
-        ])
-        first = results[0]
-        assert all(r is first for r in results)
+        await manager1.initialize()
+        await manager2.initialize()
 
-    @pytest.mark.asyncio
-    async def test_lock_works_in_new_event_loop(self) -> None:
-        """Lock должен корректно работать после сброса в новом event loop."""
-        GlobalPolicyManager.reset_for_testing()
-        # Просто убеждаемся что не падает
-        instance = await GlobalPolicyManager.get_instance()
-        assert instance is not None
+        # Разные manager instances
+        assert manager1 is not manager2
 
-    def test_get_instance_requires_running_loop(self) -> None:
-        """get_instance проверяет наличие running event loop."""
-        # Проверяем что внутри get_instance есть проверка на running loop
-        # путём вызова из синхронного контекста (без event loop)
-        GlobalPolicyManager.reset_for_testing()
+        # Установим разные policies
+        await manager1.set_global_policy("test", "allow_always")
+        await manager2.set_global_policy("test", "reject_always")
 
-        # Создаём корутину но не запускаем её
-        coro = GlobalPolicyManager.get_instance()
-
-        # Проверяем что это корутина (значит функция асинхронная)
-        assert asyncio.iscoroutine(coro)
-
-        # Закрываем корутину без запуска
-        coro.close()
-
-
-class TestResetForTesting:
-    """Тесты метода reset_for_testing."""
-
-    @pytest.mark.asyncio
-    async def test_reset_clears_singleton(self) -> None:
-        """После сброса создаётся новый экземпляр."""
-        instance1 = await GlobalPolicyManager.get_instance()
-        GlobalPolicyManager.reset_for_testing()
-        instance2 = await GlobalPolicyManager.get_instance()
-        assert instance1 is not instance2
-
-    @pytest.mark.asyncio
-    async def test_reset_clears_lock(self) -> None:
-        """После сброса lock также очищается."""
-        await GlobalPolicyManager.get_instance()
-        assert GlobalPolicyManager._lock is not None
-        GlobalPolicyManager.reset_for_testing()
-        assert GlobalPolicyManager._lock is None
-
-    @pytest.mark.asyncio
-    async def test_reset_allows_new_lock_creation(self) -> None:
-        """После сброса должен создаться новый lock в новом тесте."""
-        await GlobalPolicyManager.get_instance()
-        old_lock = GlobalPolicyManager._lock
-        assert old_lock is not None
-
-        GlobalPolicyManager.reset_for_testing()
-        new_lock = GlobalPolicyManager._get_lock()
-
-        assert new_lock is not old_lock
+        # Проверить что policies независимы
+        assert await manager1.get_global_policy("test") == "allow_always"
+        assert await manager2.get_global_policy("test") == "reject_always"
 
 
 class TestValidationAndErrors:

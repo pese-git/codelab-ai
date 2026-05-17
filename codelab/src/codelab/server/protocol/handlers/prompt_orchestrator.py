@@ -8,6 +8,7 @@ import structlog
 
 from ...client_rpc.service import ClientRPCService
 from ...messages import ACPMessage, JsonRpcId
+from ...rpc_holder import ClientRPCServiceHolder
 from ...storage import SessionStorage
 from ...tools.base import ToolRegistry
 from ..state import LLMLoopResult, ProtocolOutcome, SessionState
@@ -60,7 +61,8 @@ class PromptOrchestrator:
         permission_manager: PermissionManager,
         client_rpc_handler: ClientRPCHandler,
         tool_registry: ToolRegistry,
-        client_rpc_service: ClientRPCService | None = None,
+        client_rpc_service_holder: ClientRPCServiceHolder | None = None,
+        client_rpc_service: ClientRPCService | None = None,  # backward compatibility
         global_policy_manager: GlobalPolicyManager | None = None,
     ):
         self.state_manager = state_manager
@@ -69,33 +71,25 @@ class PromptOrchestrator:
         self.tool_call_handler = tool_call_handler
         self.permission_manager = permission_manager
         self.client_rpc_handler = client_rpc_handler
-        self.client_rpc_service = client_rpc_service
+        self.tool_registry = tool_registry
+        self.global_policy_manager = global_policy_manager
+        self._tools_registered = False
 
-        # Регистрация встроенных инструментов
-        if client_rpc_service is not None:
-            from ...tools.definitions import (
-                FileSystemToolDefinitions,
-                PlanToolDefinitions,
-                TerminalToolDefinitions,
-            )
-            from ...tools.executors.filesystem_executor import FileSystemToolExecutor
-            from ...tools.executors.plan_executor import PlanToolExecutor
-            from ...tools.executors.terminal_executor import TerminalToolExecutor
-            from ...tools.integrations.client_rpc_bridge import ClientRPCBridge
-            from ...tools.integrations.permission_checker import PermissionChecker
-
-            bridge = ClientRPCBridge(client_rpc_service)
-            checker = PermissionChecker(permission_manager)
-            FileSystemToolDefinitions.register_all(tool_registry, FileSystemToolExecutor(bridge, checker))
-            TerminalToolDefinitions.register_all(tool_registry, TerminalToolExecutor(bridge, checker))
-            PlanToolDefinitions.register_all(tool_registry, PlanToolExecutor())
-            logger.debug("PromptOrchestrator initialized with tool executors", tools_registered=len(tool_registry.get_available_tools("")))
+        # Поддерживаем оба способа передачи сервиса
+        if client_rpc_service_holder is not None:
+            self.client_rpc_service_holder = client_rpc_service_holder
+        elif client_rpc_service is not None:
+            # backward compatibility: создаём holder с уже установленным сервисом
+            self.client_rpc_service_holder = ClientRPCServiceHolder()
+            self.client_rpc_service_holder.service = client_rpc_service
         else:
-            from ...tools.definitions import PlanToolDefinitions
-            from ...tools.executors.plan_executor import PlanToolExecutor
+            self.client_rpc_service_holder = None
 
-            PlanToolDefinitions.register_all(tool_registry, PlanToolExecutor())
-            logger.debug("PromptOrchestrator initialized with plan tool only (client_rpc_service is None)")
+        # Регистрация plan tool сразу
+        from ...tools.definitions import PlanToolDefinitions
+        from ...tools.executors.plan_executor import PlanToolExecutor
+
+        PlanToolDefinitions.register_all(tool_registry, PlanToolExecutor())
 
         # Slash commands
         self._command_registry = CommandRegistry()
@@ -122,6 +116,36 @@ class PromptOrchestrator:
             self._llm_loop_stage,
             TurnLifecycleStage(turn_lifecycle_manager, action="close"),
         ])
+
+    @property
+    def client_rpc_service(self) -> ClientRPCService | None:
+        """Возвращает ClientRPCService из holder."""
+        if self.client_rpc_service_holder is not None:
+            return self.client_rpc_service_holder.service
+        return None
+
+    def _ensure_tools_registered(self) -> None:
+        """Лениво регистрирует tool executors при первом использовании."""
+        if self._tools_registered:
+            return
+
+        if self.client_rpc_service is not None:
+            from ...tools.definitions import (
+                FileSystemToolDefinitions,
+                TerminalToolDefinitions,
+            )
+            from ...tools.executors.filesystem_executor import FileSystemToolExecutor
+            from ...tools.executors.terminal_executor import TerminalToolExecutor
+            from ...tools.integrations.client_rpc_bridge import ClientRPCBridge
+            from ...tools.integrations.permission_checker import PermissionChecker
+
+            bridge = ClientRPCBridge(self.client_rpc_service)
+            checker = PermissionChecker(self.permission_manager)
+            FileSystemToolDefinitions.register_all(self.tool_registry, FileSystemToolExecutor(bridge, checker))
+            TerminalToolDefinitions.register_all(self.tool_registry, TerminalToolExecutor(bridge, checker))
+            logger.debug("PromptOrchestrator registered tool executors", tools_registered=len(self.tool_registry.get_available_tools("")))
+
+        self._tools_registered = True
 
     @property
     def command_registry(self) -> CommandRegistry:
@@ -155,6 +179,9 @@ class PromptOrchestrator:
         Returns:
             ProtocolOutcome с notifications и response
         """
+        # Лениво регистрируем tool executors если service стал доступен
+        self._ensure_tools_registered()
+
         session_id = session.session_id
         prompt = params.get("prompt", [])
 

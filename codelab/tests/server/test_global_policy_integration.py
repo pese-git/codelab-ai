@@ -19,16 +19,11 @@ import pytest_asyncio
 from codelab.server.protocol.handlers.global_policy_manager import GlobalPolicyManager
 from codelab.server.protocol.handlers.permissions import resolve_remembered_permission_decision
 from codelab.server.protocol.session_factory import SessionFactory
+from codelab.server.storage.global_policy_storage import GlobalPolicyStorage
 
 
 class TestGlobalPolicyFallbackChain:
     """Тесты fallback chain для permission resolution."""
-
-    @pytest.fixture(autouse=True)
-    def cleanup(self) -> None:
-        """Очистить singleton после каждого теста."""
-        yield
-        GlobalPolicyManager.reset_for_testing()
 
     @pytest_asyncio.fixture
     async def temp_policy_storage(self) -> Path:
@@ -46,7 +41,9 @@ class TestGlobalPolicyFallbackChain:
         self, temp_policy_storage: Path
     ) -> GlobalPolicyManager:
         """Создать GlobalPolicyManager с тестовыми policies."""
-        manager = await GlobalPolicyManager.get_instance(storage_path=temp_policy_storage)
+        storage = GlobalPolicyStorage(storage_path=temp_policy_storage)
+        manager = GlobalPolicyManager(storage=storage)
+        await manager.initialize()
         # Установить некоторые глобальные политики
         await manager.set_global_policy("read", "allow_always")
         await manager.set_global_policy("execute", "reject_always")
@@ -319,28 +316,28 @@ class TestGlobalPolicyFallbackChain:
         )
 
     @pytest.mark.asyncio
-    async def test_global_policy_persistence_across_manager_instances(
+    async def test_global_policies_persist_across_instances(
         self, temp_policy_storage: Path
     ) -> None:
         """Global policies персистентны между instances.
 
         Сценарий:
         1. Создать manager1, установить policy
-        2. Сбросить singleton
-        3. Создать manager2 с тем же storage
-        4. Проверить что policy восстановлена
+        2. Создать manager2 с тем же storage
+        3. Проверить что policy восстановлена
         """
         # Создать первый manager и установить policy
-        manager1 = await GlobalPolicyManager.get_instance(storage_path=temp_policy_storage)
+        storage1 = GlobalPolicyStorage(storage_path=temp_policy_storage)
+        manager1 = GlobalPolicyManager(storage=storage1)
+        await manager1.initialize()
         await manager1.set_global_policy("test_tool", "allow_always")
 
-        # Сбросить singleton
-        GlobalPolicyManager.reset_for_testing()
-
         # Создать второй manager с тем же storage
-        manager2 = await GlobalPolicyManager.get_instance(storage_path=temp_policy_storage)
+        storage2 = GlobalPolicyStorage(storage_path=temp_policy_storage)
+        manager2 = GlobalPolicyManager(storage=storage2)
+        await manager2.initialize()
 
-        # Проверить что policy восстановлена
+        # Проверить что policy восстановлена из файла
         policy = await manager2.get_global_policy("test_tool")
         assert policy == "allow_always"
 
@@ -364,7 +361,9 @@ class TestGlobalPolicyFallbackChain:
         tmpdir = tempfile.mkdtemp()
         policy_file = Path(tmpdir) / "test_policies.json"
         try:
-            manager = await GlobalPolicyManager.get_instance(storage_path=policy_file)
+            storage = GlobalPolicyStorage(storage_path=policy_file)
+            manager = GlobalPolicyManager(storage=storage)
+            await manager.initialize()
             # Manager пуст, нет policies
 
             decision = await resolve_remembered_permission_decision(
@@ -378,4 +377,3 @@ class TestGlobalPolicyFallbackChain:
             import shutil
 
             shutil.rmtree(tmpdir, ignore_errors=True)
-            GlobalPolicyManager.reset_for_testing()

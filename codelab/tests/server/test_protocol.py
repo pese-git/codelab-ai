@@ -3156,31 +3156,39 @@ async def test_orchestrator_can_be_injected():
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_reset_after_policy_manager_init():
-    """После инициализации GlobalPolicyManager оркестратор должен пересоздаться."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+async def test_orchestrator_recreated_with_different_policy_manager():
+    """PromptOrchestrator должен пересоздаваться при изменении policy manager."""
+    from unittest.mock import AsyncMock, MagicMock
 
+    from codelab.server.protocol.handlers.global_policy_manager import GlobalPolicyManager
     from codelab.server.tools.registry import ToolRegistry
 
     tool_registry = MagicMock(spec=ToolRegistry)
-    protocol = ACPProtocol(tool_registry=tool_registry)
+    
+    # Создаём два разных policy manager
+    mock_gpm1 = AsyncMock(spec=GlobalPolicyManager)
+    mock_gpm1.initialize = AsyncMock()
+    mock_gpm2 = AsyncMock(spec=GlobalPolicyManager)
+    mock_gpm2.initialize = AsyncMock()
 
-    orch_before = await protocol._get_prompt_orchestrator()
-    assert orch_before is not None
+    # Создаём protocol с первым policy manager
+    protocol1 = ACPProtocol(
+        tool_registry=tool_registry,
+        global_policy_manager=mock_gpm1,
+    )
+    orch1 = await protocol1._get_prompt_orchestrator()
+    assert orch1 is not None
 
-    # Мокаем GlobalPolicyManager для теста
-    mock_gpm = AsyncMock()
-    mock_gpm.initialize = AsyncMock()
-    with patch(
-        "codelab.server.protocol.handlers.global_policy_manager.GlobalPolicyManager.get_instance",
-        return_value=mock_gpm,
-    ):
-        await protocol.initialize_global_policy_manager()
+    # Создаём protocol со вторым policy manager
+    protocol2 = ACPProtocol(
+        tool_registry=tool_registry,
+        global_policy_manager=mock_gpm2,
+    )
+    orch2 = await protocol2._get_prompt_orchestrator()
+    assert orch2 is not None
 
-    orch_after = await protocol._get_prompt_orchestrator()
-
-    # Оркестратор пересоздан с новым policy manager
-    assert orch_before is not orch_after
+    # Это разные оркестраторы с разными policy manager
+    assert orch1 is not orch2
 
 
 @pytest.mark.asyncio

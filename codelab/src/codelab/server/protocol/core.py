@@ -82,6 +82,7 @@ class ACPProtocol:
         client_rpc_service: ClientRPCService | None = None,
         tool_registry: ToolRegistry | None = None,
         prompt_orchestrator: PromptOrchestrator | None = None,
+        global_policy_manager: GlobalPolicyManager | None = None,
         middleware: list[MiddlewareFn] | None = None,
     ) -> None:
         """Инициализирует протокол и хранилище сессий.
@@ -94,6 +95,7 @@ class ACPProtocol:
             client_rpc_service: Сервис ClientRPC для выполнения инструментов (опционально).
             tool_registry: Реестр инструментов для регистрации и выполнения tools (опционально).
             prompt_orchestrator: Оркестратор prompt-turn (опционально, создаётся лениво).
+            global_policy_manager: Менеджер глобальных политик разрешений (опционально).
             middleware: Список middleware функций для сквозной логики (опционально).
 
         Пример использования:
@@ -126,7 +128,7 @@ class ACPProtocol:
         self._prompt_orchestrator: PromptOrchestrator | None = prompt_orchestrator
 
         # GlobalPolicyManager для fallback chain в permission checks
-        self._global_policy_manager: GlobalPolicyManager | None = None
+        self._global_policy_manager = global_policy_manager
 
         # Последние capabilities, согласованные через initialize.
         # Для in-memory demo-сервера это достаточно; по мере роста можно
@@ -453,7 +455,7 @@ class ACPProtocol:
         return cancelled_count
 
     async def _get_prompt_orchestrator(self) -> PromptOrchestrator | None:
-        """Получить или создать PromptOrchestrator.
+        """Получить PromptOrchestrator.
 
         Если передан явно в конструктор — использует его.
         Если нет — создаёт лениво при первом обращении.
@@ -467,38 +469,14 @@ class ACPProtocol:
         if self._tool_registry is None:
             return None
 
-        self._prompt_orchestrator = prompt.create_prompt_orchestrator(
+        from .handlers.prompt import create_prompt_orchestrator
+
+        self._prompt_orchestrator = create_prompt_orchestrator(
             tool_registry=self._tool_registry,
             client_rpc_service=self._client_rpc_service,
             global_policy_manager=self._global_policy_manager,
         )
         return self._prompt_orchestrator
-
-    async def initialize_global_policy_manager(self) -> None:
-        """Инициализировать GlobalPolicyManager для fallback на global policies.
-
-        Graceful degradation: если инициализация не удалась, продолжаем без global policies.
-
-        Пример использования:
-            await protocol.initialize_global_policy_manager()
-        """
-        try:
-            from .handlers.global_policy_manager import GlobalPolicyManager
-
-            self._global_policy_manager = await GlobalPolicyManager.get_instance()
-            await self._global_policy_manager.initialize()
-
-            # Сбросить кэш, чтобы оркестратор пересоздался с новым policy manager
-            self._prompt_orchestrator = None
-
-            logger.info("GlobalPolicyManager initialized successfully")
-        except Exception as e:
-            logger.warning(
-                "Failed to initialize GlobalPolicyManager, continuing without global policies",
-                error=str(e),
-                exc_info=True,
-            )
-            self._global_policy_manager = None
 
     # -----------------------------------------------------------------------
     # Обработчики методов протокола (реестр _handlers)

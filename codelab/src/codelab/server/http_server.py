@@ -23,14 +23,22 @@ from typing import TYPE_CHECKING
 
 import structlog
 from aiohttp import WSMsgType, web
+from dishka import AsyncContainer
 
 from .agent.orchestrator import AgentOrchestrator
-from .agent.state import OrchestratorConfig
 from .client_rpc.service import ClientRPCService
 from .config import AppConfig
+from .di import make_container
 from .llm import LLMProvider, MockLLMProvider, OpenAIProvider
 from .messages import ACPMessage
 from .protocol import ACPProtocol, ProtocolOutcome
+from .protocol.handlers.global_policy_manager import GlobalPolicyManager
+from .protocol.handlers.permission_manager import PermissionManager
+from .protocol.handlers.plan_builder import PlanBuilder
+from .protocol.handlers.prompt_orchestrator import PromptOrchestrator
+from .protocol.handlers.state_manager import StateManager
+from .protocol.handlers.tool_call_handler import ToolCallHandler
+from .protocol.handlers.turn_lifecycle_manager import TurnLifecycleManager
 from .storage import SessionStorage
 from .tools.registry import SimpleToolRegistry
 
@@ -104,6 +112,10 @@ class ACPHttpServer:
         self.storage = storage
         self.config = config or AppConfig()
         self.enable_web = enable_web
+        # DI контейнер приложения (SINGLETON + APP scope)
+        self._app_container: AsyncContainer | None = None
+        # APP scope контейнер для получения зависимостей
+        self._app_scope: AsyncContainer | None = None
         # Оркестратор агента инициализируется в методе run()
         self._agent_orchestrator: AgentOrchestrator | None = None
         # Реестр инструментов инициализируется в методе run()
@@ -258,44 +270,48 @@ class ACPHttpServer:
     async def run(self) -> None:
         """Запускает WS endpoint и держит процесс живым.
 
-        Инициализирует LLM провайдера и AgentOrchestrator на основе конфигурации.
+        Инициализирует DI контейнер и поднимает WS endpoint.
 
         Пример использования:
             await ACPHttpServer().run()
         """
-        # Инициализируем LLM провайдера на основе конфигурации
-        llm_provider = await self._initialize_llm_provider()
+        # Создаём DI контейнер и входим в APP скоуп
+        if self.storage is None:
+            from .storage import InMemoryStorage
+            self.storage = InMemoryStorage()
 
-        # Создаем реестр инструментов для всего сервера
-        self._tool_registry = SimpleToolRegistry()
+        logger.debug(
+            "creating DI container",
+            llm_provider=self.config.llm.provider,
+            storage_type=type(self.storage).__name__,
+        )
 
-        # Создаем AgentOrchestrator если есть провайдер
-        agent_orchestrator: AgentOrchestrator | None = None
-        if llm_provider is not None:
-            # Создаем конфигурацию оркестратора на основе глобального конфига
-            orchestrator_config = OrchestratorConfig(
-                enabled=True,
-                agent_class="naive",
-                model=self.config.llm.model,
-                temperature=self.config.llm.temperature,
-                max_tokens=self.config.llm.max_tokens,
-                llm_provider_class="openai" if self.config.llm.provider == "openai" else "mock",
-            )
+        # Используем async with для правильного управления скоупами
+        self._app_container = make_container(
+            config=self.config,
+            storage=self.storage,
+            require_auth=self.require_auth,
+            auth_api_key=self.auth_api_key,
+        )
 
-            # Инициализируем оркестратор со общим реестром инструментов
-            agent_orchestrator = AgentOrchestrator(
-                config=orchestrator_config,
-                llm_provider=llm_provider,
-                tool_registry=self._tool_registry,
-            )
+        # Входим в контейнер — это создаёт sub-container с REQUEST scope
+        # но APP зависимости доступны через parent chain
+        self._app_scope = self._app_container()
+        await self._app_scope.__aenter__()
 
+        # Получаем AgentOrchestrator из контейнера для логирования
+        logger.debug("requesting AgentOrchestrator from container")
+        agent_orchestrator = await self._app_scope.get(AgentOrchestrator | None)
+        if agent_orchestrator is not None:
             logger.info(
                 "agent orchestrator initialized",
                 system_prompt_length=len(self.config.agent.system_prompt),
             )
 
-        # Сохраняем оркестратор для использования в обработчике
+        # Сохраняем для использования в обработчике
         self._agent_orchestrator = agent_orchestrator
+        from .tools.base import ToolRegistry
+        self._tool_registry = await self._app_scope.get(ToolRegistry)
 
         app = web.Application()
         app.router.add_get("/acp/ws", self.handle_ws_request)
@@ -339,6 +355,9 @@ class ACPHttpServer:
             # Логируем остановку сервера
             logger.info("server shutting down")
             await runner.cleanup()
+            # Закрываем DI контейнер (APP scope)
+            if self._app_scope is not None:
+                await self._app_scope.__aexit__(None, None, None)
 
     async def handle_web_ui_request(self, request: web.Request) -> web.Response:
         """Обрабатывает запрос на Web UI.
@@ -530,12 +549,33 @@ class ACPHttpServer:
         # Создаем callback для отправки RPC запросов клиенту
         async def send_rpc_request(request_dict: dict) -> None:
             """Отправляет JSON-RPC request клиенту."""
-            await ws.send_json(request_dict)
+            async with ws_send_lock:
+                if not ws.closed:
+                    await ws.send_json(request_dict)
 
-        # Создаем ClientRPCService с пустыми capabilities (будут обновлены после initialize)
+        # Создаем ClientRPCService для этого соединения
         client_rpc_service = ClientRPCService(
             send_request_callback=send_rpc_request,
             client_capabilities={},
+        )
+
+        # Создаем REQUEST-scoped объекты вручную
+        state_manager = StateManager()
+        plan_builder = PlanBuilder()
+        turn_lifecycle_manager = TurnLifecycleManager()
+        tool_call_handler = ToolCallHandler()
+        permission_manager = PermissionManager()
+
+        prompt_orchestrator = PromptOrchestrator(
+            state_manager=state_manager,
+            plan_builder=plan_builder,
+            turn_lifecycle_manager=turn_lifecycle_manager,
+            tool_call_handler=tool_call_handler,
+            permission_manager=permission_manager,
+            client_rpc_handler=None,  # Will be set up lazily
+            tool_registry=self._tool_registry,
+            client_rpc_service=client_rpc_service,
+            global_policy_manager=await self._app_scope.get(GlobalPolicyManager),
         )
 
         protocol = ACPProtocol(
@@ -545,10 +585,8 @@ class ACPHttpServer:
             agent_orchestrator=self._agent_orchestrator,
             tool_registry=self._tool_registry,
             client_rpc_service=client_rpc_service,
+            prompt_orchestrator=prompt_orchestrator,
         )
-        
-        # Инициализируем GlobalPolicyManager для fallback на global policies
-        await protocol.initialize_global_policy_manager()
         
         # Храним отложенные завершения prompt-turn по sessionId в рамках WS-соединения.
         deferred_prompt_tasks: dict[str, asyncio.Task[None]] = {}
@@ -908,14 +946,16 @@ class ACPHttpServer:
                     cancelled_turns_count=cancelled_turns_count,
                 )
 
-            cancelled_rpc_count = client_rpc_service.cancel_all_pending_requests(
-                reason="WS connection closed before client response",
-            )
-            if cancelled_rpc_count > 0:
-                conn_logger.info(
-                    "pending client rpc cancelled on disconnect",
-                    cancelled_rpc_count=cancelled_rpc_count,
+            # Отменяем pending RPC запросы
+            if client_rpc_service is not None:
+                cancelled_rpc_count = client_rpc_service.cancel_all_pending_requests(
+                    reason="WS connection closed before client response",
                 )
+                if cancelled_rpc_count > 0:
+                    conn_logger.info(
+                        "pending client rpc cancelled on disconnect",
+                        cancelled_rpc_count=cancelled_rpc_count,
+                    )
 
             # Логируем закрытие соединения с продолжительностью и статусом
             duration = time.time() - start_time
