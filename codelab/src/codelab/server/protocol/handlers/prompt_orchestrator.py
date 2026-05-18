@@ -16,20 +16,11 @@ from .client_rpc_handler import ClientRPCHandler
 from .permission_manager import PermissionManager
 from .pipeline import (
     LLMLoopStage,
-    PlanBuildingStage,
     PromptContext,
     PromptPipeline,
-    SlashCommandStage,
-    TurnLifecycleStage,
-    ValidationStage,
 )
 from .plan_builder import PlanBuilder
-from .slash_commands import CommandRegistry, SlashCommandRouter
-from .slash_commands.builtin import (
-    HelpCommandHandler,
-    ModeCommandHandler,
-    StatusCommandHandler,
-)
+from .slash_commands import CommandRegistry
 from .state_manager import StateManager
 from .tool_call_handler import ToolCallHandler
 from .turn_lifecycle_manager import TurnLifecycleManager
@@ -62,11 +53,11 @@ class PromptOrchestrator:
         client_rpc_handler: ClientRPCHandler,
         tool_registry: ToolRegistry,
         llm_loop_stage: LLMLoopStage,
+        command_registry: CommandRegistry,
+        pipeline: PromptPipeline,
         client_rpc_service_holder: ClientRPCServiceHolder | None = None,
         client_rpc_service: ClientRPCService | None = None,  # backward compatibility
         global_policy_manager: GlobalPolicyManager | None = None,
-        command_registry: CommandRegistry | None = None,  # injected from DI
-        pipeline: PromptPipeline | None = None,           # injected from DI
     ):
         self.state_manager = state_manager
         self.plan_builder = plan_builder
@@ -94,32 +85,9 @@ class PromptOrchestrator:
 
         PlanToolDefinitions.register_all(tool_registry, PlanToolExecutor())
 
-        # LLMLoopStage инжектируется из DI (SOLID: DIP)
         self._llm_loop_stage = llm_loop_stage
-
-        if pipeline is not None:
-            # DI path: pipeline и command_registry пришли из контейнера
-            self._command_registry = command_registry or CommandRegistry()
-            self._pipeline = pipeline
-        else:
-            # Legacy path: собираем pipeline вручную (обратная совместимость для тестов)
-            self._command_registry = CommandRegistry()
-            slash_router = SlashCommandRouter(self._command_registry)
-            self._command_registry.register(StatusCommandHandler())
-            self._command_registry.register(ModeCommandHandler())
-            self._command_registry.register(HelpCommandHandler(self._command_registry))
-
-            from .pipeline.stages.directives import DirectivesStage
-
-            self._pipeline = PromptPipeline(stages=[
-                ValidationStage(state_manager),
-                SlashCommandStage(slash_router),
-                PlanBuildingStage(plan_builder),
-                TurnLifecycleStage(turn_lifecycle_manager, action="open"),
-                DirectivesStage(tool_registry, permission_manager),
-                self._llm_loop_stage,
-                TurnLifecycleStage(turn_lifecycle_manager, action="close"),
-            ])
+        self._command_registry = command_registry
+        self._pipeline = pipeline
 
     @property
     def client_rpc_service(self) -> ClientRPCService | None:

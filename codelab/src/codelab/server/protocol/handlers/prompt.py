@@ -60,6 +60,25 @@ def create_prompt_orchestrator(
     global_policy_manager: GlobalPolicyManager | None = None,
 ) -> PromptOrchestrator:
     """Создает полностью инициализированный PromptOrchestrator со всеми компонентами."""
+    from codelab.server.protocol.handlers.pipeline import (
+        PromptPipeline,
+        PlanBuildingStage,
+        SlashCommandStage,
+        TurnLifecycleStage,
+        ValidationStage,
+    )
+    from codelab.server.protocol.handlers.pipeline.stages.directives import DirectivesStage
+    from codelab.server.protocol.handlers.slash_commands import CommandRegistry, SlashCommandRouter
+    from codelab.server.protocol.handlers.slash_commands.builtin import (
+        HelpCommandHandler,
+        ModeCommandHandler,
+        StatusCommandHandler,
+    )
+
+    if tool_registry is None:
+        from codelab.server.tools.registry import SimpleToolRegistry
+        tool_registry = SimpleToolRegistry()
+
     state_manager = StateManager()
     plan_builder = PlanBuilder()
     turn_lifecycle_manager = TurnLifecycleManager()
@@ -67,17 +86,6 @@ def create_prompt_orchestrator(
     permission_manager = PermissionManager()
     client_rpc_handler = ClientRPCHandler()
 
-    if tool_registry is None:
-        from codelab.server.tools.registry import SimpleToolRegistry
-        tool_registry = SimpleToolRegistry()
-
-    if client_rpc_service is None:
-        logger.warning("client_rpc_service not provided, using None for compatibility")
-        client_rpc_service = None
-    else:
-        logger.info("client_rpc_service provided")
-
-    # Создаём LLMLoopStage
     llm_loop_stage = LLMLoopStage(
         tool_registry=tool_registry,
         tool_call_handler=tool_call_handler,
@@ -87,7 +95,23 @@ def create_prompt_orchestrator(
         global_policy_manager=global_policy_manager,
     )
 
-    orchestrator = PromptOrchestrator(
+    command_registry = CommandRegistry()
+    slash_router = SlashCommandRouter(command_registry)
+    command_registry.register(StatusCommandHandler())
+    command_registry.register(ModeCommandHandler())
+    command_registry.register(HelpCommandHandler(command_registry))
+
+    pipeline = PromptPipeline(stages=[
+        ValidationStage(state_manager),
+        SlashCommandStage(slash_router),
+        PlanBuildingStage(plan_builder),
+        TurnLifecycleStage(turn_lifecycle_manager, action="open"),
+        DirectivesStage(tool_registry, permission_manager),
+        llm_loop_stage,
+        TurnLifecycleStage(turn_lifecycle_manager, action="close"),
+    ])
+
+    return PromptOrchestrator(
         state_manager=state_manager,
         plan_builder=plan_builder,
         turn_lifecycle_manager=turn_lifecycle_manager,
@@ -98,14 +122,9 @@ def create_prompt_orchestrator(
         llm_loop_stage=llm_loop_stage,
         client_rpc_service=client_rpc_service,
         global_policy_manager=global_policy_manager,
+        command_registry=command_registry,
+        pipeline=pipeline,
     )
-
-    logger.debug(
-        "PromptOrchestrator created with all components",
-        tools_registered=len(tool_registry.list_tools()),
-        has_global_policy_manager=global_policy_manager is not None,
-    )
-    return orchestrator
 
 
 async def session_prompt(

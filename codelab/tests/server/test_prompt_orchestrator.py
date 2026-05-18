@@ -13,9 +13,23 @@ from codelab.server.agent.base import AgentResponse
 from codelab.server.llm.base import LLMToolCall
 from codelab.server.protocol.handlers.client_rpc_handler import ClientRPCHandler
 from codelab.server.protocol.handlers.permission_manager import PermissionManager
+from codelab.server.protocol.handlers.pipeline import (
+    PlanBuildingStage,
+    PromptPipeline,
+    SlashCommandStage,
+    TurnLifecycleStage,
+    ValidationStage,
+)
 from codelab.server.protocol.handlers.pipeline.stages import LLMLoopStage
+from codelab.server.protocol.handlers.pipeline.stages.directives import DirectivesStage
 from codelab.server.protocol.handlers.plan_builder import PlanBuilder
 from codelab.server.protocol.handlers.prompt_orchestrator import PromptOrchestrator
+from codelab.server.protocol.handlers.slash_commands import CommandRegistry, SlashCommandRouter
+from codelab.server.protocol.handlers.slash_commands.builtin import (
+    HelpCommandHandler,
+    ModeCommandHandler,
+    StatusCommandHandler,
+)
 from codelab.server.protocol.handlers.state_manager import StateManager
 from codelab.server.protocol.handlers.tool_call_handler import ToolCallHandler
 from codelab.server.protocol.handlers.turn_lifecycle_manager import TurnLifecycleManager
@@ -84,6 +98,39 @@ def llm_loop_stage(
 
 
 @pytest.fixture
+def command_registry() -> CommandRegistry:
+    """Создает CommandRegistry со стандартными командами."""
+    registry = CommandRegistry()
+    registry.register(StatusCommandHandler())
+    registry.register(ModeCommandHandler())
+    registry.register(HelpCommandHandler(registry))
+    return registry
+
+
+@pytest.fixture
+def pipeline(
+    state_manager: StateManager,
+    plan_builder: PlanBuilder,
+    turn_lifecycle_manager: TurnLifecycleManager,
+    tool_registry: SimpleToolRegistry,
+    permission_manager: PermissionManager,
+    llm_loop_stage: LLMLoopStage,
+    command_registry: CommandRegistry,
+) -> PromptPipeline:
+    """Собирает PromptPipeline из стадий."""
+    slash_router = SlashCommandRouter(command_registry)
+    return PromptPipeline(stages=[
+        ValidationStage(state_manager),
+        SlashCommandStage(slash_router),
+        PlanBuildingStage(plan_builder),
+        TurnLifecycleStage(turn_lifecycle_manager, action="open"),
+        DirectivesStage(tool_registry, permission_manager),
+        llm_loop_stage,
+        TurnLifecycleStage(turn_lifecycle_manager, action="close"),
+    ])
+
+
+@pytest.fixture
 def orchestrator(
     state_manager: StateManager,
     plan_builder: PlanBuilder,
@@ -93,6 +140,8 @@ def orchestrator(
     client_rpc_handler: ClientRPCHandler,
     tool_registry: SimpleToolRegistry,
     llm_loop_stage: LLMLoopStage,
+    command_registry: CommandRegistry,
+    pipeline: PromptPipeline,
 ) -> PromptOrchestrator:
     """Создает PromptOrchestrator со всеми компонентами."""
     return PromptOrchestrator(
@@ -105,6 +154,8 @@ def orchestrator(
         tool_registry=tool_registry,
         llm_loop_stage=llm_loop_stage,
         client_rpc_service=None,
+        command_registry=command_registry,
+        pipeline=pipeline,
     )
 
 
