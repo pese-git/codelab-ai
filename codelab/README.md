@@ -142,35 +142,67 @@ cp .env.example .env
 ```mermaid
 graph TD
     subgraph APP Scope["APP Scope — одно на весь сервер"]
-        A[AppConfig]
+        CFG[AppConfig]
         S[SessionStorage]
         LLM[LLMProvider]
         TR[ToolRegistry]
         AO[AgentOrchestrator]
         GPS[GlobalPolicyStorage]
         GPM[GlobalPolicyManager]
+
+        subgraph Managers["ManagersProvider"]
+            SM[StateManager]
+            PB[PlanBuilder]
+            TLCM[TurnLifecycleManager]
+            TCH[ToolCallHandler]
+            PM[PermissionManager]
+            CRH[ClientRPCHandler]
+        end
+
+        subgraph SlashCommands["SlashCommandsProvider"]
+            CR[CommandRegistry]
+            SR[SlashCommandRouter]
+        end
+
+        subgraph Pipeline["PipelineProvider"]
+            LL[LLMLoopStage]
+            PP[PromptPipeline]
+        end
+
+        subgraph PromptOrch["PromptOrchestratorProvider"]
+            H[ClientRPCServiceHolder]
+            PO[PromptOrchestrator]
+        end
     end
 
     subgraph Request Scope["REQUEST Scope — одно на WS-подключение"]
         CRPC[ClientRPCService]
-        SM[StateManager]
-        PB[PlanBuilder]
-        TLCM[TurnLifecycleManager]
-        TCH[ToolCallHandler]
-        PM[PermissionManager]
-        CRH[ClientRPCHandler]
-        PO[PromptOrchestrator]
         AP[ACPProtocol]
     end
 
     %% APP scope dependencies
-    A -->|from_context| LLM
-    A -->|from_context| AO
+    CFG -->|from_context| LLM
     LLM --> AO
     TR --> AO
     GPS --> GPM
 
-    %% REQUEST scope dependencies
+    %% Pipeline dependencies
+    TR --> LL
+    TCH --> LL
+    PM --> LL
+    SM --> LL
+    PB --> LL
+    GPM --> LL
+
+    SM --> PP
+    SR --> PP
+    PB --> PP
+    TLCM --> PP
+    TR --> PP
+    PM --> PP
+    LL --> PP
+
+    %% PromptOrchestrator dependencies
     SM --> PO
     PB --> PO
     TLCM --> PO
@@ -178,32 +210,35 @@ graph TD
     PM --> PO
     CRH --> PO
     TR --> PO
+    LL --> PO
+    H --> PO
     GPM --> PO
-    CRPC -->|holder| PO
+    CR --> PO
+    PP --> PO
 
-    A -->|from_context| AP
+    %% ACPProtocol dependencies
+    CFG -->|from_context| AP
     S -->|from_context| AP
     AO --> AP
     TR --> AP
-    CRPC -->|holder| AP
+    H -->|holder| AP
     PO --> AP
-
-    %% Cross-scope
-    TR -.->|APP, используется в REQUEST| PO
-    AO -.->|APP, используется в REQUEST| AP
-    GPM -.->|APP, используется в REQUEST| PO
+    CRPC -->|set in holder| H
 
     classDef app fill:#e1f5fe,stroke:#01579b
     classDef request fill:#f3e5f5,stroke:#4a148c
-    class A,S,LLM,TR,AO,GPS,GPM app
-    class CRPC,SM,PB,TLCM,TCH,PM,CRH,PO,AP request
+    classDef group fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+    class CFG,S,LLM,TR,AO,GPS,GPM,SM,PB,TLCM,TCH,PM,CRH,CR,SR,LL,PP,H,PO app
+    class CRPC,AP request
+    class Managers,SlashCommands,Pipeline,PromptOrch group
 ```
 
 ### Как это работает
 
-1. При запуске `codelab serve` создаётся DI-контейнер (`di.make_container`) с APP-зависимостями.
-2. При каждом WebSocket-подключении создаётся `ClientRPCService` и REQUEST-объекты вручную.
-3. `PromptOrchestrator` лениво регистрирует инструменты при первом `handle_prompt`, когда `ClientRPCService` уже доступен.
+1. При запуске `codelab serve` создаётся DI-контейнер (`di.make_container`) со всеми APP-зависимостями: менеджеры, pipeline-стадии, провайдеры LLM, инструменты, агент.
+2. `PromptOrchestrator` и `PromptPipeline` создаются один раз в APP scope со всеми зависимостями.
+3. При каждом WebSocket-подключении создаётся `ClientRPCService`, устанавливается в `ClientRPCServiceHolder`, и REQUEST scope получает `ACPProtocol` с уже настроенным holder.
+4. `ClientRPCServiceHolder` — мост между APP и REQUEST scope: сервис обновляется per-request, а `PromptOrchestrator` и `ACPProtocol` используют holder без пересоздания.
 
 ## Разработка
 
