@@ -51,9 +51,9 @@ def test_parse_json_params_requires_object() -> None:
 
 
 def test_message_to_from_dict() -> None:
-    request = ACPMessage.request(method="ping", params={})
+    request = ACPMessage.request(method="initialize", params={"protocolVersion": 1, "clientCapabilities": {}})
     restored = ACPMessage.from_dict(request.to_dict())
-    assert restored.method == "ping"
+    assert restored.method == "initialize"
 
 
 def test_parse_session_update_notification() -> None:

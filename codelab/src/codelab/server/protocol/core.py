@@ -18,7 +18,6 @@ from ..storage import SessionStorage
 from .handlers import (
     auth,
     config,
-    legacy,
     permissions,
     prompt,
     session,
@@ -165,9 +164,6 @@ class ACPProtocol:
             "session/request_permission_response": self._handle_permission_response_method,
             "session/set_config_option": self._handle_set_config_option,
             "session/set_mode": self._handle_set_mode,
-            "ping": self._handle_ping,
-            "echo": self._handle_echo,
-            "shutdown": self._handle_shutdown,
         }
 
         # Middleware для сквозной логики (логирование, метрики, auth-check)
@@ -795,19 +791,6 @@ class ACPProtocol:
             self._storage,
             self._config_specs,
         )
-
-    async def _handle_ping(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обрабатывает метод ping."""
-        return ProtocolOutcome(response=legacy.ping(message.id))
-
-    async def _handle_echo(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обрабатывает метод echo."""
-        params = message.params or {}
-        return ProtocolOutcome(response=legacy.echo(message.id, params))
-
-    async def _handle_shutdown(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обрабатывает метод shutdown."""
-        return ProtocolOutcome(response=legacy.shutdown(message.id))
 
     # -----------------------------------------------------------------------
     # Вспомогательные методы

@@ -507,7 +507,7 @@ async def test_ws_prompt_terminal_roundtrip_finishes_with_end_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ws_prompt_is_processed_in_background_and_does_not_block_ping(
+async def test_ws_prompt_is_processed_in_background_and_does_not_block_other_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Проверяет, что in-flight prompt не блокирует обработку других запросов."""
@@ -556,14 +556,14 @@ async def test_ws_prompt_is_processed_in_background_and_does_not_block_ping(
                 await ws.send_json(
                     {
                         "jsonrpc": "2.0",
-                        "id": "ping_1",
-                        "method": "ping",
+                        "id": "list_1",
+                        "method": "session/list",
                         "params": {},
                     }
                 )
 
                 first_response = await asyncio.wait_for(ws.receive_json(), timeout=0.2)
-                assert first_response.get("id") == "ping_1"
+                assert first_response.get("id") == "list_1"
 
                 second_response = await asyncio.wait_for(ws.receive_json(), timeout=1.0)
                 assert second_response.get("id") == "prompt_1"

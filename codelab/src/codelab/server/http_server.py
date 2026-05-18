@@ -612,10 +612,6 @@ class ACPHttpServer:
 
                     asyncio.create_task(_execute_tool_in_background())
 
-                if method_name == "shutdown":
-                    conn_logger.info("shutdown requested")
-                    await ws.close()
-
             async def _process_prompt_request_in_background(
                 *,
                 acp_request: ACPMessage,
@@ -759,8 +755,6 @@ class ACPHttpServer:
                             request_id=request_id,
                             outcome=outcome,
                         )
-                        if method_name == "shutdown":
-                            break
                     elif message.type == WSMsgType.ERROR:
                         conn_logger.warning(
                             "ws_error",
