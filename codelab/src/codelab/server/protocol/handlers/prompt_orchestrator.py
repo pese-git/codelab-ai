@@ -211,7 +211,7 @@ class PromptOrchestrator:
             session,
             {
                 "type": "session_update",
-                "update": {"sessionUpdate": "session_info", "title": summary.get("title"), "updated_at": summary.get("updated_at")},
+                "update": {"sessionUpdate": "session_info_update", "title": summary.get("title"), "updatedAt": summary.get("updated_at")},
             },
         )
 
