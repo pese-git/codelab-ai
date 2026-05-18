@@ -31,6 +31,7 @@ from .protocol.core import ACPProtocol
 from .protocol.handlers.client_rpc_handler import ClientRPCHandler
 from .protocol.handlers.global_policy_manager import GlobalPolicyManager
 from .protocol.handlers.permission_manager import PermissionManager
+from .protocol.handlers.pipeline import PromptPipeline
 from .protocol.handlers.pipeline.stages import LLMLoopStage
 from .protocol.handlers.plan_builder import PlanBuilder
 from .protocol.handlers.prompt_orchestrator import PromptOrchestrator
@@ -214,6 +215,36 @@ class PipelineProvider(Provider):
             global_policy_manager=global_policy_manager,
         )
 
+    @provide(scope=Scope.APP)
+    def get_prompt_pipeline(
+        self,
+        state_manager: StateManager,
+        slash_router: SlashCommandRouter,
+        plan_builder: PlanBuilder,
+        turn_lifecycle_manager: TurnLifecycleManager,
+        tool_registry: ToolRegistryProtocol,
+        permission_manager: PermissionManager,
+        llm_loop_stage: LLMLoopStage,
+    ) -> PromptPipeline:
+        """Собирает PromptPipeline из всех стадий."""
+        from .protocol.handlers.pipeline import (
+            PlanBuildingStage,
+            SlashCommandStage,
+            TurnLifecycleStage,
+            ValidationStage,
+        )
+        from .protocol.handlers.pipeline.stages.directives import DirectivesStage
+
+        return PromptPipeline(stages=[
+            ValidationStage(state_manager),
+            SlashCommandStage(slash_router),
+            PlanBuildingStage(plan_builder),
+            TurnLifecycleStage(turn_lifecycle_manager, action="open"),
+            DirectivesStage(tool_registry, permission_manager),
+            llm_loop_stage,
+            TurnLifecycleStage(turn_lifecycle_manager, action="close"),
+        ])
+
 
 class PromptOrchestratorProvider(Provider):
     """Провайдер PromptOrchestrator (APP scope)."""
@@ -236,6 +267,8 @@ class PromptOrchestratorProvider(Provider):
         llm_loop_stage: LLMLoopStage,
         holder: ClientRPCServiceHolder,
         global_policy_manager: GlobalPolicyManager,
+        command_registry: CommandRegistry,
+        pipeline: PromptPipeline,
     ) -> PromptOrchestrator:
         """Создаёт PromptOrchestrator со всеми зависимостями."""
         return PromptOrchestrator(
@@ -249,6 +282,8 @@ class PromptOrchestratorProvider(Provider):
             llm_loop_stage=llm_loop_stage,
             client_rpc_service_holder=holder,
             global_policy_manager=global_policy_manager,
+            command_registry=command_registry,
+            pipeline=pipeline,
         )
 
 
