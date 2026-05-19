@@ -130,17 +130,16 @@ class ClientProvider(Provider):
         session_repo: SessionRepository,
         logger: structlog.stdlib.BoundLogger,
     ) -> CoreServices:
-        """Создаёт Coordinator и PermissionHandler, разрывая цикл.
+        """Создаёт Coordinator и PermissionHandler, связывая их.
 
-        Циклическая зависимость:
-        - SessionCoordinator зависит от PermissionHandler
-        - PermissionHandler зависит от SessionCoordinator
-        - ACPTransportService зависит от PermissionHandler
+        Зависимость односторонняя: SessionCoordinator использует
+        PermissionHandler для доступа к request_manager.
+        ACPTransportService также получает ссылку через post-init.
 
-        Решение: двухфазная инициализация
+        Двухфазная инициализация для post-init связывания:
         1. Создаём Coordinator с permission_handler=None
-        2. Создаём PermissionHandler с координатором
-        3. Связываем обратно через _permission_handler
+        2. Создаём PermissionHandler
+        3. Устанавливаем _permission_handler в coordinator и transport
         """
 
         # Фаза 1: Coordinator без PermissionHandler
@@ -150,14 +149,13 @@ class ClientProvider(Provider):
             permission_handler=None,
         )
 
-        # Фаза 2: PermissionHandler с координатором
+        # Фаза 2: PermissionHandler (не зависит от coordinator)
         permission_handler = PermissionHandler(
-            coordinator=coordinator,
             transport=transport,
             logger=logger,
         )
 
-        # Фаза 3: Разрыв цикла — обратная связь
+        # Связываем coordinator с permission_handler (одностороннее)
         # cast безопасен: единственная реализация TransportService — ACPTransportService
         acp_transport = cast(ACPTransportService, transport)
         coordinator._permission_handler = permission_handler

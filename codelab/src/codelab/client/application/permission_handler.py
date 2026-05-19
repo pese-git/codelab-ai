@@ -35,7 +35,6 @@ from codelab.client.messages import (
 )
 
 if TYPE_CHECKING:
-    from codelab.client.application.session_coordinator import SessionCoordinator
     from codelab.client.domain.services import TransportService
 
 
@@ -369,7 +368,6 @@ class PermissionHandler:
 
     Пример использования:
         handler = PermissionHandler(
-            coordinator=coordinator,
             transport=transport,
             logger=logger,
         )
@@ -382,25 +380,21 @@ class PermissionHandler:
 
     def __init__(
         self,
-        coordinator: SessionCoordinator,
         transport: TransportService,
         logger: Any,
     ) -> None:
         """Инициализировать PermissionHandler.
 
         Args:
-            coordinator: SessionCoordinator для доступа к активным сессиям
             transport: TransportService для отправки response
             logger: Logger для структурированного логирования
 
         Пример:
             handler = PermissionHandler(
-                coordinator=coordinator,
                 transport=transport,
                 logger=structlog.get_logger("permission_handler"),
             )
         """
-        self._coordinator = coordinator
         self._transport = transport
         self._logger = logger
 

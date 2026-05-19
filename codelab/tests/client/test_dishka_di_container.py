@@ -282,7 +282,6 @@ class TestClientProvider:
             permission_handler=None,
         )
         permission_handler = PermissionHandler(
-            coordinator=coordinator,
             transport=None,  # type: ignore
             logger=None,
         )
