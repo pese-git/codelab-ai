@@ -29,9 +29,13 @@ from codelab.client.infrastructure.events.bus import EventBus
 from codelab.client.infrastructure.handlers.file_system_handler import FileSystemHandler
 from codelab.client.infrastructure.handlers.terminal_handler import TerminalHandler
 from codelab.client.infrastructure.repositories import InMemorySessionRepository
-from codelab.client.infrastructure.services.acp_transport_service import ACPTransportService
+from codelab.client.infrastructure.services.acp_transport_service import (
+    ACPTransportService,
+    create_websocket_transport_service,
+)
 from codelab.client.infrastructure.services.file_system_executor import FileSystemExecutor
 from codelab.client.infrastructure.services.terminal_executor import TerminalExecutor
+from codelab.client.infrastructure.stdio_transport import StdioClientTransport
 
 
 @dataclass
@@ -76,11 +80,23 @@ class ClientProvider(Provider):
 
     @provide(scope=Scope.APP)
     def get_transport(self, config: ClientConfig) -> TransportService:
-        """Создаёт ACPTransportService для WebSocket коммуникации.
+        """Создаёт ACPTransportService с правильным транспортом.
 
-        PermissionHandler будет установлен позже через CoreServices.
+        Если config.transport_mode == "stdio" — использует StdioClientTransport.
+        Иначе — WebSocketTransport.
         """
-        return ACPTransportService(host=config.host, port=config.port)
+        if config.transport_mode == "stdio":
+            transport = StdioClientTransport(
+                command=config.stdio_command or "codelab",
+                args=config.stdio_args or ["serve", "--stdio"],
+                cwd=str(config.cwd),
+            )
+            return ACPTransportService(transport=transport)
+        else:
+            return create_websocket_transport_service(
+                host=config.host,
+                port=config.port,
+            )
 
     @provide(scope=Scope.APP)
     def get_session_repo(self) -> SessionRepository:

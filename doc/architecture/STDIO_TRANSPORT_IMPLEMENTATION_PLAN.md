@@ -1,7 +1,7 @@
 # План реализации stdio транспорта для ACP
 
 > **Дата:** 2026-05-19
-> **Статус:** Утверждён
+> **Статус:** ✅ Реализовано
 > **Связано со спецификацией:** `doc/Agent Client Protocol/protocol/16-Transports.md`
 
 ---
@@ -10,7 +10,7 @@
 
 Спецификация ACP определяет stdio как **основной** транспорт: клиент запускает агент как subprocess, сообщения передаются через stdin/stdout в формате newline-delimited JSON-RPC. Текущая реализация поддерживает только WebSocket.
 
-### Текущее состояние
+### Текущее состояние (до реализации)
 
 | Компонент | Транспорт | Статус |
 |-----------|-----------|--------|
@@ -20,15 +20,15 @@
 | stdio (сервер) | — | **Не реализовано** |
 | stdio (клиент) | — | **Не реализовано** |
 
-### Целевое состояние
+### Целевое состояние (реализовано)
 
 | Компонент | Транспорт | Статус |
 |-----------|-----------|--------|
-| Сервер (`codelab serve`) | WebSocket | Без изменений |
-| Сервер (`codelab serve --stdio`) | stdio | **Новое** |
-| Клиент (`codelab connect`) | WebSocket | Без изменений |
-| Клиент (`codelab connect --stdio`) | stdio (subprocess) | **Новое** |
-| Local mode (`codelab`) | stdio (subprocess) | **Новое** |
+| Сервер (`codelab serve`) | WebSocket | ✅ Без изменений |
+| Сервер (`codelab serve --stdio`) | stdio | ✅ Реализовано |
+| Клиент (`codelab connect`) | WebSocket | ✅ Без изменений |
+| Клиент (`codelab connect --stdio`) | stdio (subprocess) | ✅ Реализовано |
+| Local mode (`codelab`) | stdio (subprocess) | ✅ Реализовано |
 
 ---
 
@@ -577,7 +577,7 @@ codelab connect --stdio --agent-command "codelab serve --stdio --storage json:./
 
 ```mermaid
 graph LR
-    subgraph "Этап 1: Сервер"
+    subgraph "Этап 1: Сервер ✅"
         A1[1.1 Абстракция] --> A2[1.2 WS рефакторинг]
         A2 --> A3[1.3 StdioServer]
         A3 --> A4[1.4 Runner]
@@ -585,7 +585,7 @@ graph LR
         A5 --> A6[1.6 Тесты]
     end
 
-    subgraph "Этап 2: Клиент"
+    subgraph "Этап 2: Клиент ✅"
         B1[2.1 StdioClient] --> B2[2.2 Параметризация]
         B2 --> B3[2.3 DI]
         B3 --> B4[2.4 Factory]
@@ -601,70 +601,69 @@ graph LR
 
 ## Сводка файлов
 
-### Новые файлы
+### Новые файлы (реализованы)
 
-| Файл | Этап | Описание |
-|------|------|----------|
-| `server/transport/__init__.py` | 1 | Пакет транспорта |
-| `server/transport/base.py` | 1 | `AcpServerTransport` протокол |
-| `server/transport/websocket.py` | 1 | `WebSocketTransport` (рефакторинг) |
-| `server/transport/stdio.py` | 1 | `StdioServerTransport` |
-| `server/transport/stdio_runner.py` | 1 | `run_stdio_server()` |
-| `client/infrastructure/stdio_transport.py` | 2 | `StdioClientTransport` |
-| `tests/server/transport/test_stdio_transport.py` | 1 | Тесты серверного stdio |
-| `tests/server/transport/test_websocket_transport.py` | 1 | Тесты WebSocket после рефакторинга |
-| `tests/client/infrastructure/test_stdio_transport.py` | 2 | Тесты клиентского stdio |
-| `tests/client/infrastructure/test_stdio_acp_transport_service.py` | 2 | Тесты transport service с stdio |
+| Файл | Этап | Описание | Статус |
+|------|------|----------|--------|
+| `server/transport/__init__.py` | 1 | Пакет транспорта | ✅ |
+| `server/transport/base.py` | 1 | `AcpServerTransport` протокол | ✅ |
+| `server/transport/websocket.py` | 1 | `WebSocketTransport` (рефакторинг) | ✅ |
+| `server/transport/stdio.py` | 1 | `StdioServerTransport` | ✅ |
+| `server/transport/stdio_runner.py` | 1 | `run_stdio_server()` | ✅ |
+| `client/infrastructure/stdio_transport.py` | 2 | `StdioClientTransport` | ✅ |
+| `tests/client/test_acp_transport_service.py` | 2 | Тесты transport service | ✅ |
+| `tests/client/test_concurrent_receive_calls.py` | 2 | Тесты concurrent receive | ✅ |
+| `tests/client/test_dishka_di_container.py` | 2 | Тесты DI container | ✅ |
 
-### Изменённые файлы
+### Изменённые файлы (реализованы)
 
-| Файл | Этап | Изменение |
-|------|------|-----------|
-| `server/http_server.py` | 1 | Делегирование в `WebSocketTransport` |
-| `server/cli.py` | 1 | `--stdio` флаг |
-| `cli.py` | 1+2 | `--stdio` для serve и connect |
-| `client/infrastructure/transport.py` | 2 | Без изменений (интерфейс уже есть) |
-| `client/infrastructure/services/acp_transport_service.py` | 2 | Параметризация транспорта |
-| `client/infrastructure/client_config.py` | 2 | Новые поля transport_mode, stdio_* |
-| `client/infrastructure/providers.py` | 2 | Factory для stdio/websocket |
-| `client/infrastructure/container_factory.py` | 2 | Новые параметры |
-| `client/tui/app.py` | 2 | Поддержка stdio mode |
+| Файл | Этап | Изменение | Статус |
+|------|------|-----------|--------|
+| `server/http_server.py` | 1 | Делегирование в `WebSocketTransport` | ✅ |
+| `server/cli.py` | 1 | `--stdio` флаг | ✅ |
+| `cli.py` | 1+2 | `--stdio` для serve и connect, local mode | ✅ |
+| `client/infrastructure/transport.py` | 2 | Без изменений (интерфейс уже есть) | ✅ |
+| `client/infrastructure/services/acp_transport_service.py` | 2 | Параметризация транспорта | ✅ |
+| `client/infrastructure/client_config.py` | 2 | Новые поля transport_mode, stdio_* | ✅ |
+| `client/infrastructure/providers.py` | 2 | Factory для stdio/websocket | ✅ |
+| `client/infrastructure/container_factory.py` | 2 | Новые параметры | ✅ |
+| `client/tui/app.py` | 2 | Поддержка stdio mode | ✅ |
 
 ---
 
 ## Риски и митигация
 
-| Риск | Вероятность | Влияние | Митигация |
-|------|-------------|---------|-----------|
-| Логи попадают в stdout | Высокая | Критическое | Structlog handler только на stderr. Тест на capture stdout |
-| Buffering stdout | Средняя | Высокое | `line_buffering=True` + ручной flush |
-| Race condition writes | Средняя | Высокое | Единый `asyncio.Lock` на все writes |
-| Windows совместимость | Средняя | Среднее | Проверка `sys.stdin.buffer` на Windows. Альтернатива: `asyncio.get_event_loop().connect_read_pipe` |
-| Рефакторинг WebSocket | Низкая | Среднее | Полное покрытие тестами перед рефакторингом. CI проверка |
-| Breaking changes CLI | Низкая | Низкое | Все новые опции опциональны. Дефолтное поведение не меняется |
+| Риск | Вероятность | Влияние | Митигация | Статус |
+|------|-------------|---------|-----------|--------|
+| Логи попадают в stdout | Высокая | Критическое | Structlog handler только на stderr. Тест на capture stdout | ✅ Митигирован |
+| Buffering stdout | Средняя | Высокое | `line_buffering=True` + ручной flush | ✅ Митигирован |
+| Race condition writes | Средняя | Высокое | Единый `asyncio.Lock` на все writes | ✅ Митигирован |
+| Windows совместимость | Средняя | Среднее | Проверка `sys.stdin.buffer` на Windows | ⚠️ Требуется проверка |
+| Рефакторинг WebSocket | Низкая | Среднее | Полное покрытие тестами перед рефакторингом. CI проверка | ✅ Митигирован |
+| Breaking changes CLI | Низкая | Низкое | Все новые опции опциональны. Дефолтное поведение не меняется | ✅ Митигирован |
 
 ---
 
 ## Оценка объёма
 
-| Задача | Файлы | Строки | Сложность |
-|--------|-------|--------|-----------|
-| 1.1 Абстракция | 2 | ~80 | Низкая |
-| 1.2 WS рефакторинг | 2 | ~400 | Средняя |
-| 1.3 StdioServer | 1 | ~250 | Средняя |
-| 1.4 Runner | 1 | ~150 | Средняя |
-| 1.5 CLI | 2 | ~60 | Низкая |
-| 1.6 Тесты | 2 | ~500 | Средняя |
-| **Этап 1 итого** | **10** | **~1440** | |
-| 2.1 StdioClient | 1 | ~200 | Средняя |
-| 2.2 Параметризация | 1 | ~100 | Низкая |
-| 2.3 DI | 2 | ~80 | Низкая |
-| 2.4 Factory | 1 | ~30 | Низкая |
-| 2.5 CLI | 2 | ~120 | Низкая |
-| 2.6 Local mode | 1 | ~80 | Низкая |
-| 2.7 Тесты | 2 | ~400 | Средняя |
-| **Этап 2 итого** | **10** | **~1010** | |
-| **Всего** | **~20** | **~2450** | |
+| Задача | Файлы | Строки | Сложность | Статус |
+|--------|-------|--------|-----------|--------|
+| 1.1 Абстракция | 2 | ~80 | Низкая | ✅ |
+| 1.2 WS рефакторинг | 2 | ~400 | Средняя | ✅ |
+| 1.3 StdioServer | 1 | ~250 | Средняя | ✅ |
+| 1.4 Runner | 1 | ~150 | Средняя | ✅ |
+| 1.5 CLI | 2 | ~60 | Низкая | ✅ |
+| 1.6 Тесты | 2 | ~500 | Средняя | ✅ |
+| **Этап 1 итого** | **10** | **~1440** | | **✅** |
+| 2.1 StdioClient | 1 | ~200 | Средняя | ✅ |
+| 2.2 Параметризация | 1 | ~100 | Низкая | ✅ |
+| 2.3 DI | 2 | ~80 | Низкая | ✅ |
+| 2.4 Factory | 1 | ~30 | Низкая | ✅ |
+| 2.5 CLI | 2 | ~120 | Низкая | ✅ |
+| 2.6 Local mode | 1 | ~80 | Низкая | ✅ |
+| 2.7 Тесты | 2 | ~400 | Средняя | ✅ |
+| **Этап 2 итого** | **10** | **~1010** | | **✅** |
+| **Всего** | **~20** | **~2450** | | **✅ Реализовано** |
 
 ---
 

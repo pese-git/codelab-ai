@@ -9,10 +9,9 @@ Tests verify:
 """
 
 from pathlib import Path
+from typing import cast
 
 import pytest
-
-from typing import cast
 
 from codelab.client.application.permission_handler import PermissionHandler
 from codelab.client.application.session_coordinator import SessionCoordinator
@@ -115,8 +114,6 @@ class TestServiceResolution:
         """Тест: TransportService разрешается как ACPTransportService."""
         transport = container.get(TransportService)
         assert isinstance(transport, ACPTransportService)
-        assert transport.host == "localhost"
-        assert transport.port == 8000
 
     def test_resolve_session_repo(self, container) -> None:
         """Тест: SessionRepository разрешается как InMemorySessionRepository."""

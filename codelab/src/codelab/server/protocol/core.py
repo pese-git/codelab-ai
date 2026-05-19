@@ -464,8 +464,8 @@ class ACPProtocol:
         if self._prompt_orchestrator is not None:
             return self._prompt_orchestrator
 
-        from .handlers.client_rpc_handler import ClientRPCHandler
         from ..tools.registry import SimpleToolRegistry
+        from .handlers.client_rpc_handler import ClientRPCHandler
 
         if self._tool_registry is None:
             self._tool_registry = SimpleToolRegistry()

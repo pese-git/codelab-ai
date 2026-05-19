@@ -7,10 +7,11 @@
 
 from unittest.mock import AsyncMock
 
+from factories import make_orchestrator
+
 from codelab.server.client_rpc.service import ClientRPCService
 from codelab.server.protocol import ACPProtocol
 from codelab.server.storage import InMemoryStorage
-from factories import make_orchestrator
 
 
 class TestClientRPCServiceIntegration:

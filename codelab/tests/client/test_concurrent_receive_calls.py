@@ -30,6 +30,14 @@ from codelab.client.infrastructure.services.background_receive_loop import (
 )
 from codelab.client.infrastructure.services.message_router import MessageRouter
 from codelab.client.infrastructure.services.routing_queues import RoutingQueues
+from codelab.client.infrastructure.transport import WebSocketTransport
+
+
+def _create_service_for_test() -> ACPTransportService:
+    """Создаёт ACPTransportService для тестов с mock транспортом."""
+    transport = AsyncMock(spec=WebSocketTransport)
+    transport.is_connected.return_value = True
+    return ACPTransportService(transport=transport)
 
 
 class TestConcurrentReceiveCalls:
@@ -72,8 +80,8 @@ class TestConcurrentReceiveCalls:
         )
 
         # Создаем сервис и подключаемся
-        service = ACPTransportService(host="127.0.0.1", port=8080)
-        service._transport = mock_transport
+        service = _create_service_for_test()
+        service._transport = mock_transport  # noqa: SLF001 - test setup
 
         # Инициализируем routing infrastructure
         service._router = MessageRouter()
@@ -127,8 +135,8 @@ class TestConcurrentReceiveCalls:
         mock_transport.receive_text = AsyncMock(side_effect=receive_text)
 
         # Создаем сервис
-        service = ACPTransportService(host="127.0.0.1", port=8080)
-        service._transport = mock_transport
+        service = _create_service_for_test()
+        service._transport = mock_transport  # noqa: SLF001 - test setup
         service._router = MessageRouter()
         service._queues = RoutingQueues()
         service._background_loop = BackgroundReceiveLoop(
@@ -173,8 +181,8 @@ class TestConcurrentReceiveCalls:
             side_effect=asyncio.CancelledError()
         )
 
-        service = ACPTransportService(host="127.0.0.1", port=8080)
-        service._transport = mock_transport
+        service = _create_service_for_test()
+        service._transport = mock_transport  # noqa: SLF001 - test setup
 
         # Имитируем connect()
         service._router = MessageRouter()
@@ -282,8 +290,8 @@ class TestConcurrentReceiveCalls:
         mock_transport.is_connected = Mock(return_value=True)
         mock_transport.receive_text = AsyncMock(side_effect=receive_text)
 
-        service = ACPTransportService(host="127.0.0.1", port=8080)
-        service._transport = mock_transport
+        service = _create_service_for_test()
+        service._transport = mock_transport  # noqa: SLF001 - test setup
         service._router = MessageRouter()
         service._queues = RoutingQueues()
         service._background_loop = BackgroundReceiveLoop(

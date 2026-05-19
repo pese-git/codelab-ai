@@ -9,10 +9,10 @@
 from typing import Any
 
 import pytest
+from factories import make_orchestrator
 
 from codelab.server.protocol.handlers.session import session_load
 from codelab.server.protocol.state import SessionState
-from factories import make_orchestrator
 
 
 class TestUserMessageChunkPersistence:

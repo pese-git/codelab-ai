@@ -94,6 +94,9 @@ class ACPClientApp(App[None]):
         port: int,
         cwd: str | None = None,
         history_dir: str | None = None,
+        transport_mode: str = "websocket",
+        stdio_command: str | None = None,
+        stdio_args: list[str] | None = None,
     ) -> None:
         """Инициализирует приложение с Clean Architecture.
 
@@ -104,6 +107,9 @@ class ACPClientApp(App[None]):
             port: Порт сервера ACP
             cwd: Путь к проекту (если None, используется текущая рабочая директория)
             history_dir: Путь к директории локальной истории чата (опционально)
+            transport_mode: Режим транспорта ("websocket" или "stdio")
+            stdio_command: Команда для запуска агента (для stdio режима)
+            stdio_args: Аргументы команды (для stdio режима)
         """
         super().__init__()
         self._host = host
@@ -144,6 +150,9 @@ class ACPClientApp(App[None]):
                 cwd=cwd,
                 history_dir=history_dir,
                 logger=self._app_logger,
+                transport_mode=transport_mode,
+                stdio_command=stdio_command,
+                stdio_args=stdio_args,
             )
             self._app_logger.info("di_container_built_successfully", cwd=cwd)
         except Exception as e:
@@ -818,6 +827,9 @@ def run_tui_app(
     port: int | None = None,
     cwd: str | None = None,
     history_dir: str | None = None,
+    transport_mode: str = "websocket",
+    stdio_command: str | None = None,
+    stdio_args: list[str] | None = None,
 ) -> None:
     """Запускает TUI приложение с параметрами подключения и рабочей директории.
 
@@ -826,7 +838,18 @@ def run_tui_app(
         port: Порт сервера ACP (если None, используется значение по умолчанию)
         cwd: Путь к проекту (если None, используется текущая рабочая директория)
         history_dir: Путь к директории локальной истории чата (опционально)
+        transport_mode: Режим транспорта ("websocket" или "stdio")
+        stdio_command: Команда для запуска агента (для stdio режима)
+        stdio_args: Аргументы команды (для stdio режима)
     """
     resolved_host, resolved_port = resolve_tui_connection(host=host, port=port)
-    app = ACPClientApp(host=resolved_host, port=resolved_port, cwd=cwd, history_dir=history_dir)
+    app = ACPClientApp(
+        host=resolved_host,
+        port=resolved_port,
+        cwd=cwd,
+        history_dir=history_dir,
+        transport_mode=transport_mode,
+        stdio_command=stdio_command,
+        stdio_args=stdio_args,
+    )
     app.run()

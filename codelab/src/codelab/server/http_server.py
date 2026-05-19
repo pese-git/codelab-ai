@@ -1,7 +1,11 @@
-"""WebSocket транспорт ACP-сервера.
+"""HTTP-сервер ACP с WebSocket транспортом.
 
 Модуль поднимает endpoint `GET /acp/ws` для двустороннего потока с
 `session/update` и server->client RPC.
+
+Архитектура:
+- ACPHttpServer — HTTP-сервер (aiohttp), маршрутизация, Web UI
+- WebSocketTransport — обработка WebSocket соединения (вынесено в transport/)
 
 Пример использования:
     server = ACPHttpServer(host="127.0.0.1", port=8080)
@@ -17,21 +21,17 @@ import os
 import re
 import subprocess
 import sys
-import time
 import uuid
 from typing import TYPE_CHECKING
 
 import structlog
-from aiohttp import WSMsgType, web
+from aiohttp import web
 from dishka import AsyncContainer
 
-from .client_rpc.service import ClientRPCService
 from .config import AppConfig
 from .di import make_container
-from .messages import ACPMessage
-from .protocol.core import ACPProtocol
-from .protocol.state import ProtocolOutcome
 from .storage import SessionStorage
+from .transport.websocket import WebSocketTransport
 
 if TYPE_CHECKING:
     pass
@@ -40,30 +40,16 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 # Константа: максимальное время ожидания для deferred prompt tasks (в секундах)
-# Если prompt не завершится за это время, его нужно отменить
 DEFERRED_PROMPT_TIMEOUT = 30.0
 
 
-def _truncate_payload(payload: str, max_length: int = 500) -> str:
-    """Обрезает payload для логирования, сохраняя значимую часть.
-
-    Args:
-        payload: Строка payload для обрезки
-        max_length: Максимальная длина результата
-
-    Returns:
-        Обрезанный payload или полный, если он короче max_length
-    """
-    if len(payload) > max_length:
-        return payload[:max_length]
-    return payload
-
-
 class ACPHttpServer:
-    """Транспортный слой ACP поверх aiohttp (WebSocket-only).
+    """HTTP-сервер ACP с WebSocket транспортом.
 
-    Класс принимает wire-сообщения, передает их в `ACPProtocol` и отправляет
-    обратно response/notifications в правильном порядке.
+    Принимает HTTP-соединения, маршрутизирует WebSocket на /acp/ws,
+    опционально обслуживает Web UI на /.
+
+    Обработка WebSocket делегируется WebSocketTransport.
 
     Пример использования:
         server = ACPHttpServer(port=8080)
@@ -429,21 +415,16 @@ class ACPHttpServer:
     async def handle_ws_request(self, request: web.Request) -> web.WebSocketResponse:
         """Обрабатывает WebSocket-сессию с поддержкой update-потока.
 
+        Делегирует обработку WebSocketTransport.
+
         Пример использования:
             # вызывается aiohttp автоматически на GET /acp/ws
         """
         connection_id = str(uuid.uuid4())[:8]
         remote_addr = request.remote or "unknown"
-        start_time = time.time()
 
         logger.info(
             "ws connection request received",
-            connection_id=connection_id,
-            remote_addr=remote_addr,
-        )
-
-        logger.info(
-            "ws connection established",
             connection_id=connection_id,
             remote_addr=remote_addr,
         )
@@ -454,365 +435,16 @@ class ACPHttpServer:
         )
         await ws.prepare(request)
 
-        async def send_rpc_request(request_dict: dict) -> None:
-            """Отправляет JSON-RPC request клиенту."""
-            async with ws_send_lock:
-                if not ws.closed:
-                    await ws.send_json(request_dict)
-
-        # Создаём ClientRPCService вручную (требует runtime callback)
-        client_rpc_service = ClientRPCService(
-            send_request_callback=send_rpc_request,
-            client_capabilities={},
+        # Создаём WebSocketTransport и делегируем обработку
+        transport = WebSocketTransport(
+            ws=ws,
+            app_container=self._app_container,
+            config=self.config,
+            connection_id=connection_id,
+            remote_addr=remote_addr,
         )
 
-        deferred_prompt_tasks: dict[str, asyncio.Task[None]] = {}
-        prompt_request_tasks: set[asyncio.Task[None]] = set()
-        initialized = False
-        ws_send_lock = asyncio.Lock()
-
-        conn_logger = logger.bind(connection_id=connection_id)
-
-        # Используем REQUEST scope для этого WebSocket соединения
-        if self._app_container is None:
-            conn_logger.error("app container not initialized")
-            await ws.close()
-            return ws
-
-        # Устанавливаем ClientRPCService в holder перед созданием REQUEST scope
-        from .rpc_holder import ClientRPCServiceHolder
-        holder = await self._app_container.get(ClientRPCServiceHolder)
-        holder.service = client_rpc_service
-
-        async with self._app_container() as request_scope:
-            protocol = await request_scope.get(ACPProtocol)
-
-            async def _send_outcome(
-                outcome: ProtocolOutcome,
-                *,
-                request_id: str | None,
-            ) -> None:
-                """Отправляет notifications/response/followups в рамках одного lock."""
-                async with ws_send_lock:
-                    if ws.closed:
-                        return
-
-                    for notification in outcome.notifications:
-                        notification_json = notification.to_json()
-                        await ws.send_str(notification_json)
-                        conn_logger.debug(
-                            "notification sent",
-                            method=notification.method,
-                            payload=_truncate_payload(notification_json),
-                        )
-
-                    if outcome.response is not None:
-                        response_json = outcome.response.to_json()
-                        await ws.send_str(response_json)
-                        conn_logger.debug(
-                            "response sent",
-                            request_id=request_id,
-                            has_error=outcome.response.error is not None,
-                            payload=_truncate_payload(response_json),
-                        )
-
-                    for followup_response in outcome.followup_responses:
-                        followup_json = followup_response.to_json()
-                        await ws.send_str(followup_json)
-                        conn_logger.debug(
-                            "followup response sent",
-                            request_id=followup_response.id,
-                            payload=_truncate_payload(followup_json),
-                        )
-
-            async def _finalize_outcome_and_send(
-                *,
-                method_name: str | None,
-                session_id: str | None,
-                request_id: str | None,
-                outcome: ProtocolOutcome,
-            ) -> None:
-                """Применяет post-processing outcome и отправляет его в WS."""
-                if method_name == "session/cancel" and session_id is not None:
-                    task = deferred_prompt_tasks.pop(session_id, None)
-                    if task is not None:
-                        task.cancel()
-
-                if (
-                    method_name == "session/prompt"
-                    and session_id is not None
-                    and outcome.response is None
-                    and await protocol.should_auto_complete_active_turn(session_id)
-                ):
-                    task = deferred_prompt_tasks.pop(session_id, None)
-                    if task is not None:
-                        task.cancel()
-                    deferred_prompt_tasks[session_id] = asyncio.create_task(
-                        self._complete_deferred_prompt(
-                            ws=ws,
-                            protocol=protocol,
-                            session_id=session_id,
-                            deferred_prompt_tasks=deferred_prompt_tasks,
-                            connection_id=connection_id,
-                        )
-                    )
-
-                await _send_outcome(outcome, request_id=request_id)
-
-                if outcome.pending_tool_execution is not None:
-                    pending = outcome.pending_tool_execution
-                    conn_logger.info(
-                        "scheduling pending tool execution in background",
-                        session_id=pending.session_id,
-                        tool_call_id=pending.tool_call_id,
-                    )
-
-                    async def _execute_tool_in_background() -> None:
-                        """Background task для выполнения tool после permission."""
-                        try:
-                            llm_result = await protocol.execute_pending_tool(
-                                session_id=pending.session_id,
-                                tool_call_id=pending.tool_call_id,
-                            )
-                            
-                            async with ws_send_lock:
-                                for notification in llm_result.notifications:
-                                    if not ws.closed:
-                                        await ws.send_str(notification.to_json())
-                                        conn_logger.debug(
-                                            "llm loop notification sent",
-                                            method=notification.method,
-                                        )
-
-                                if llm_result.pending_permission:
-                                    conn_logger.debug(
-                                        "llm loop deferred for permission",
-                                        session_id=pending.session_id,
-                                    )
-                                    return
-                                
-                                stop_reason = llm_result.stop_reason or "end_turn"
-                                turn_completion = await protocol.complete_active_turn(
-                                    pending.session_id, stop_reason=stop_reason
-                                )
-                                if turn_completion is not None and not ws.closed:
-                                    await ws.send_str(turn_completion.to_json())
-                                    conn_logger.debug(
-                                        "turn completion sent after llm loop",
-                                        session_id=pending.session_id,
-                                        stop_reason=stop_reason,
-                                    )
-                        except Exception as exc:
-                            conn_logger.error(
-                                "background tool execution failed",
-                                session_id=pending.session_id,
-                                tool_call_id=pending.tool_call_id,
-                                error=str(exc),
-                            )
-
-                    asyncio.create_task(_execute_tool_in_background())
-
-            async def _process_prompt_request_in_background(
-                *,
-                acp_request: ACPMessage,
-                method_name: str,
-                session_id: str | None,
-                request_id: str | None,
-            ) -> None:
-                """Выполняет `session/prompt` в фоне, не блокируя receive-loop."""
-                try:
-                    outcome = await protocol.handle(acp_request)
-                    conn_logger.info(
-                        "request received",
-                        method=method_name,
-                        request_id=request_id,
-                        session_id=session_id,
-                    )
-                    await _finalize_outcome_and_send(
-                        method_name=method_name,
-                        session_id=session_id,
-                        request_id=request_id,
-                        outcome=outcome,
-                    )
-                except Exception as exc:
-                    conn_logger.error(
-                        "background prompt request error",
-                        request_id=request_id,
-                        session_id=session_id,
-                        error=str(exc),
-                        exc_info=True,
-                    )
-                    error_outcome = ProtocolOutcome(
-                        response=ACPMessage.error_response(
-                            acp_request.id,
-                            code=-32603,
-                            message="Internal error",
-                            data=str(exc),
-                        )
-                    )
-                    await _send_outcome(error_outcome, request_id=request_id)
-
-            try:
-                async for message in ws:
-                    if message.type == WSMsgType.TEXT:
-                        method_name: str | None = None
-                        session_id: str | None = None
-                        request_id: str | None = None
-                        try:
-                            acp_request = ACPMessage.from_json(message.data)
-                            method_name = acp_request.method
-                            request_id = str(acp_request.id) if acp_request.id is not None else None
-
-                            conn_logger.debug(
-                                "message received",
-                                payload=_truncate_payload(message.data),
-                            )
-
-                            if method_name == "initialize":
-                                initialized = True
-                                if isinstance(acp_request.params, dict):
-                                    caps = acp_request.params.get("clientCapabilities", {})
-                                    if isinstance(caps, dict):
-                                        client_rpc_service._capabilities = caps
-                                        conn_logger.debug(
-                                            "client_rpc_service capabilities updated",
-                                            capabilities=caps,
-                                        )
-                            elif not initialized:
-                                if acp_request.is_notification:
-                                    outcome = ProtocolOutcome()
-                                else:
-                                    outcome = ProtocolOutcome(
-                                        response=ACPMessage.error_response(
-                                            acp_request.id,
-                                            code=-32000,
-                                            message="Initialize required before session methods",
-                                        )
-                                    )
-                                method_name = None
-                                session_id = None
-                                await _send_outcome(outcome, request_id=request_id)
-                                continue
-                            if isinstance(acp_request.params, dict):
-                                raw_session_id = acp_request.params.get("sessionId")
-                                if isinstance(raw_session_id, str):
-                                    session_id = raw_session_id
-                            if method_name == "session/prompt":
-                                prompt_task = asyncio.create_task(
-                                    _process_prompt_request_in_background(
-                                        acp_request=acp_request,
-                                        method_name=method_name,
-                                        session_id=session_id,
-                                        request_id=request_id,
-                                    )
-                                )
-                                prompt_request_tasks.add(prompt_task)
-                                prompt_task.add_done_callback(
-                                    lambda finished_task: prompt_request_tasks.discard(
-                                        finished_task
-                                    )
-                                )
-                                conn_logger.debug(
-                                    "prompt request scheduled in background",
-                                    request_id=request_id,
-                                    session_id=session_id,
-                                )
-                                continue
-
-                            if method_name is None and acp_request.id is not None:
-                                conn_logger.debug(
-                                    "response received, routing to handle_client_response",
-                                    request_id=request_id,
-                                )
-                                outcome = await protocol.handle_client_response(acp_request)
-                            else:
-                                outcome = await protocol.handle(acp_request)
-
-                            conn_logger.info(
-                                "request received",
-                                method=method_name,
-                                request_id=request_id,
-                                session_id=session_id,
-                            )
-                        except Exception as exc:
-                            conn_logger.error(
-                                "request parse error",
-                                request_id=request_id,
-                                error=str(exc),
-                                exc_info=True,
-                            )
-                            outcome = ProtocolOutcome(
-                                response=ACPMessage.error_response(
-                                    None,
-                                    code=-32700,
-                                    message="Parse error",
-                                    data=str(exc),
-                                )
-                            )
-                        await _finalize_outcome_and_send(
-                            method_name=method_name,
-                            session_id=session_id,
-                            request_id=request_id,
-                            outcome=outcome,
-                        )
-                    elif message.type == WSMsgType.ERROR:
-                        conn_logger.warning(
-                            "ws_error",
-                            exception=str(ws.exception()) if ws.exception() else None,
-                            peer=request.remote,
-                        )
-                        break
-                    elif message.type in {WSMsgType.CLOSE, WSMsgType.CLOSING}:
-                        break
-            finally:
-                if prompt_request_tasks:
-                    conn_logger.info(
-                        "cleaning up prompt request tasks",
-                        pending_tasks_count=len(prompt_request_tasks),
-                    )
-                    for prompt_task in list(prompt_request_tasks):
-                        if not prompt_task.done():
-                            prompt_task.cancel()
-                    await asyncio.gather(*prompt_request_tasks, return_exceptions=True)
-                    prompt_request_tasks.clear()
-
-                if deferred_prompt_tasks:
-                    conn_logger.info(
-                        "cleaning up deferred prompt tasks",
-                        pending_tasks_count=len(deferred_prompt_tasks),
-                    )
-                    for session_id_to_cancel, task_to_cancel in list(deferred_prompt_tasks.items()):
-                        if not task_to_cancel.done():
-                            task_to_cancel.cancel()
-                            conn_logger.debug(
-                                "deferred prompt task cancelled",
-                                session_id=session_id_to_cancel,
-                            )
-                        deferred_prompt_tasks.pop(session_id_to_cancel, None)
-
-                cancelled_turns_count = await protocol.cancel_active_turns_on_disconnect()
-                if cancelled_turns_count > 0:
-                    conn_logger.info(
-                        "active turns cancelled on disconnect",
-                        cancelled_turns_count=cancelled_turns_count,
-                    )
-
-                if client_rpc_service is not None:
-                    cancelled_rpc_count = client_rpc_service.cancel_all_pending_requests(
-                        reason="WS connection closed before client response",
-                    )
-                    if cancelled_rpc_count > 0:
-                        conn_logger.info(
-                            "pending client rpc cancelled on disconnect",
-                            cancelled_rpc_count=cancelled_rpc_count,
-                        )
-
-                duration = time.time() - start_time
-                conn_logger.info(
-                    "ws connection closed",
-                    duration=round(duration, 3),
-                    pending_deferred_tasks=len(deferred_prompt_tasks),
-                )
+        await transport.run()
 
         return ws
 
@@ -839,14 +471,13 @@ class ACPHttpServer:
         Пример использования:
             task = asyncio.create_task(server._complete_deferred_prompt(...))
         """
-
+        # Этот метод оставлен для обратной совместимости.
+        # Основная логика перенесена в WebSocketTransport._complete_deferred_prompt.
         conn_logger = logger.bind(connection_id=connection_id, session_id=session_id)
 
         try:
-            # Небольшая задержка оставляет окно для входящего `session/cancel`.
             await asyncio.sleep(0.05)
 
-            # Выполняем завершение turn с timeout
             try:
                 response = await protocol.complete_active_turn(session_id, stop_reason="end_turn")
             except TimeoutError:
@@ -863,7 +494,6 @@ class ACPHttpServer:
                 )
                 response = None
 
-            # Отправляем response если он есть и соединение еще живо
             if response is not None and not ws.closed:
                 try:
                     await ws.send_str(response.to_json())
@@ -880,13 +510,13 @@ class ACPHttpServer:
                 conn_logger.debug("deferred prompt skipped (no response)")
 
         except asyncio.CancelledError:
-            # Нормальная ветка: отмена задачи при `session/cancel`.
             conn_logger.info("deferred prompt cancelled by client")
-            # Попробуем получить response из session.pending_prompt_response
             try:
                 session = await protocol._storage.load_session(session_id)
                 if session is not None and session.pending_prompt_response is not None:
                     prompt_resp = session.pending_prompt_response
+                    from .messages import ACPMessage
+
                     response = ACPMessage.response(
                         prompt_resp["request_id"],
                         {"stopReason": prompt_resp["stop_reason"]},
@@ -903,14 +533,12 @@ class ACPHttpServer:
                 )
             return
         except Exception as exc:
-            # Неожиданное исключение - логируем, но не пробрасываем
             conn_logger.error(
                 "deferred prompt unexpected error",
                 error=str(exc),
                 exc_info=True,
             )
         finally:
-            # Гарантированная очистка из словаря
             removed = deferred_prompt_tasks.pop(session_id, None)
             if removed is not None:
                 conn_logger.debug("deferred prompt task removed from tracking")

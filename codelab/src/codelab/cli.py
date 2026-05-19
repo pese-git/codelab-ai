@@ -17,7 +17,6 @@ import argparse
 import asyncio
 import os
 import sys
-import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,7 +24,7 @@ import structlog
 from dotenv import load_dotenv
 
 if TYPE_CHECKING:
-    from codelab.server.http_server import ACPHttpServer
+    pass
 
 # Настройка логирования для CLI
 logger = structlog.get_logger("codelab.cli")
@@ -183,8 +182,8 @@ def main() -> None:
     # codelab serve - режим сервера
     serve_parser = subparsers.add_parser(
         "serve",
-        help="Запустить только WebSocket сервер",
-        description="Запускает ACP WebSocket сервер для удалённых клиентов",
+        help="Запустить сервер (WebSocket или stdio)",
+        description="Запускает ACP сервер для удалённых клиентов",
     )
     serve_parser.add_argument(
         "--host",
@@ -198,6 +197,11 @@ def main() -> None:
         help=f"Порт для прослушивания (по умолчанию: {DEFAULT_PORT})",
     )
     serve_parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Запустить stdio транспорт (чтение stdin, запись stdout)",
+    )
+    serve_parser.add_argument(
         "--no-web",
         action="store_true",
         help="Отключить Web UI на корневом пути /",
@@ -206,8 +210,8 @@ def main() -> None:
     # codelab connect - режим клиента
     connect_parser = subparsers.add_parser(
         "connect",
-        help="Подключиться к удалённому серверу",
-        description="Запускает TUI клиент и подключается к удалённому ACP серверу",
+        help="Подключиться к серверу (WebSocket или stdio)",
+        description="Запускает TUI клиент и подключается к ACP серверу",
     )
     connect_parser.add_argument(
         "--host",
@@ -225,6 +229,17 @@ def main() -> None:
         type=str,
         default=None,
         help="Рабочая директория проекта (по умолчанию: текущая)",
+    )
+    connect_parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Запустить агент как subprocess через stdio транспорт",
+    )
+    connect_parser.add_argument(
+        "--agent-command",
+        type=str,
+        default=None,
+        help="Команда для запуска агента (по умолчанию: codelab serve --stdio)",
     )
 
     args = parser.parse_args()
@@ -255,149 +270,166 @@ def main() -> None:
 
 
 def run_local(args: argparse.Namespace) -> None:
-    """Локальный режим: запускает сервер в фоне и TUI.
+    """Локальный режим: запускает сервер как subprocess через stdio.
 
-    Сервер запускается в отдельном потоке на localhost,
-    затем запускается TUI клиент с подключением к этому серверу.
-    При завершении TUI сервер автоматически останавливается.
+    Сервер запускается как subprocess, TUI клиент подключается через
+    stdio транспорт. При завершении TUI сервер автоматически останавливается.
 
     Args:
         args: Аргументы командной строки
     """
-    from codelab.server.http_server import ACPHttpServer
+    cwd = os.getcwd()
 
-    host = DEFAULT_HOST
-    port = DEFAULT_PORT
+    logger.info("starting_local_mode", transport="stdio", cwd=cwd)
 
-    logger.info("starting_local_mode", host=host, port=port)
-
-    # Создаём хранилище сессий в ~/.codelab/data/sessions/
-    from codelab.server.storage.json_file import JsonFileStorage
-
-    sessions_dir = CODELAB_HOME / "data" / "sessions"
-    storage = JsonFileStorage(sessions_dir)
-
-    # Событие для сигнализации остановки сервера
-    stop_event = threading.Event()
-    server_ready_event = threading.Event()
-    server_instance: ACPHttpServer | None = None
-
-    def run_server_in_thread() -> None:
-        """Запускает сервер в отдельном event loop."""
-        nonlocal server_instance
-
-        # Создаём новый event loop для потока
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            server_instance = ACPHttpServer(host=host, port=port, storage=storage)
-
-            async def server_task() -> None:
-                """Асинхронная задача сервера с проверкой остановки."""
-                # Сигнализируем что сервер готов
-                server_ready_event.set()
-
-                # Запускаем сервер (assert для type checker)
-                assert server_instance is not None
-                await server_instance.run()
-
-            loop.run_until_complete(server_task())
-        except Exception as exc:
-            logger.error("server_error", error=str(exc))
-        finally:
-            loop.close()
-
-    # Запускаем сервер в отдельном потоке
-    server_thread = threading.Thread(target=run_server_in_thread, daemon=True)
-    server_thread.start()
-
-    # Ждём готовности сервера (максимум 5 секунд)
-    if not server_ready_event.wait(timeout=5.0):
-        logger.error("server_start_timeout")
-        sys.exit(1)
-
-    # Небольшая задержка чтобы сервер полностью инициализировался
-    import time
-
-    time.sleep(0.5)
-
-    logger.info("server_started", host=host, port=port)
-
-    try:
-        # Запускаем TUI клиент
-        _run_tui_app(host=host, port=port, cwd=getattr(args, "cwd", None))
-    finally:
-        # Останавливаем сервер
-        logger.info("stopping_server")
-        stop_event.set()
+    # Запускаем TUI с stdio транспортом
+    _run_tui_app(
+        host="127.0.0.1",
+        port=DEFAULT_PORT,
+        cwd=cwd,
+        transport_mode="stdio",
+        stdio_command="codelab",
+        stdio_args=["serve", "--stdio"],
+    )
 
 
 def run_serve(args: argparse.Namespace) -> None:
-    """Режим сервера: запускает только WebSocket API.
+    """Режим сервера: запускает WebSocket или stdio API.
 
     Args:
-        args: Аргументы командной строки с host, port и no_web
+        args: Аргументы командной строки с host, port, stdio и no_web
     """
+    from codelab.server.config import AppConfig
     from codelab.server.http_server import ACPHttpServer
+    from codelab.server.storage.json_file import JsonFileStorage
 
     host = args.host
     port = args.port
     enable_web = not getattr(args, "no_web", False)
+    use_stdio = getattr(args, "stdio", False)
 
-    logger.info("starting_server_mode", host=host, port=port, enable_web=enable_web)
-
-    # Логируем доступные endpoints
-    logger.info(
-        "endpoints_available",
-        ws_api=f"ws://{host}:{port}/acp/ws",
-        web_ui=f"http://{host}:{port}/" if enable_web else "disabled",
-    )
-
-    # Создаём хранилище сессий в ~/.codelab/data/sessions/
-    from codelab.server.storage.json_file import JsonFileStorage
-
+    # Создаём хранилище сессий
     sessions_dir = CODELAB_HOME / "data" / "sessions"
     storage = JsonFileStorage(sessions_dir)
 
-    # Создаём и запускаем сервер
-    server = ACPHttpServer(host=host, port=port, enable_web=enable_web, storage=storage)
+    # Загружаем конфигурацию
+    config = AppConfig.from_env()
 
-    try:
-        asyncio.run(server.run())
-    except KeyboardInterrupt:
-        logger.info("server_shutdown", reason="KeyboardInterrupt")
+    # Обработка аутентификации
+    auth_api_key = os.getenv("ACP_SERVER_API_KEY")
+
+    if use_stdio:
+        # Stdio режим
+        logger.info("starting_server_mode", transport="stdio")
+        from codelab.server.transport.stdio_runner import run_stdio_server
+
+        try:
+            asyncio.run(
+                run_stdio_server(
+                    storage=storage,
+                    config=config,
+                    require_auth=False,
+                    auth_api_key=auth_api_key,
+                )
+            )
+        except KeyboardInterrupt:
+            logger.info("server_shutdown", reason="KeyboardInterrupt")
+    else:
+        # WebSocket режим
+        logger.info(
+            "starting_server_mode",
+            host=host,
+            port=port,
+            enable_web=enable_web,
+        )
+        logger.info(
+            "endpoints_available",
+            ws_api=f"ws://{host}:{port}/acp/ws",
+            web_ui=f"http://{host}:{port}/" if enable_web else "disabled",
+        )
+
+        server = ACPHttpServer(
+            host=host,
+            port=port,
+            enable_web=enable_web,
+            storage=storage,
+            config=config,
+        )
+
+        try:
+            asyncio.run(server.run())
+        except KeyboardInterrupt:
+            logger.info("server_shutdown", reason="KeyboardInterrupt")
 
 
 def run_connect(args: argparse.Namespace) -> None:
-    """Режим клиента: подключается к удалённому серверу.
+    """Режим клиента: подключается к серверу через WebSocket или stdio.
 
     Args:
-        args: Аргументы командной строки с host, port и cwd
+        args: Аргументы командной строки с host, port, cwd, stdio и agent_command
     """
     host = args.host
     port = args.port
     cwd = getattr(args, "cwd", None)
+    use_stdio = getattr(args, "stdio", False)
+    agent_command = getattr(args, "agent_command", None)
 
-    logger.info("starting_connect_mode", host=host, port=port)
+    if use_stdio:
+        logger.info(
+            "starting_connect_mode",
+            transport="stdio",
+            agent_command=agent_command or "codelab serve --stdio",
+            cwd=cwd,
+        )
+        stdio_cmd = agent_command or "codelab"
+        stdio_args_list = stdio_cmd.split()
+        if "--stdio" not in stdio_args_list:
+            stdio_args_list.append("--stdio")
+        _run_tui_app(
+            host=host,
+            port=port,
+            cwd=cwd,
+            transport_mode="stdio",
+            stdio_command=stdio_args_list[0],
+            stdio_args=stdio_args_list[1:],
+        )
+    else:
+        logger.info("starting_connect_mode", host=host, port=port)
+        _run_tui_app(host=host, port=port, cwd=cwd)
 
-    _run_tui_app(host=host, port=port, cwd=cwd)
 
-
-def _run_tui_app(*, host: str, port: int, cwd: str | None = None) -> None:
+def _run_tui_app(
+    *,
+    host: str,
+    port: int,
+    cwd: str | None = None,
+    transport_mode: str = "websocket",
+    stdio_command: str | None = None,
+    stdio_args: list[str] | None = None,
+) -> None:
     """Запускает TUI приложение.
 
     Args:
         host: Адрес сервера
         port: Порт сервера
         cwd: Рабочая директория (опционально)
+        transport_mode: Режим транспорта ("websocket" или "stdio")
+        stdio_command: Команда для запуска агента (для stdio режима)
+        stdio_args: Аргументы команды (для stdio режима)
     """
     from codelab.client.tui.app import ACPClientApp
 
     logger.info("starting_tui", host=host, port=port, cwd=cwd or "(current)")
 
     # Создаём и запускаем TUI приложение
-    app = ACPClientApp(host=host, port=port, cwd=cwd)
+    app = ACPClientApp(
+        host=host,
+        port=port,
+        cwd=cwd,
+        transport_mode=transport_mode,
+        stdio_command=stdio_command,
+        stdio_args=stdio_args,
+    )
     app.run()
 
     logger.info("tui_exited")

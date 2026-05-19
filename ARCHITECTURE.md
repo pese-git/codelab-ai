@@ -6,10 +6,11 @@
 2. [Обзор системы](#обзор-системы)
 3. [Архитектура на уровне компонентов](#архитектура-на-уровне-компонентов)
 4. [Потоки данных](#потоки-данных)
-5. [Двухуровневая история в codelab.server](#двухуровневая-история)
-6. [Background Receive Loop в codelab.client](#background-receive-loop)
-7. [Критические архитектурные решения](#критические-архитектурные-решения)
-8. [Расширение и интеграция](#расширение-и-интеграция)
+5. [Транспортный слой](#транспортный-слой)
+6. [Двухуровневая история в codelab.server](#двухуровневая-история)
+7. [Background Receive Loop в codelab.client](#background-receive-loop)
+8. [Критические архитектурные решения](#критические-архитектурные-решения)
+9. [Расширение и интеграция](#расширение-и-интеграция)
 
 ---
 
@@ -38,23 +39,28 @@ graph TB
     end
     
     subgraph Server["codelab-server (Server Side)"]
-        HttpServer["🌐 HTTP/WebSocket Server<br/>JSON-RPC Transport"]
+        Transport["🌐 Transport Layer<br/>WebSocket / stdio"]
         Protocol["🔄 Protocol Layer<br/>ACPProtocol + Handlers"]
         Agent["🤖 Agent Layer<br/>LLM Orchestration"]
         Tools["🛠️ Tools Layer<br/>Executors + Registry"]
         Storage["💾 Storage Layer<br/>SessionStorage Backends"]
     end
     
-    WebSocket["WebSocket<br/>Connection"]
+    subgraph Transports["Транспорты"]
+        WS["WebSocket<br/>Connection"]
+        STDIO["stdio<br/>stdin/stdout"]
+    end
     
     TUI --> Presentation
     Presentation --> Application
     Application --> Infrastructure
     Infrastructure --> Domain
-    Infrastructure --> WebSocket
+    Infrastructure --> Transports
     
-    WebSocket --> HttpServer
-    HttpServer --> Protocol
+    Transports --> Transport
+    WS --> Transport
+    STDIO --> Transport
+    Transport --> Protocol
     Protocol --> Agent
     Protocol --> Tools
     Protocol --> Storage
@@ -62,7 +68,7 @@ graph TB
     
     style Client fill:#e1f5ff,stroke:#01579b,stroke-width:2px
     style Server fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
-    style WebSocket fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style Transports fill:#fff3e0,stroke:#e65100,stroke-width:2px
 ```
 
 ### Таблица компонентов
@@ -73,16 +79,18 @@ graph TB
 | **ViewModels** | Presentation | MVVM паттерн, Observable state | `codelab/src/codelab/client/presentation/` |
 | **Use Cases** | Application | Business scenarios, DTOs | `codelab/src/codelab/client/application/` |
 | **DIContainer** | Infrastructure | Dependency Injection | [`codelab/src/codelab/client/infrastructure/di_container.py`](codelab/src/codelab/client/infrastructure/di_container.py:33) |
-| **BackgroundReceiveLoop** | Infrastructure | Единственный receive() на WebSocket | [`codelab/src/codelab/client/infrastructure/services/background_receive_loop.py`](codelab/src/codelab/client/infrastructure/services/background_receive_loop.py:22) |
+| **BackgroundReceiveLoop** | Infrastructure | Единственный receive() на транспорт | [`codelab/src/codelab/client/infrastructure/services/background_receive_loop.py`](codelab/src/codelab/client/infrastructure/services/background_receive_loop.py:22) |
 | **MessageRouter** | Infrastructure | Маршрутизация сообщений | [`codelab/src/codelab/client/infrastructure/services/message_router.py`](codelab/src/codelab/client/infrastructure/services/message_router.py:26) |
 | **EventBus** | Infrastructure | Pub/Sub система событий | [`codelab/src/codelab/client/infrastructure/events/bus.py`](codelab/src/codelab/client/infrastructure/events/bus.py) |
+| **StdioClientTransport** | Infrastructure | stdio транспорт (subprocess) | [`codelab/src/codelab/client/infrastructure/stdio_transport.py`](codelab/src/codelab/client/infrastructure/stdio_transport.py) |
 | **ACPProtocol** | Protocol | Диспетчер методов ACP | [`codelab/src/codelab/server/protocol/core.py`](codelab/src/codelab/server/protocol/core.py:39) |
 | **Handlers** | Protocol | Обработчики методов (auth, session, prompt) | [`codelab/src/codelab/server/protocol/handlers/`](codelab/src/codelab/server/protocol/handlers/) |
 | **PromptOrchestrator** | Protocol | Главный оркестратор prompt-turn | [`codelab/src/codelab/server/protocol/handlers/prompt_orchestrator.py`](codelab/src/codelab/server/protocol/handlers/prompt_orchestrator.py:32) |
 | **AgentOrchestrator** | Agent | Управление LLM-агентом | [`codelab/src/codelab/server/agent/orchestrator.py`](codelab/src/codelab/server/agent/orchestrator.py:18) |
 | **ToolRegistry** | Tools | Регистрация и управление инструментами | [`codelab/src/codelab/server/tools/registry.py`](codelab/src/codelab/server/tools/registry.py) |
 | **Storage** | Storage | Persistence для сессий | [`codelab/src/codelab/server/storage/`](codelab/src/codelab/server/storage/) |
-| **HttpServer** | Transport | WebSocket endpoint и JSON-RPC | [`codelab/src/codelab/server/http_server.py`](codelab/src/codelab/server/http_server.py) |
+| **WebSocketTransport** | Transport | WebSocket endpoint | [`codelab/src/codelab/server/transport/websocket.py`](codelab/src/codelab/server/transport/websocket.py) |
+| **StdioServerTransport** | Transport | stdio транспорт (stdin/stdout) | [`codelab/src/codelab/server/transport/stdio.py`](codelab/src/codelab/server/transport/stdio.py) |
 
 ---
 
@@ -92,8 +100,10 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph Transport["Transport"]
+    subgraph Transport["Transport Layer"]
         WS["WebSocket<br/>Endpoint"]
+        STDIO["stdio<br/>stdin/stdout"]
+        Base["AcpServerTransport<br/>Protocol Interface"]
     end
     
     subgraph Protocol["Protocol Layer"]
@@ -118,14 +128,16 @@ graph LR
         ClientRPCService["ClientRPCService<br/>Асинхронные вызовы"]
     end
     
-    WS --> Core
+    WS --> Base
+    STDIO --> Base
+    Base --> Core
     Core --> Handlers
     Handlers --> PromptOrch
     PromptOrch --> Agent
     PromptOrch --> ToolReg
     ToolReg --> Executors
     Executors --> ClientRPCService
-    ClientRPCService --> WS
+    ClientRPCService --> Base
     
     Core --> SessionStore
     SessionStore --> InMem
@@ -163,12 +175,13 @@ graph TB
     end
     
     subgraph Infrastructure["Infrastructure Layer"]
-        Transport["Transport Service<br/>WebSocket"]
+        Transport["Transport Service<br/>WebSocket / stdio"]
         BgLoop["BackgroundReceiveLoop<br/>Единственный receive()"]
         Router["MessageRouter<br/>Маршрутизация"]
         Queues["RoutingQueues<br/>Распределение"]
         EventBus["EventBus<br/>Pub/Sub система"]
         DI["DIContainer<br/>Dependency Injection"]
+        StdioTransport["StdioClientTransport<br/>subprocess"]
         
         subgraph AgentRPC["Agent → Client RPC"]
             FSHandler["FileSystemHandler"]
@@ -379,6 +392,110 @@ graph TD
 
 ---
 
+## Транспортный слой
+
+### Архитектура транспорта
+
+`ACPProtocol` (dispatcher) **не зависит от транспорта** — он принимает `ACPMessage` и возвращает `ProtocolOutcome`. Транспортный слой реализует передачу сообщений между клиентом и сервером.
+
+```mermaid
+graph TB
+    subgraph Server["Сервер"]
+        ACP["ACPProtocol (core)<br/>transport-agnostic"]
+        WS["WebSocketTransport"]
+        STDIO_S["StdioServerTransport"]
+        Base_S["AcpServerTransport<br/>Protocol"]
+    end
+
+    subgraph Client["Клиент"]
+        WS_C["WebSocketTransport"]
+        STDIO_C["StdioClientTransport<br/>(subprocess)"]
+        Service["ACPTransportService"]
+    end
+
+    ACP --> Base_S
+    WS --> Base_S
+    STDIO_S --> Base_S
+    WS_C --> WS
+    STDIO_C --> STDIO_S
+    Service --> WS_C
+    Service --> STDIO_C
+```
+
+### Режимы работы
+
+| Режим | Команда | Транспорт | Описание |
+|-------|---------|-----------|----------|
+| **Локальный** | `codelab` | stdio (subprocess) | Сервер запускается как subprocess, TUI подключается через stdio |
+| **WebSocket сервер** | `codelab serve` | WebSocket | Сервер слушает ws://host:port/acp/ws |
+| **stdio сервер** | `codelab serve --stdio` | stdio | Сервер читает stdin, пишет stdout (для IDE plugins) |
+| **WebSocket клиент** | `codelab connect` | WebSocket | TUI подключается к удалённому серверу |
+| **stdio клиент** | `codelab connect --stdio` | stdio (subprocess) | TUI запускает агент как subprocess |
+
+### Серверный транспорт
+
+**Интерфейс `AcpServerTransport`:**
+
+```python
+class AcpServerTransport(Protocol):
+    async def run(
+        self,
+        on_message: Callable[[ACPMessage], Awaitable[ProtocolOutcome]],
+    ) -> None: ...
+
+    async def send(self, message: ACPMessage) -> None: ...
+    async def close(self) -> None: ...
+```
+
+**Реализации:**
+
+| Транспорт | Файл | Особенности |
+|-----------|------|-------------|
+| `WebSocketTransport` | `server/transport/websocket.py` | aiohttp WebSocket, Web UI |
+| `StdioServerTransport` | `server/transport/stdio.py` | stdin/stdout, newline-delimited JSON-RPC |
+
+**Ключевые детали stdio сервера:**
+
+| Аспект | Решение |
+|--------|---------|
+| **Логирование** | ТОЛЬКО в stderr. Structlog handler на stderr |
+| **Buffering** | `line_buffering=True` + ручной flush после каждого сообщения |
+| **Agent→Client RPC** | Единый `asyncio.Lock` на запись в stdout |
+| **EOF** | Graceful exit из цикла, cleanup pending operations |
+| **SIGTERM/SIGINT** | Signal handlers → `close()` + `sys.exit(0)` |
+
+### Клиентский транспорт
+
+**Интерфейс `Transport`:**
+
+```python
+class Transport(Protocol):
+    async def connect(self) -> None: ...
+    async def disconnect(self) -> None: ...
+    async def send_str(self, data: str) -> None: ...
+    async def receive_text(self) -> str: ...
+    def is_connected(self) -> bool: ...
+```
+
+**Реализации:**
+
+| Транспорт | Файл | Особенности |
+|-----------|------|-------------|
+| `WebSocketTransport` | `client/infrastructure/transport.py` | aiohttp WebSocket |
+| `StdioClientTransport` | `client/infrastructure/stdio_transport.py` | asyncio subprocess, background reader |
+
+**Ключевые детали stdio клиента:**
+
+| Аспект | Решение |
+|--------|---------|
+| **Запуск** | `asyncio.create_subprocess_exec(command, *args, stdin=PIPE, stdout=PIPE, stderr=PIPE)` |
+| **stdout reader** | Background task → `asyncio.Queue[str]` |
+| **stderr reader** | Background task → логирование |
+| **Graceful shutdown** | Close stdin → wait 5s → kill if needed |
+| **Process exit** | Если процесс завершился → error при `receive_text()` |
+
+---
+
 ## Двухуровневая история
 
 ### SessionState.history vs events_history
@@ -568,7 +685,45 @@ graph TB
 - ✅ Plug-and-play новых backends (Redis, PostgreSQL)
 - ✅ Изоляция логики хранения от протокола
 
-### 2. Фильтрация инструментов по ClientRuntimeCapabilities
+### 2. Транспортная абстракция
+
+**Проблема:** Нужна поддержка нескольких транспортов (WebSocket, stdio) без дублирования бизнес-логики.
+
+**Решение:** `ACPProtocol` transport-agnostic, транспорт реализует единый интерфейс:
+
+```mermaid
+graph TB
+    subgraph Protocol["ACPProtocol (transport-agnostic)"]
+        Handle["handle(message) → outcome"]
+    end
+    
+    subgraph Transports["Transport Implementations"]
+        WS["WebSocketTransport<br/>aiohttp WebSocket"]
+        STDIO["StdioServerTransport<br/>stdin/stdout"]
+    end
+    
+    subgraph ClientTransports["Client Transports"]
+        WS_C["WebSocketTransport<br/>aiohttp client"]
+        STDIO_C["StdioClientTransport<br/>subprocess"]
+    end
+    
+    WS --> Handle
+    STDIO --> Handle
+    WS_C --> WS
+    STDIO_C --> STDIO
+    
+    style Protocol fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
+    style Transports fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style ClientTransports fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+```
+
+**Преимущества:**
+- ✅ Единая бизнес-логика для всех транспортов
+- ✅ Локальный режим использует stdio (соответствует spec ACP)
+- ✅ `codelab serve --stdio` для интеграции с IDE plugins
+- ✅ Изолированный процесс сервера в local mode
+
+### 3. Фильтрация инструментов по ClientRuntimeCapabilities
 
 **Проблема:** Не все клиенты поддерживают все инструменты (например, некоторые не поддерживают file system операции).
 
@@ -587,7 +742,7 @@ available_tools = [
 - `supports_terminal`: Поддержка terminal операций
 - `max_tool_call_iterations`: Максимальное количество итераций tool calls
 
-### 3. ClientRPCService для асинхронных вызовов
+### 4. ClientRPCService для асинхронных вызовов
 
 **Проблема:** Инструменты (fs/*, terminal/*) должны выполняться асинхронно на клиенте, а сервер ждет результата.
 
@@ -613,7 +768,7 @@ graph TD
     style I fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
 ```
 
-### 4. PromptOrchestrator как центральный координатор
+### 5. PromptOrchestrator как центральный координатор
 
 **Проблема:** Обработка prompt-turn включает множество этапов (валидация, LLM, tools, permissions, обновления).
 

@@ -7,9 +7,9 @@
 from typing import Any
 
 import pytest
+from factories import make_orchestrator
 
 from codelab.server.protocol.handlers.prompt_orchestrator import PromptOrchestrator
-from factories import make_orchestrator
 from codelab.server.protocol.state import (
     ActiveTurnState,
     SessionState,

@@ -1,6 +1,6 @@
 """ACPTransportService - инфраструктурная реализация низкоуровневой коммуникации.
 
-Инкапсулирует WebSocket транспорт и предоставляет interface TransportService
+Инкапсулирует транспорт (WebSocket или stdio) и предоставляет interface TransportService
 для остальной системы. Обрабатывает:
 - Подключение/отключение
 - Отправку сообщений
@@ -8,7 +8,7 @@
 - Обработку асинхронных уведомлений
 
 Архитектура:
-- Background Receive Loop: единственный вызов receive() на WebSocket
+- Background Receive Loop: единственный вызов receive() на транспорт
 - Message Router: маршрутизация по типам сообщений
 - Routing Queues: распределение по очередям для конкурентных запросов
 """
@@ -30,7 +30,7 @@ from codelab.client.infrastructure.services.background_receive_loop import (
 )
 from codelab.client.infrastructure.services.message_router import MessageRouter
 from codelab.client.infrastructure.services.routing_queues import RoutingQueues
-from codelab.client.infrastructure.transport import WebSocketTransport
+from codelab.client.infrastructure.transport import Transport, WebSocketTransport
 from codelab.client.messages import ACPMessage, RequestPermissionRequest
 
 if TYPE_CHECKING:
@@ -40,33 +40,30 @@ if TYPE_CHECKING:
 class ACPTransportService(TransportService):
     """Реализация низкоуровневой коммуникации с ACP сервером.
 
-    Оборачивает WebSocket транспорт и предоставляет чистый interface
+    Оборачивает транспорт (WebSocket или stdio) и предоставляет чистый interface
     для отправки/получения сообщений. Используется Application слоем
     через Use Cases.
 
     Поддерживает async context manager для правильного управления жизненным циклом:
-        async with ACPTransportService(host, port) as service:
+        async with ACPTransportService(transport) as service:
             await service.connect()
             await service.send(message)
     """
 
     def __init__(
         self,
-        host: str,
-        port: int,
+        transport: Transport,
         parser: MessageParser | None = None,
         permission_handler: PermissionHandler | None = None,
     ) -> None:
         """Инициализирует сервис.
 
         Аргументы:
-            host: Адрес ACP сервера
-            port: Порт ACP сервера
-            parser: MessageParser для парсинга ответов (опционально)
-            permission_handler: PermissionHandler для обработки permission requests (опционально)
+            transport: Реализация транспорта (WebSocket или stdio).
+            parser: MessageParser для парсинга ответов (опционально).
+            permission_handler: PermissionHandler для обработки permission requests (опционально).
         """
-        self.host = host
-        self.port = port
+        self._transport = transport
         self.parser = parser or MessageParser()
         self._permission_handler = permission_handler
         # Callback для отображения permission modal в UI
@@ -80,8 +77,6 @@ class ACPTransportService(TransportService):
             ]
             | None
         ) = None
-        # Инициализируем транспорт для соединения
-        self._transport: WebSocketTransport | None = None
         # Сохраняем server capabilities после инициализации
         self._server_capabilities: dict[str, Any] | None = None
 
@@ -128,28 +123,18 @@ class ACPTransportService(TransportService):
     async def connect(self) -> None:
         """Устанавливает соединение с сервером и запускает background receive loop.
 
-        Создает WebSocket транспорт (если его еще нет) и открывает соединение.
-        Инициализирует routing infrastructure и запускает background loop для
-        единственного вызова receive() на WebSocket.
+        Открывает соединение через переданный транспорт.
+        Инициализирует routing infrastructure и запускает background loop.
 
         Raises:
             RuntimeError: При ошибке подключения
         """
         if self.is_connected():
-            self._logger.debug("already_connected", host=self.host, port=self.port)
+            self._logger.debug("already_connected")
             return
 
         try:
-            # Создаем транспорт ТОЛЬКО если его еще нет
-            # Это позволяет переиспользовать транспорт при переподключении
-            # и избежать утечек ресурсов
-            if self._transport is None:
-                self._logger.debug("creating_new_transport", host=self.host, port=self.port)
-                self._transport = WebSocketTransport(host=self.host, port=self.port)
-
             # Входим в context manager для открытия соединения
-            # Вызов __aenter__() устанавливает _ws и _http_session
-            # При переподключении это переиспользует существующий объект
             await self._transport.__aenter__()
 
             # Инициализируем routing infrastructure
@@ -161,23 +146,21 @@ class ACPTransportService(TransportService):
                 self._queues,
             )
 
-            # Запускаем background loop - единственный вызов receive() на WebSocket
+            # Запускаем background loop
             await self._background_loop.start()
 
             self._logger.info(
                 "connected_to_server",
-                host=self.host,
-                port=self.port,
+                transport_type=type(self._transport).__name__,
                 background_loop_running=self._background_loop.is_running(),
             )
         except Exception as e:
             # При ошибке очищаем ресурсы
-            self._transport = None
             self._background_loop = None
             self._queues = None
             self._router = None
-            self._logger.error("connection_failed", host=self.host, port=self.port, error=str(e))
-            msg = f"Failed to connect to {self.host}:{self.port}: {e}"
+            self._logger.error("connection_failed", error=str(e))
+            msg = f"Failed to connect: {e}"
             raise RuntimeError(msg) from e
 
     async def disconnect(self) -> None:
@@ -186,15 +169,15 @@ class ACPTransportService(TransportService):
         Graceful shutdown:
         1. Останавливает background receive loop
         2. Очищает routing infrastructure
-        3. Закрывает WebSocket транспорт
+        3. Закрывает транспорт
         4. Освобождает все ресурсы
         """
         if not self.is_connected():
-            self._logger.debug("not_connected", host=self.host, port=self.port)
+            self._logger.debug("not_connected")
             return
 
         try:
-            self._logger.debug("closing_connection", host=self.host, port=self.port)
+            self._logger.debug("closing_connection")
 
             # Сначала останавливаем background loop - это главное
             # Иначе он будет пытаться читать из закрытого транспорта
@@ -212,12 +195,11 @@ class ACPTransportService(TransportService):
             if self._transport is not None:
                 await self._transport.__aexit__(None, None, None)
 
-            self._logger.info("connection_closed", host=self.host, port=self.port)
+            self._logger.info("connection_closed")
         except Exception as e:
-            self._logger.warning("disconnect_error", error=str(e), host=self.host, port=self.port)
+            self._logger.warning("disconnect_error", error=str(e))
         finally:
             # Окончательная очистка ресурсов
-            self._transport = None
             self._background_loop = None
             self._queues = None
             self._router = None
@@ -410,26 +392,18 @@ class ACPTransportService(TransportService):
     def is_connected(self) -> bool:
         """Проверяет наличие активного соединения.
 
-        Проверяет:
-        1. Существует ли ссылка на транспорт
-        2. Открыто ли WebSocket соединение (не закрыто и имеет валидный _ws объект)
-
         Возвращает:
             True если соединение активно и готово к использованию
         """
         if self._transport is None:
             return False
 
-        # Проверяем реальное состояние WebSocket
         connected = self._transport.is_connected()
 
-        # Логируем состояние для отладки
-        if not connected and self._transport is not None:
+        if not connected:
             self._logger.debug(
-                "websocket_connection_lost",
-                host=self.host,
-                port=self.port,
-                has_transport=self._transport is not None,
+                "transport_connection_lost",
+                transport_type=type(self._transport).__name__,
             )
 
         return connected
@@ -1246,3 +1220,31 @@ class ACPTransportService(TransportService):
         self._logger.debug("close_called")
         # Синхронное закрытие - просто отмечаем что ресурсы больше не используются
         # Асинхронное закрытие соединения должно происходить через disconnect()
+
+
+def create_websocket_transport_service(
+    host: str,
+    port: int,
+    parser: MessageParser | None = None,
+    permission_handler: PermissionHandler | None = None,
+) -> ACPTransportService:
+    """Factory функция для создания ACPTransportService с WebSocket транспортом.
+
+    Обеспечивает обратную совместимость для кода, который создавал
+    ACPTransportService напрямую с host/port.
+
+    Args:
+        host: Адрес ACP сервера.
+        port: Порт ACP сервера.
+        parser: MessageParser для парсинга ответов.
+        permission_handler: PermissionHandler для обработки permission requests.
+
+    Returns:
+        Настроенный ACPTransportService с WebSocket транспортом.
+    """
+    transport = WebSocketTransport(host=host, port=port)
+    return ACPTransportService(
+        transport=transport,
+        parser=parser,
+        permission_handler=permission_handler,
+    )

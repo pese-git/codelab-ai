@@ -8,9 +8,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codelab.client.infrastructure.services.acp_transport_service import ACPTransportService
+from codelab.client.infrastructure.services.acp_transport_service import (
+    ACPTransportService,
+)
 from codelab.client.infrastructure.services.routing_queues import RoutingQueues
 from codelab.client.infrastructure.transport import WebSocketTransport
+
+
+def _create_service_for_test() -> ACPTransportService:
+    """Создаёт ACPTransportService для тестов с mock транспортом."""
+    transport = AsyncMock(spec=WebSocketTransport)
+    transport.is_connected.return_value = True
+    return ACPTransportService(transport=transport)
 
 
 class TestACPTransportServiceRequestWithCallbacks:
@@ -19,9 +28,7 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_permission_request_routing_via_handler(self) -> None:
         """Permission requests маршрутизируются через PermissionHandler."""
-        # Этот тест проверяет что параметр on_permission был удален
-        # и permission requests обрабатываются только через PermissionHandler
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         
         # Проверяем что request_with_callbacks не принимает on_permission параметр
         # Если попытаться передать on_permission, будет TypeError
@@ -39,12 +46,11 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_fs_read_request_with_id_is_handled(self) -> None:
         """Клиент отвечает на fs/read_text_file и завершает исходный запрос."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         queues = RoutingQueues()
         service._queues = queues  # noqa: SLF001 - test setup
 
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
+        transport = service._transport  # noqa: SLF001 - test setup
         sent_messages: list[dict[str, object]] = []
 
         async def send_str_side_effect(raw_payload: str) -> None:
@@ -78,8 +84,7 @@ class TestACPTransportServiceRequestWithCallbacks:
 
             asyncio.create_task(produce_server_messages())
 
-        transport.send_str = AsyncMock(side_effect=send_str_side_effect)
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport.send_str = AsyncMock(side_effect=send_str_side_effect)  # type: ignore[union-attr]
 
         response = await service.request_with_callbacks(
             method="session/prompt",
@@ -99,12 +104,11 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_unknown_server_rpc_with_id_gets_fallback_response(self) -> None:
         """На неизвестный server->client RPC отправляется пустой response."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         queues = RoutingQueues()
         service._queues = queues  # noqa: SLF001 - test setup
 
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
+        transport = service._transport  # noqa: SLF001 - test setup
         sent_messages: list[dict[str, object]] = []
 
         async def send_str_side_effect(raw_payload: str) -> None:
@@ -138,8 +142,7 @@ class TestACPTransportServiceRequestWithCallbacks:
 
             asyncio.create_task(produce_server_messages())
 
-        transport.send_str = AsyncMock(side_effect=send_str_side_effect)
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport.send_str = AsyncMock(side_effect=send_str_side_effect)  # type: ignore[union-attr]
 
         response = await service.request_with_callbacks(
             method="session/prompt",
@@ -158,11 +161,9 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_handle_client_rpc_logs_tool_lifecycle_trace(self) -> None:
         """Логируется полный trace lifecycle для fs/read_text_file."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
-        service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001 - test target
+        transport = service._transport  # noqa: SLF001 - test setup
 
         await service._handle_notification_or_client_rpc(  # noqa: SLF001 - test target
             method="session/prompt",
@@ -197,13 +198,12 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_request_with_callbacks_logs_notification_failure(self) -> None:
         """Ошибка client-rpc callback логируется, а запрос завершается ответом."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
         queues = RoutingQueues()
         service._queues = queues  # noqa: SLF001 - test setup
 
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
+        transport = service._transport  # noqa: SLF001 - test setup
 
         async def send_str_side_effect(raw_payload: str) -> None:
             payload = json.loads(raw_payload)
@@ -235,8 +235,7 @@ class TestACPTransportServiceRequestWithCallbacks:
 
             asyncio.create_task(produce_server_messages())
 
-        transport.send_str = AsyncMock(side_effect=send_str_side_effect)
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport.send_str = AsyncMock(side_effect=send_str_side_effect)  # type: ignore[union-attr]
 
         response = await service.request_with_callbacks(
             method="session/prompt",
@@ -258,11 +257,9 @@ class TestFsWriteTextFile:
     @pytest.mark.asyncio
     async def test_fs_write_request_returns_success_true(self) -> None:
         """Клиент возвращает {success: true} при успешной записи."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport = service._transport  # noqa: SLF001 - test setup
 
         written_files: list[tuple[str, str]] = []
 
@@ -298,11 +295,9 @@ class TestFsWriteTextFile:
     @pytest.mark.asyncio
     async def test_fs_write_request_returns_success_false_on_callback_failure(self) -> None:
         """Клиент возвращает {success: false} если callback вернул False."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport = service._transport  # noqa: SLF001 - test setup
 
         def mock_write_failing(path: str, content: str) -> bool:
             return False
@@ -334,11 +329,9 @@ class TestFsWriteTextFile:
     @pytest.mark.asyncio
     async def test_fs_write_request_error_sends_error_response(self) -> None:
         """При исключении в callback клиент отправляет error response."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport = service._transport  # noqa: SLF001 - test setup
 
         def mock_write_error(path: str, content: str) -> bool:
             raise OSError("Disk full")
@@ -375,7 +368,7 @@ class TestPermissionCallback:
 
     def test_set_permission_callback_stores_callback(self) -> None:
         """Метод set_permission_callback должен сохранять callback."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
 
         # Создаем mock callback
         callback = MagicMock()
@@ -388,7 +381,7 @@ class TestPermissionCallback:
 
     def test_set_permission_callback_logs_info_message(self) -> None:
         """Установка callback должна логировать INFO сообщение."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001
 
         # Создаем mock callback с именем
@@ -411,13 +404,9 @@ class TestPermissionCallback:
         self,
     ) -> None:
         """Установленный callback должен быть передан в handler.handle_request."""
-        # Создаем mock для PermissionHandler
         permission_handler = AsyncMock()
-        service = ACPTransportService(
-            host="127.0.0.1",
-            port=8765,
-            permission_handler=permission_handler,
-        )
+        service = _create_service_for_test()
+        service._permission_handler = permission_handler  # noqa: SLF001 - test setup
 
         # Устанавливаем mock callback
         callback = MagicMock()
@@ -467,13 +456,9 @@ class TestPermissionCallback:
         self,
     ) -> None:
         """Если callback не установлен, handler должен получить None."""
-        # Создаем mock для PermissionHandler
         permission_handler = AsyncMock()
-        service = ACPTransportService(
-            host="127.0.0.1",
-            port=8765,
-            permission_handler=permission_handler,
-        )
+        service = _create_service_for_test()
+        service._permission_handler = permission_handler  # noqa: SLF001 - test setup
 
         # НЕ устанавливаем callback - оставляем None
 

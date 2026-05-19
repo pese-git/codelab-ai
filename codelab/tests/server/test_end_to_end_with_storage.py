@@ -7,10 +7,10 @@ import json
 from typing import Any
 
 import pytest
+from factories import make_orchestrator
 
 from codelab.server.protocol.handlers.session import session_load
 from codelab.server.protocol.session_factory import SessionFactory
-from factories import make_orchestrator
 
 
 class TestEndToEndWithStorage:
