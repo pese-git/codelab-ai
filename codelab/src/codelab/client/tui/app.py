@@ -13,11 +13,15 @@ import asyncio
 import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import structlog
 from textual.app import App, ComposeResult
 
+from codelab.client.application.session_coordinator import SessionCoordinator
+from codelab.client.domain.services import TransportService
 from codelab.client.infrastructure.container_factory import create_client_container
+from codelab.client.infrastructure.services.acp_transport_service import ACPTransportService
 from codelab.client.messages import PermissionOption, PermissionToolCall
 from codelab.client.presentation.chat_view_model import ChatViewModel
 from codelab.client.presentation.file_viewer_view_model import FileViewerViewModel
@@ -161,6 +165,9 @@ class ACPClientApp(App[None]):
             self._permission_vm = self._container.get(PermissionViewModel)
             self._terminal_vm = self._container.get(TerminalViewModel)
 
+            self._coordinator = self._container.get(SessionCoordinator)
+            self._transport = self._container.get(TransportService)
+
             self._app_logger.info("all_view_models_resolved")
 
             # Синхронизируем ChatViewModel с выбранной сессией.
@@ -277,15 +284,9 @@ class ACPClientApp(App[None]):
         self._ui_vm.set_connection_status(ConnectionStatus.CONNECTING)
         self._ui_vm.set_loading(True, "connecting to server")
         try:
-            from codelab.client.application.session_coordinator import SessionCoordinator
-
-            # Получаем SessionCoordinator из DI контейнера
-            self._app_logger.debug("resolving_session_coordinator")
-            coordinator = self._container.get(SessionCoordinator)
-
             # Инициализируем подключение
             self._app_logger.info("initializing_server_connection")
-            server_info = await coordinator.initialize()
+            server_info = await self._coordinator.initialize()
 
             self._app_logger.info(
                 "server_connection_initialized",
@@ -304,12 +305,9 @@ class ACPClientApp(App[None]):
             # Это необходимо, чтобы при получении session/request_permission от сервера
             # TUI приложение показало модальное окно для выбора разрешения.
             try:
-                from codelab.client.infrastructure.services.acp_transport_service import (
-                    ACPTransportService,
+                cast(ACPTransportService, self._transport).set_permission_callback(
+                    self.show_permission_modal
                 )
-
-                transport = self._container.get(ACPTransportService)
-                transport.set_permission_callback(self.show_permission_modal)
                 self._app_logger.info("permission_callback_registered_in_transport")
             except Exception as e:
                 self._app_logger.warning(
@@ -612,10 +610,7 @@ class ACPClientApp(App[None]):
 
         async with self._session_history_load_lock:
             try:
-                from codelab.client.application.session_coordinator import SessionCoordinator
-
-                coordinator = self._container.get(SessionCoordinator)
-                loaded = await coordinator.load_session(
+                loaded = await self._coordinator.load_session(
                     session_id,
                     self._host,
                     self._port,
@@ -802,12 +797,7 @@ class ACPClientApp(App[None]):
 
         # Закрываем WebSocket соединение
         try:
-            from codelab.client.infrastructure.services.acp_transport_service import (
-                ACPTransportService,
-            )
-
-            transport_service = self._container.get(ACPTransportService)
-            await transport_service.disconnect()
+            await self._transport.disconnect()
             self._app_logger.info("websocket_disconnected")
         except Exception as e:
             self._app_logger.error("websocket_disconnect_failed", error=str(e))

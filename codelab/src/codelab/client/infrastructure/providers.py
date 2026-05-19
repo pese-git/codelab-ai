@@ -14,12 +14,15 @@
 """
 
 from dataclasses import dataclass
+from typing import cast
 
 import structlog
 from dishka import Provider, Scope, provide
 
 from codelab.client.application.permission_handler import PermissionHandler
 from codelab.client.application.session_coordinator import SessionCoordinator
+from codelab.client.domain.repositories import SessionRepository
+from codelab.client.domain.services import TransportService
 from codelab.client.infrastructure.client_config import ClientConfig
 from codelab.client.infrastructure.events.bus import EventBus
 from codelab.client.infrastructure.handlers.file_system_handler import FileSystemHandler
@@ -66,7 +69,7 @@ class ClientProvider(Provider):
         return EventBus()
 
     @provide(scope=Scope.APP)
-    def get_transport(self, config: ClientConfig) -> ACPTransportService:
+    def get_transport(self, config: ClientConfig) -> TransportService:
         """Создаёт ACPTransportService для WebSocket коммуникации.
 
         PermissionHandler будет установлен позже через CoreServices.
@@ -74,7 +77,7 @@ class ClientProvider(Provider):
         return ACPTransportService(host=config.host, port=config.port)
 
     @provide(scope=Scope.APP)
-    def get_session_repo(self) -> InMemorySessionRepository:
+    def get_session_repo(self) -> SessionRepository:
         """Создаёт InMemorySessionRepository для хранения сессий."""
         return InMemorySessionRepository()
 
@@ -117,8 +120,8 @@ class ClientProvider(Provider):
     @provide(scope=Scope.APP)
     def create_core_services(
         self,
-        transport: ACPTransportService,
-        session_repo: InMemorySessionRepository,
+        transport: TransportService,
+        session_repo: SessionRepository,
         config: ClientConfig,
     ) -> CoreServices:
         """Создаёт Coordinator и PermissionHandler, разрывая цикл.
@@ -150,8 +153,10 @@ class ClientProvider(Provider):
         )
 
         # Фаза 3: Разрыв цикла — обратная связь
+        # cast безопасен: единственная реализация TransportService — ACPTransportService
+        acp_transport = cast(ACPTransportService, transport)
         coordinator._permission_handler = permission_handler
-        transport._permission_handler = permission_handler
+        acp_transport._permission_handler = permission_handler
 
         return CoreServices(
             coordinator=coordinator,
