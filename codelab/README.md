@@ -137,7 +137,7 @@ cp .env.example .env
 Сервер использует DI-контейнер **Dishka** для управления зависимостями. Зависимости разделены на два уровня:
 
 - **APP scope** — живут всё время работы сервера (LLM-провайдер, реестр инструментов, оркестратор агента, менеджер политик).
-- **REQUEST scope** — создаются вручную при каждом WebSocket-подключении (оркестратор промптов, протокол ACP, сервис RPC к клиенту).
+- **REQUEST scope** — создаётся при каждом WebSocket-подключении (`ACPProtocol`). `ClientRPCService` создаётся вручную вне контейнера и устанавливается в holder перед входом в REQUEST scope.
 
 ```mermaid
 graph TD
@@ -176,15 +176,20 @@ graph TD
     end
 
     subgraph Request Scope["REQUEST Scope — одно на WS-подключение"]
-        CRPC[ClientRPCService]
         AP[ACPProtocol]
     end
 
+    CRPC["ClientRPCService\n(создаётся вручную\nв handle_ws_request)"]
+
     %% APP scope dependencies
     CFG -->|from_context| LLM
+    CFG -->|from_context| AO
     LLM --> AO
     TR --> AO
     GPS --> GPM
+
+    %% SlashCommands
+    CR --> SR
 
     %% Pipeline dependencies
     TR --> LL
@@ -217,20 +222,21 @@ graph TD
     PP --> PO
 
     %% ACPProtocol dependencies
-    CFG -->|from_context| AP
     S -->|from_context| AP
     AO --> AP
     TR --> AP
     H -->|holder| AP
     PO --> AP
-    CRPC -->|set in holder| H
+    CRPC -. "set в holder\nперед REQUEST scope" .-> H
 
     classDef app fill:#e1f5fe,stroke:#01579b
     classDef request fill:#f3e5f5,stroke:#4a148c
     classDef group fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+    classDef external fill:#fff3e0,stroke:#e65100,stroke-dasharray: 5 5
     class CFG,S,LLM,TR,AO,GPS,GPM,SM,PB,TLCM,TCH,PM,CRH,CR,SR,LL,PP,H,PO app
-    class CRPC,AP request
+    class AP request
     class Managers,SlashCommands,Pipeline,PromptOrch group
+    class CRPC external
 ```
 
 ### Как это работает
@@ -255,6 +261,7 @@ graph TD
         CFG["ClientConfig\n(from context)"]
 
         subgraph ClientProv["ClientProvider"]
+            LOG[BoundLogger]
             EB[EventBus]
             TS["TransportService\n↳ ACPTransportService"]
             SR["SessionRepository\n↳ InMemorySessionRepository"]
@@ -285,9 +292,9 @@ graph TD
     TUI["ACPClientApp\ntui/app.py"]
 
     %% Config
+    CFG --> LOG
     CFG -->|host, port| TS
     CFG -->|cwd| FSE
-    CFG -->|logger| CoreSvcs
 
     %% Infrastructure
     FSE --> FSH
@@ -296,16 +303,20 @@ graph TD
     %% CoreServices: разрыв цикла
     TS --> CoreSvcs
     SR --> CoreSvcs
+    LOG --> CoreSvcs
     CoreSvcs --> SC
     CoreSvcs --> PH
     SC -. "_permission_handler\npost-init" .-> PH
     TS -. "_permission_handler\npost-init" .-> PH
 
-    %% ViewModels: все получают EventBus + ClientConfig
+    %% ViewModels: все получают EventBus + BoundLogger
     EB --> UI_VM & PLAN_VM & TERM_VM & FS_VM & FV_VM & PERM_VM & TLOG_VM
+    LOG --> UI_VM & PLAN_VM & TERM_VM & FS_VM & FV_VM & PERM_VM & TLOG_VM
     SC --> SESS_VM & CHAT_VM
     EB --> SESS_VM & CHAT_VM
+    LOG --> SESS_VM & CHAT_VM
     PLAN_VM --> CHAT_VM
+    CFG --> CHAT_VM
     FSE --> CHAT_VM
     TE --> CHAT_VM
 
@@ -319,7 +330,7 @@ graph TD
     classDef vm fill:#f3e5f5,stroke:#4a148c
     classDef cfg fill:#fff3e0,stroke:#e65100
     classDef tui fill:#e8f5e9,stroke:#1b5e20
-    class EB,TS,SR,FSE,FSH,TE,TH,SC,PH svc
+    class LOG,EB,TS,SR,FSE,FSH,TE,TH,SC,PH svc
     class UI_VM,SESS_VM,PLAN_VM,CHAT_VM,TERM_VM,FS_VM,FV_VM,PERM_VM,TLOG_VM vm
     class CFG cfg
     class TUI tui
