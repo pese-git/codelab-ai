@@ -147,6 +147,8 @@ sequenceDiagram
     participant C as Client
     participant S as ACPProtocol
     participant PO as PromptOrchestrator
+    participant LL as LLMLoopStage
+    participant ORCH as AgentOrchestrator
     participant AG as NaiveAgent
     participant LLM as OpenAIProvider
     participant TR as ToolRegistry
@@ -154,28 +156,37 @@ sequenceDiagram
     U->>C: Вводит prompt
     C->>S: session/prompt
     S->>PO: handle_prompt()
-    PO->>AG: process_prompt(messages, tools)
-    AG->>LLM: create_completion()
-    LLM-->>AG: LLMResponse
+    PO->>LL: process(context)
 
-    alt Ответ без tool calls (end_turn)
-        AG-->>PO: AgentResponse(text)
-        PO-->>S: stop_reason=end_turn
-        S-->>C: session/update + result
-        C-->>U: Показывает ответ
-    else Ответ с tool calls
-        AG-->>PO: AgentResponse(tool_calls)
-        loop Для каждого tool call
-            PO->>TR: execute_tool() или request_permission
-            TR-->>PO: ToolResult
-            S-->>C: session/update (статус инструмента)
+    loop LLM Loop (до 10 итераций)
+        alt Первая итерация (новый turn)
+            LL->>ORCH: process_prompt(session, prompt)
+            ORCH->>AG: start_turn(AgentContext)
+            Note over AG: Добавляет user message<br/>из prompt к conversation_history
+        else Последующие итерации (tool results)
+            LL->>ORCH: continue_with_tool_results(session, tool_results)
+            ORCH->>ORCH: _add_tool_result_to_history()
+            ORCH->>AG: continue_turn(ContinuationContext)
+            Note over AG: НЕ добавляет user message<br/>история содержит tool_results
         end
-        PO->>AG: continue_with_tool_results()
-        AG->>LLM: create_completion() (с результатами)
-        LLM-->>AG: LLMResponse (финальный)
-        PO-->>S: stop_reason=end_turn
-        S-->>C: result
-        C-->>U: Показывает ответ
+        AG->>LLM: create_completion(messages, tools)
+        LLM-->>AG: LLMResponse(text, tool_calls, stop_reason)
+        AG-->>ORCH: AgentResponse
+        ORCH-->>LL: AgentResponse
+
+        alt stop_reason = end_turn
+            LL-->>PO: stop_reason=end_turn
+            PO-->>S: ProtocolOutcome
+            S-->>C: session/update + result
+            C-->>U: Показывает ответ
+        else stop_reason = tool_use
+            loop Для каждого tool call
+                LL->>TR: execute_tool() или request_permission
+                TR-->>LL: ToolResult
+                S-->>C: session/update (статус инструмента)
+            end
+            LL->>LL: continue_turn с tool_results
+        end
     end
 ```
 
@@ -216,19 +227,22 @@ sequenceDiagram
     participant C as Client
     participant TS as ACPTransportService
     participant S as ACPProtocol
+    participant ORCH as AgentOrchestrator
     participant AG as NaiveAgent
     participant LLM as OpenAI API
 
-    Note over AG,LLM: LLM запрос выполняется...
+    Note over AG,LLM: asyncio.Task — HTTP запрос к LLM
     AG->>LLM: POST /chat/completions
 
     U->>C: Нажимает Stop
     Note over TS: cancel_prompt() обходит<br/>_callbacks_request_lock
     C->>TS: stop_button_pressed
     TS->>S: session/cancel (немедленно)
-    S->>AG: task.cancel()
+    S->>ORCH: cancel_prompt(session_id)
+    ORCH->>AG: active_task.cancel()
     LLM--xAG: CancelledError
-    AG-->>S: stop_reason=cancelled
+    AG-->>ORCH: stop_reason=cancelled
+    ORCH-->>S: stop_reason=cancelled
     S-->>C: session/update {stopReason: cancelled}
     C-->>U: Стриминг остановлен
 ```

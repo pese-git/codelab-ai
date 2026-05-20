@@ -2,7 +2,7 @@
 
 **Дата:** 2026-05-20
 **Метод:** Ручная верификация кода vs спецификация `doc/Agent Client Protocol/`
-**Обновлено:** 2026-05-20 — устранены гэпы #2, #3, #4, удалён мёртвый код DirectiveResolver
+**Обновлено:** 2026-05-20 — устранены гэпы #2, #3, #4, #10, удалён мёртвый код DirectiveResolver, рефакторинг LLMAgent interface
 
 ---
 
@@ -18,7 +18,7 @@
 | Тестовых файлов | ~141 |
 | Тестовых методов | ~2,210 |
 | Критичных проблем | ✅ 0 |
-| Известных гэпов | 5 (было 8, решено 3) |
+| Известных гэпов | 6 (было 8, решено 4) |
 
 ---
 
@@ -197,6 +197,20 @@
 
 Дополнительно исправлена клиентская сторона: `ACPTransportService.cancel_prompt()` обходит `_callbacks_request_lock` и отправляет `session/cancel` немедленно, не ожидая завершения `session/prompt`. Время отмены сократилось с ~16 с до ~3 мс.
 
+#### ~~10. `LLMAgent.process_prompt` — неясный контракт~~ ✅ Решено (2026-05-20)
+
+**Файлы:** `server/agent/base.py`, `server/agent/naive.py`, `server/agent/orchestrator.py`
+
+Интерфейс `LLMAgent` рефакторирован:
+- Удалён `process_prompt(prompt, history, tools)` с неясной семантикой (кто добавляет user message?)
+- Добавлены `start_turn(AgentContext)` и `continue_turn(ContinuationContext)` — явные контракты
+- `start_turn`: добавляет user message из prompt, вызывает LLM
+- `continue_turn`: **НЕ** добавляет user message — история уже содержит tool_results
+- Удалён мёртвый `while` loop из `NaiveAgent` (всегда возвращал на первой итерации)
+- Удалён `_session_histories` — история жила в двух местах параллельно (баг)
+- `_filter_tools_by_capabilities` теперь всегда включает серверные инструменты (`kind in {"think", "plan"}`)
+- Исправлен баг с hang после `update_plan`: `continue_turn` больше не добавляет пустое user message
+
 #### ~~9. `DirectiveResolver` — мёртвый код~~ ✅ Решено (2026-05-20)
 
 **Файл:** `server/protocol/prompt_handlers/directive_resolver.py` (удалён)
@@ -320,6 +334,7 @@ graph TB
 sequenceDiagram
     participant PO as PromptOrchestrator
     participant LL as LLMLoopStage
+    participant ORCH as AgentOrchestrator
     participant AG as NaiveAgent
     participant LLM as OpenAIProvider
     participant TR as ToolRegistry
@@ -327,10 +342,22 @@ sequenceDiagram
     PO->>LL: process(context)
 
     loop LLM Loop (до 10 итераций)
-        LL->>AG: process_prompt() / continue_with_tool_results()
+        alt Первая итерация (новый turn)
+            LL->>ORCH: process_prompt(session, prompt)
+            ORCH->>ORCH: _build_history(session)
+            ORCH->>AG: start_turn(AgentContext)
+            Note over AG: Добавляет user message<br/>из prompt к conversation_history
+        else Последующие итерации (tool results)
+            LL->>ORCH: continue_with_tool_results(session, tool_results)
+            ORCH->>ORCH: _add_tool_result_to_history()
+            ORCH->>ORCH: _build_history(session)
+            ORCH->>AG: continue_turn(ContinuationContext)
+            Note over AG: НЕ добавляет user message<br/>история содержит tool_results
+        end
         AG->>LLM: create_completion(messages, tools)
-        LLM-->>AG: LLMResponse(text?, tool_calls?, stop_reason)
-        AG-->>LL: AgentResponse
+        LLM-->>AG: LLMResponse(text, tool_calls, stop_reason)
+        AG-->>ORCH: AgentResponse
+        ORCH-->>LL: AgentResponse
 
         alt end_turn — нет tool calls
             LL-->>PO: stop_reason=end_turn
@@ -346,8 +373,34 @@ sequenceDiagram
                     LL->>LL: mark failed
                 end
             end
+            LL->>LL: continue_turn с tool_results
         end
     end
+```
+
+### Отмена промпта (Cancellation)
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant TS as ACPTransportService
+    participant S as ACPProtocol
+    participant ORCH as AgentOrchestrator
+    participant AG as NaiveAgent
+    participant LLM as OpenAI API
+
+    Note over AG,LLM: asyncio.Task — HTTP запрос к LLM
+    AG->>LLM: POST /v1/chat/completions
+
+    C->>TS: Stop (cancel_prompt)
+    Note over TS: Обходит _callbacks_request_lock<br/>через per-request response queue
+    TS->>S: session/cancel (немедленно)
+    S->>ORCH: cancel_prompt(session_id)
+    ORCH->>AG: active_task.cancel()
+    LLM--xAG: CancelledError
+    AG-->>ORCH: stop_reason=cancelled
+    ORCH-->>S: stop_reason=cancelled
+    S-->>C: {stopReason: "cancelled"}
 ```
 
 ### Отмена промпта (Cancellation)
@@ -395,7 +448,7 @@ sequenceDiagram
 | Client RPC Service | 1 | 26 | ✅ Полное |
 | Slash Commands | 2 | 35 | ✅ Полное |
 | HTTP Server | 2 | 18 | ✅ Полное |
-| Agent | 3 | 40 | ✅ Полное |
+| Agent | 3 | 46 | ✅ Полное (start_turn/continue_turn) |
 | LLM Provider | 1 | 6 | ⚠️ Базовое |
 | MCP Module | 1 | 27 | ✅ Полное |
 | Content | 3 | 68 | ✅ Полное |

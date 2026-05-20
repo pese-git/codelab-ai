@@ -270,44 +270,139 @@ class MyCustomHandler(Handler):
 
 ## Agent Layer
 
+### LLMAgent Interface
+
+```python
+class LLMAgent(ABC):
+    """Абстрактный агент — выполняет один вызов LLM.
+
+    Ответственности:
+      - Сформировать список messages из контекста.
+      - Вызвать LLM провайдер ровно один раз.
+      - Вернуть AgentResponse с текстом и/или tool_calls.
+      - Поддерживать отмену активного запроса через cancel_prompt().
+
+    НЕ является ответственностью агента:
+      - Управление циклом tool-calling (это LLMLoopStage).
+      - Хранение истории сессии (это SessionState в AgentOrchestrator).
+      - Выполнение инструментов (это LLMLoopStage + ToolRegistry).
+    """
+
+    @abstractmethod
+    async def start_turn(self, context: AgentContext) -> AgentResponse:
+        """Начало нового turn пользователя.
+
+        Добавляет user message из context.prompt к conversation_history
+        и выполняет один вызов LLM.
+        """
+
+    @abstractmethod
+    async def continue_turn(self, context: ContinuationContext) -> AgentResponse:
+        """Продолжение turn после получения результатов tool_calls.
+
+        НЕ добавляет user message — history уже содержит tool_results.
+        Выполняет один вызов LLM для получения следующего ответа.
+        """
+
+    @abstractmethod
+    async def cancel_prompt(self, session_id: str) -> None:
+        """Отменить текущий in-flight LLM запрос для сессии."""
+
+    @abstractmethod
+    async def initialize(
+        self,
+        llm_provider: LLMProvider,
+        tool_registry: ToolRegistry,
+        config: dict[str, Any],
+    ) -> None:
+        """Обновить зависимости агента после инициализации DI контейнера."""
+
+    @abstractmethod
+    async def end_session(self, session_id: str) -> None:
+        """Завершить сессию и освободить ресурсы."""
+```
+
+### AgentContext и ContinuationContext
+
+```python
+@dataclass
+class AgentContext:
+    """Контекст для start_turn — начало нового turn пользователя."""
+    session_id: str
+    session: SessionState
+    prompt: list[dict[str, Any]]           # Prompt пользователя (блоки контента)
+    conversation_history: list[LLMMessage] # История до текущего промпта
+    available_tools: list[ToolDefinition]  # Отфильтрованы по capabilities
+    config: dict[str, Any]
+
+@dataclass
+class ContinuationContext:
+    """Контекст для continue_turn — продолжение после tool_results."""
+    session_id: str
+    session: SessionState
+    history: list[LLMMessage]              # Полная история включая tool_results
+    available_tools: list[ToolDefinition]  # Отфильтрованы по capabilities
+    config: dict[str, Any]
+```
+
 ### Agent Orchestrator
 
 ```python
 class AgentOrchestrator:
-    """Оркестратор LLM агента."""
-    
+    """Оркестратор LLM агента.
+
+    Собирает контекст из SessionState и вызывает агента через явные методы:
+      - process_prompt       → agent.start_turn()   (новый turn пользователя)
+      - continue_with_tool_results → agent.continue_turn() (после tool_results)
+
+    Также отвечает за _filter_tools_by_capabilities — фильтрацию инструментов
+    согласно ACP-спецификации (capabilities omitted in initialize = UNSUPPORTED).
+    """
+
     def __init__(
         self,
-        agent: BaseAgent,
+        config: OrchestratorConfig,
+        llm_provider: LLMProvider,
         tool_registry: ToolRegistry,
-        client_rpc: ClientRPCService,
     ) -> None:
-        self._agent = agent
-        self._tools = tool_registry
-        self._rpc = client_rpc
-    
+        self.config = config
+        self.llm_provider = llm_provider
+        self.tool_registry = tool_registry
+        self.agent: LLMAgent = NaiveAgent(llm=llm_provider, tools=tool_registry)
+
     async def process_prompt(
         self,
-        session: SessionState,
+        session_state: SessionState,
         prompt: str,
-    ) -> AsyncIterator[SessionUpdate]:
-        """Обработка промпта с потоковыми обновлениями."""
-        
-        # Подготовка контекста
-        context = self._prepare_context(session, prompt)
-        
-        # Запуск агента
-        async for event in self._agent.run(context):
-            if isinstance(event, TextChunk):
-                yield SessionUpdate.text_chunk(event.text)
-            
-            elif isinstance(event, ToolCall):
-                # Выполнение tool call
-                result = await self._execute_tool(session, event)
-                yield SessionUpdate.tool_result(event.id, result)
-            
-            elif isinstance(event, PlanUpdate):
-                yield SessionUpdate.plan_update(event.plan)
+    ) -> AgentResponse:
+        """Начало нового turn: вызывает agent.start_turn()."""
+        context = AgentContext(
+            session_id=session_state.session_id,
+            session=session_state,
+            prompt=[{"type": "text", "text": prompt}],
+            conversation_history=self._build_history(session_state),
+            available_tools=self._filter_tools(session_state),
+            config=session_state.config_values,
+        )
+        return await self.agent.start_turn(context)
+
+    async def continue_with_tool_results(
+        self,
+        session_state: SessionState,
+        tool_results: list[ToolResult],
+    ) -> AgentResponse:
+        """Продолжение turn после tool_results: вызывает agent.continue_turn()."""
+        for result in tool_results:
+            self._add_tool_result_to_history(session_state, result)
+
+        context = ContinuationContext(
+            session_id=session_state.session_id,
+            session=session_state,
+            history=self._build_history(session_state),
+            available_tools=self._filter_tools(session_state),
+            config=session_state.config_values,
+        )
+        return await self.agent.continue_turn(context)
 ```
 
 ### Взаимодействие агента с LLM
@@ -316,18 +411,30 @@ class AgentOrchestrator:
 sequenceDiagram
     participant PO as PromptOrchestrator
     participant LL as LLMLoopStage
+    participant ORCH as AgentOrchestrator
     participant AG as NaiveAgent
     participant LLM as OpenAIProvider
     participant TR as ToolRegistry
 
-    PO->>LL: LLMLoopStage.process(context)
+    PO->>LL: process(context)
 
     loop LLM Loop (до 10 итераций)
-        LL->>AG: process_prompt() / continue_with_tool_results()
-        Note over AG: Создаёт asyncio.Task<br/>для отмены по cancel_requested
+        alt Первая итерация (новый turn)
+            LL->>ORCH: process_prompt(session, prompt)
+            ORCH->>ORCH: _build_history(session)
+            ORCH->>AG: start_turn(AgentContext)
+            Note over AG: Добавляет user message<br/>из prompt к conversation_history
+        else Последующие итерации (tool results)
+            LL->>ORCH: continue_with_tool_results(session, tool_results)
+            ORCH->>ORCH: _add_tool_result_to_history()
+            ORCH->>ORCH: _build_history(session)
+            ORCH->>AG: continue_turn(ContinuationContext)
+            Note over AG: НЕ добавляет user message<br/>история содержит tool_results
+        end
         AG->>LLM: create_completion(messages, tools)
         LLM-->>AG: LLMResponse(text, tool_calls, stop_reason)
-        AG-->>LL: AgentResponse
+        AG-->>ORCH: AgentResponse
+        ORCH-->>LL: AgentResponse
 
         alt stop_reason = end_turn
             LL-->>PO: notifications + stop_reason=end_turn
@@ -344,7 +451,7 @@ sequenceDiagram
                     LL->>LL: mark tool_call as failed
                 end
             end
-            LL->>AG: continue_with_tool_results(tool_results)
+            LL->>LL: continue_turn с tool_results
         end
     end
 ```
@@ -355,19 +462,19 @@ sequenceDiagram
 sequenceDiagram
     participant C as Client
     participant S as ACPProtocol
-    participant AG as AgentOrchestrator
-    participant NA as NaiveAgent
+    participant ORCH as AgentOrchestrator
+    participant AG as NaiveAgent
     participant LLM as OpenAI API
 
-    Note over NA,LLM: asyncio.Task выполняет HTTP запрос к LLM
-    NA->>LLM: POST /v1/chat/completions
+    Note over AG,LLM: asyncio.Task выполняет HTTP запрос к LLM
+    AG->>LLM: POST /v1/chat/completions
 
     C->>S: session/cancel
-    S->>AG: cancel_prompt(session_id)
-    AG->>NA: active_task.cancel()
-    LLM--xNA: asyncio.CancelledError
-    NA-->>AG: CancelledError propagates
-    AG-->>S: stop_reason=cancelled
+    S->>ORCH: cancel_prompt(session_id)
+    ORCH->>AG: active_task.cancel()
+    LLM--xAG: asyncio.CancelledError
+    AG-->>ORCH: CancelledError propagates
+    ORCH-->>S: stop_reason=cancelled
     S-->>C: {stopReason: "cancelled"}
 ```
 
@@ -400,45 +507,56 @@ sequenceDiagram
     C-->>U: Результат
 ```
 
-### BaseAgent
+### NaiveAgent Implementation
 
 ```python
-class BaseAgent(ABC):
-    """Базовый класс агента."""
-    
-    @abstractmethod
-    async def run(
-        self,
-        context: AgentContext,
-    ) -> AsyncIterator[AgentEvent]:
-        """Запуск агента с потоковым выводом."""
-        ...
+class NaiveAgent(LLMAgent):
+    """Агент с одним вызовом LLM.
 
-class NaiveAgent(BaseAgent):
-    """Простая реализация агента."""
-    
-    def __init__(self, llm: LLMProvider) -> None:
-        self._llm = llm
-    
-    async def run(
+    Отвечает за:
+      - Формирование списка messages из контекста.
+      - Один HTTP вызов к LLM провайдеру.
+      - Поддержку отмены через asyncio.Task.
+
+    НЕ отвечает за:
+      - Цикл tool-calling (LLMLoopStage).
+      - Хранение истории сессии (SessionState).
+      - Выполнение инструментов (ToolRegistry).
+    """
+
+    def __init__(self, llm: LLMProvider, tools: ToolRegistry | None = None) -> None:
+        self.llm = llm
+        self._tools = tools  # Только для initialize(), поиск через context
+        self._active_tasks: dict[str, asyncio.Task] = {}
+
+    async def start_turn(self, context: AgentContext) -> AgentResponse:
+        """Начало нового turn: добавляет user message и вызывает LLM."""
+        messages = list(context.conversation_history)
+        prompt_text = _format_prompt(context.prompt)
+        if prompt_text:
+            messages.append(LLMMessage(role="user", content=prompt_text))
+        return await self._call_llm(messages, context.available_tools, context.session_id)
+
+    async def continue_turn(self, context: ContinuationContext) -> AgentResponse:
+        """Продолжение turn после tool_results: НЕ добавляет user message."""
+        return await self._call_llm(context.history, context.available_tools, context.session_id)
+
+    async def _call_llm(
         self,
-        context: AgentContext,
-    ) -> AsyncIterator[AgentEvent]:
-        """Запуск с простым циклом."""
-        
-        messages = self._build_messages(context)
-        
-        async for chunk in self._llm.stream(messages):
-            if chunk.text:
-                yield TextChunk(chunk.text)
-            
-            if chunk.tool_calls:
-                for tool_call in chunk.tool_calls:
-                    yield ToolCall(
-                        id=tool_call.id,
-                        name=tool_call.name,
-                        arguments=tool_call.arguments,
-                    )
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+        session_id: str,
+    ) -> AgentResponse:
+        """Одиночный вызов LLM с поддержкой отмены."""
+        task = asyncio.current_task()
+        if task is not None:
+            self._active_tasks[session_id] = task
+        try:
+            return await self._execute_llm_call(messages, tools, session_id)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._active_tasks.pop(session_id, None)
 ```
 
 ## LLM Providers
