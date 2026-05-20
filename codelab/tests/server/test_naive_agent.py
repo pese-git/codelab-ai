@@ -1,10 +1,12 @@
 """Unit-тесты для NaiveAgent."""
 
+from typing import Any
+
 import pytest
 
 from codelab.server.agent.base import AgentContext
 from codelab.server.agent.naive import NaiveAgent
-from codelab.server.llm.base import LLMMessage, LLMToolCall
+from codelab.server.llm.base import LLMMessage, LLMResponse, LLMToolCall
 from codelab.server.llm.mock_provider import MockLLMProvider
 from codelab.server.protocol.state import SessionState
 from codelab.server.tools.base import ToolDefinition
@@ -572,3 +574,132 @@ async def test_integration_with_mock_provider(
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0].name == "calculator"
     assert response.metadata["iterations"] == 1
+
+
+# ============================================================================
+# Тесты отмены prompt (cancel_prompt)
+# ============================================================================
+
+
+class _SlowMockLLMProvider(MockLLMProvider):
+    """Mock провайдер с задержкой для тестирования отмены."""
+
+    async def create_completion(
+        self,
+        messages: list[LLMMessage],
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        import asyncio
+        await asyncio.sleep(10)  # Длинная задержка для возможности отмены
+        return await super().create_completion(messages, tools, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_cancel_prompt_no_active_task(
+    tool_registry: SimpleToolRegistry,
+) -> None:
+    """Отмена без активной задачи — не вызывает ошибок."""
+    llm = MockLLMProvider(response="Hello")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+
+    # Нет активной задачи — отмена должна пройти тихо
+    await agent.cancel_prompt("non-existent-session")
+
+
+@pytest.mark.asyncio
+async def test_cancel_prompt_cancels_active_task(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """Отмена прерывает активную задачу process_prompt."""
+    import asyncio
+
+    llm = _SlowMockLLMProvider(response="Hello")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+
+    context = AgentContext(
+        session_id="test-session",
+        session=session_state,
+        prompt=[{"type": "text", "text": "Test"}],
+        conversation_history=[],
+        available_tools=tool_registry.list_tools(),
+        config={},
+    )
+
+    # Запускаем process_prompt как задачу
+    task = asyncio.create_task(agent.process_prompt(context))
+
+    # Даём задаче начать выполнение и войти в LLM call
+    await asyncio.sleep(0.1)
+
+    # Убеждаемся что задача активна
+    assert "test-session" in agent._active_tasks
+
+    # Отменяем
+    await agent.cancel_prompt("test-session")
+
+    # Задача должна завершиться с CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_cancel_prompt_clears_active_task_on_completion(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """После завершения process_prompt активная задача очищается."""
+    llm = MockLLMProvider(response="Hello")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+
+    context = AgentContext(
+        session_id="test-session",
+        session=session_state,
+        prompt=[{"type": "text", "text": "Test"}],
+        conversation_history=[],
+        available_tools=tool_registry.list_tools(),
+        config={},
+    )
+
+    response = await agent.process_prompt(context)
+    assert response.text == "Hello"
+
+    # После завершения нет активной задачи
+    assert "test-session" not in agent._active_tasks
+
+
+@pytest.mark.asyncio
+async def test_end_session_cancels_active_task(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """end_session отменяет активную задачу перед очисткой."""
+    import asyncio
+
+    llm = _SlowMockLLMProvider(response="Hello")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+
+    context = AgentContext(
+        session_id="test-session",
+        session=session_state,
+        prompt=[{"type": "text", "text": "Test"}],
+        conversation_history=[],
+        available_tools=tool_registry.list_tools(),
+        config={},
+    )
+
+    task = asyncio.create_task(agent.process_prompt(context))
+    await asyncio.sleep(0.1)
+
+    # Убеждаемся что задача активна
+    assert "test-session" in agent._active_tasks
+
+    # end_session должен отменить задачу
+    await agent.end_session("test-session")
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # История очищена
+    assert "test-session" not in agent._session_histories

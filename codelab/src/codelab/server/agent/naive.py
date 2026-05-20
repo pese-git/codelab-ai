@@ -1,5 +1,6 @@
 """Наивный агент с базовым циклом tool-calling."""
 
+import asyncio
 from typing import Any
 
 import structlog
@@ -43,6 +44,8 @@ class NaiveAgent(LLMAgent):
         self.max_iterations = max_iterations
         # Словарь для хранения истории сессий
         self._session_histories: dict[str, list[LLMMessage]] = {}
+        # Активные asyncio.Task для каждой сессии — для отмены
+        self._active_tasks: dict[str, asyncio.Task] = {}
 
     async def initialize(
         self,
@@ -62,6 +65,30 @@ class NaiveAgent(LLMAgent):
 
         Returns:
             AgentResponse с финальным ответом и обновленной историей
+        """
+        session_id = context.session_id
+        
+        # Зарегистрировать текущую задачу для возможности отмены
+        task = asyncio.current_task()
+        if task is not None:
+            self._active_tasks[session_id] = task
+        
+        try:
+            return await self._process_prompt_impl(context)
+        except asyncio.CancelledError:
+            logger.info(
+                "prompt processing cancelled",
+                session_id=session_id,
+            )
+            raise
+        finally:
+            # Удалить задачу из активных после завершения или отмены
+            self._active_tasks.pop(session_id, None)
+
+    async def _process_prompt_impl(self, context: AgentContext) -> AgentResponse:
+        """Внутренняя реализация обработки prompt.
+        
+        Вынесена отдельно для корректной работы отмены через asyncio.Task.
         """
         # Подготовить messages для LLM
         messages = list(context.conversation_history)
@@ -202,12 +229,26 @@ class NaiveAgent(LLMAgent):
     async def cancel_prompt(self, session_id: str) -> None:
         """Отменить текущую обработку prompt.
 
+        Отменяет активный asyncio.Task для данной сессии, что приводит
+        к прерыванию текущего LLM-запроса (OpenAI async client поддерживает
+        asyncio cancellation).
+
         Args:
             session_id: ID сессии
         """
-        # Наивная реализация - просто очищаем историю для этой сессии
-        # В реальном случае здесь была бы отмена текущей операции LLM
-        pass
+        active_task = self._active_tasks.get(session_id)
+        if active_task is not None and not active_task.done():
+            logger.info(
+                "cancelling active prompt task",
+                session_id=session_id,
+                task_id=id(active_task),
+            )
+            active_task.cancel()
+        else:
+            logger.debug(
+                "no active prompt to cancel",
+                session_id=session_id,
+            )
 
     def add_to_history(
         self,
@@ -244,6 +285,8 @@ class NaiveAgent(LLMAgent):
         Args:
             session_id: ID сессии
         """
+        # Отменить активную задачу если есть
+        await self.cancel_prompt(session_id)
         # Очистить историю для этой сессии
         if session_id in self._session_histories:
             del self._session_histories[session_id]

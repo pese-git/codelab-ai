@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import structlog
@@ -286,12 +288,23 @@ class LLMLoopStage(PromptStage):
                 return LLMLoopResult(notifications=notifications, stop_reason="cancelled")
 
             try:
+                # Запускаем agent call как задачу для возможности отмены
                 if iteration == 1 and initial_prompt_text:
-                    agent_response = await agent_orchestrator.process_prompt(session, initial_prompt_text)
-                else:
-                    agent_response = await agent_orchestrator.continue_with_tool_results(
-                        session, tool_results or []
+                    agent_task = asyncio.create_task(
+                        agent_orchestrator.process_prompt(session, initial_prompt_text)
                     )
+                else:
+                    agent_task = asyncio.create_task(
+                        agent_orchestrator.continue_with_tool_results(session, tool_results or [])
+                    )
+
+                # Мониторим флаг отмены параллельно с выполнением задачи
+                agent_response = await self._run_with_cancellation_check(
+                    agent_task, session, agent_orchestrator, session_id
+                )
+            except asyncio.CancelledError:
+                logger.debug("llm_loop agent task cancelled", session_id=session_id, iteration=iteration)
+                return LLMLoopResult(notifications=notifications, stop_reason="cancelled")
             except Exception as e:
                 error_message = f"Agent error: {str(e)}"
                 notifications.append(_build_error_notification(session_id, error_message))
@@ -559,6 +572,53 @@ class LLMLoopStage(PromptStage):
 
     def _is_cancel_requested(self, session: SessionState) -> bool:
         return session.active_turn is not None and session.active_turn.cancel_requested
+
+    async def _run_with_cancellation_check(
+        self,
+        task: asyncio.Task,
+        session: SessionState,
+        agent_orchestrator: AgentOrchestrator,
+        session_id: str,
+    ) -> Any:
+        """Запускает задачу и мониторит флаг отмены.
+
+        Если флаг cancel_requested установлен во время выполнения задачи,
+        вызывает agent.cancel_prompt() для прерывания LLM-запроса.
+
+        Args:
+            task: asyncio.Task с вызовом агента
+            session: Состояние сессии для проверки флага отмены
+            agent_orchestrator: Оркестратор для вызова cancel_prompt
+            session_id: ID сессии для логирования
+
+        Returns:
+            Результат выполнения задачи
+
+        Raises:
+            asyncio.CancelledError: Если задача была отменена
+        """
+        # Периодически проверяем флаг отмены параллельно с выполнением задачи
+        while not task.done():
+            if self._is_cancel_requested(session):
+                logger.info(
+                    "cancellation detected during LLM call, aborting",
+                    session_id=session_id,
+                )
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                raise asyncio.CancelledError()
+            # Ждём завершения задачи или проверяем флаг через короткий интервал
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+                return task.result()
+            except TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                raise
+
+        # Задача уже завершена
+        return task.result()
 
 
 def _build_error_notification(session_id: str, error_message: str) -> ACPMessage:

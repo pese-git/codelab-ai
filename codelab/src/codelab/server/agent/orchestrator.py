@@ -103,6 +103,17 @@ class AgentOrchestrator:
         # Возвращаем ответ агента без модификации session_state
         return agent_response
 
+    async def cancel_prompt(self, session_id: str) -> None:
+        """Отменить текущий LLM-запрос для сессии.
+
+        Делегирует отмену underlying агенту, который прервёт
+        in-flight запрос к LLM API.
+
+        Args:
+            session_id: ID сессии
+        """
+        await self.agent.cancel_prompt(session_id)
+
     def _create_agent_context(
         self,
         session_state: SessionState,
