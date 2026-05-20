@@ -31,7 +31,7 @@ class FileSystemToolDefinitions:
             ToolDefinition для регистрации в реестре.
         """
         return ToolDefinition(
-            name="read_text_file",
+            name="fs/read_text_file",
             description=(
                 "Read text file content from client filesystem. "
                 "Supports line numbers (1-based) and limits for partial reads."
@@ -73,7 +73,7 @@ class FileSystemToolDefinitions:
             ToolDefinition для регистрации в реестре.
         """
         return ToolDefinition(
-            name="write_text_file",
+            name="fs/write_text_file",
             description=(
                 "Write or update text file in client filesystem. "
                 "Supports diff generation for tracking changes."

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from codelab.server.messages import ACPMessage
-from codelab.server.protocol.handlers.directives import resolve_tool_title
 from codelab.server.protocol.handlers.prompt import (
     build_executor_tool_execution_updates,
     build_fs_client_request,
@@ -18,6 +17,7 @@ from codelab.server.protocol.handlers.prompt import (
     can_use_terminal_client_rpc,
     create_tool_call,
     resolve_prompt_directives,
+    resolve_tool_title,
 )
 from codelab.server.protocol.state import SessionState
 

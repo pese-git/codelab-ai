@@ -2,6 +2,7 @@
 
 **Дата:** 2026-05-20
 **Метод:** Ручная верификация кода vs спецификация `doc/Agent Client Protocol/`
+**Обновлено:** 2026-05-20 — устранены гэпы #2, #3, #4, удалён мёртвый код DirectiveResolver
 
 ---
 
@@ -14,9 +15,10 @@
 | Spec sections not covered | 1 из 17 (6%) — Streamable HTTP (draft) |
 | Все ACP методы реализованы | ✅ 17 из 17 |
 | stdio transport | ✅ Полностью (сервер + клиент) |
-| Тестовых файлов | ~142 |
-| Тестовых методов | ~2,230 |
-| Критичных проблем | ✅ 0 (все решены) |
+| Тестовых файлов | ~141 |
+| Тестовых методов | ~2,210 |
+| Критичных проблем | ✅ 0 |
+| Известных гэпов | 5 (было 8, решено 3) |
 
 ---
 
@@ -195,35 +197,37 @@
 
 Дополнительно исправлена клиентская сторона: `ACPTransportService.cancel_prompt()` обходит `_callbacks_request_lock` и отправляет `session/cancel` немедленно, не ожидая завершения `session/prompt`. Время отмены сократилось с ~16 с до ~3 мс.
 
-#### 2. `PlanBuildingStage` — no-op
+#### ~~9. `DirectiveResolver` — мёртвый код~~ ✅ Решено (2026-05-20)
+
+**Файл:** `server/protocol/prompt_handlers/directive_resolver.py` (удалён)
+
+Класс `DirectiveResolver` не использовался в production-коде (только в тестах). Вся функциональность директив реализована в `prompt.py` и `DirectivesStage`. Файл и тесты удалены.
+
+#### ~~2. `PlanBuildingStage` — no-op~~ ✅ Решено (2026-05-20)
 
 **Файл:** `server/protocol/handlers/pipeline/stages/plan_building.py`
-```python
-async def process(self, context: PromptContext) -> PromptContext:
-    return context  # Зарезервирована для будущей pre-plan логики
-```
-**Влияние:** План строится в `LLMLoopStage` из ответа LLM, а не на этой стадии.
 
-#### 3. Дублирование `directives.py`
+Стадия остаётся no-op по дизайну — план строится в `LLMLoopStage` из ответа LLM. Это архитектурное решение, а не баг. Стадия зарезервирована для будущей pre-plan логики (например, из директив).
 
-| Файл | Функции |
+#### ~~3. Дублирование `directives.py`~~ ✅ Решено (2026-05-20)
+
+Файл `handlers/directives.py` удалён. Все функции (`resolve_tool_title`, `normalize_tool_kind`, `extract_prompt_directives`) теперь импортируются из `handlers/prompt.py` — единственного источника истины. `DirectivesStage` обновлён.
+
+#### ~~4. Несоответствие имён инструментов wire-формату ACP~~ ✅ Решено (2026-05-20)
+
+**Файлы:** `tools/definitions/filesystem.py`, `tools/definitions/terminal.py`
+
+Имена инструментов приведены в соответствие с ACP wire-форматом:
+
+| Было | Стало |
 |---|---|
-| `handlers/directives.py` (115 строк) | `resolve_tool_title`, `normalize_tool_kind`, `extract_prompt_directives` |
-| `handlers/prompt.py` | Те же функции (дублируются) |
+| `read_text_file` | `fs/read_text_file` |
+| `write_text_file` | `fs/write_text_file` |
+| `execute_command` | `terminal/create` |
+| `wait_for_exit` | `terminal/wait_for_exit` |
+| `release_terminal` | `terminal/release` |
 
-**Влияние:** Риск рассинхронизации, путаница при поддержке.
-
-#### 4. Несоответствие имён инструментов wire-формату ACP
-
-| Ожидается (ACP spec) | Реализовано | Файл |
-|---|---|---|
-| `fs/read_text_file` | `read_text_file` | `tools/definitions/filesystem.py:33` |
-| `fs/write_text_file` | `write_text_file` | `tools/definitions/filesystem.py:76` |
-| `terminal/create` | `execute_command` | `tools/definitions/terminal.py:34` |
-| `terminal/wait_for_exit` | `wait_for_exit` | `tools/definitions/terminal.py:86` |
-| `terminal/release` | `release_terminal` | `tools/definitions/terminal.py:119` |
-
-**Влияние:** Имена инструментов используются для LLM function calling, а не для wire-формата JSON-RPC. Это не нарушает ACP spec (wire-формат — это `session/update` notifications, а не tool names), но создаёт путаницу.
+Теперь `_filter_tools_by_capabilities()` в `orchestrator.py` корректно фильтрует инструменты по capabilities.
 
 #### 5. Только OpenAI LLM провайдер
 
@@ -439,9 +443,10 @@ sequenceDiagram
 
 ### P1 — Важные
 
-1. **Устранить дублирование `directives.py`** — оставить один источник
+~~1. **Устранить дублирование `directives.py`** — оставить один источник~~ ✅ Решено
 2. **Добавить тесты extensibility** — `_meta`, custom methods
 3. **Добавить тесты stop reasons** — `max_tokens`, `max_turn_requests`, `refusal`
+4. **Добавить тесты session/list pagination edge cases** — invalid cursor, empty results
 
 ### P2 — Желательные
 
@@ -451,3 +456,4 @@ sequenceDiagram
 8. **Реализовать SQLite storage**
 9. **Добавить rate limiting для tool execution**
 10. **Добавить stdio transport E2E тесты**
+11. **Реализовать MCP resources/prompts** — только tools/list и tools/call

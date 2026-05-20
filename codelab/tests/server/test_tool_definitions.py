@@ -25,7 +25,7 @@ class TestFileSystemDefinitions:
         
         # Assert
         assert isinstance(definition, ToolDefinition)
-        assert definition.name == "read_text_file"
+        assert definition.name == "fs/read_text_file"
         assert definition.kind == "read"
         assert definition.requires_permission is True
         assert definition.description is not None
@@ -90,7 +90,7 @@ class TestFileSystemDefinitions:
         
         # Assert
         assert isinstance(definition, ToolDefinition)
-        assert definition.name == "write_text_file"
+        assert definition.name == "fs/write_text_file"
         assert definition.kind == "edit"
         assert definition.requires_permission is True
         assert definition.description is not None
@@ -171,7 +171,7 @@ class TestTerminalDefinitions:
         
         # Assert
         assert isinstance(definition, ToolDefinition)
-        assert definition.name == "execute_command"
+        assert definition.name == "terminal/create"
         assert definition.kind == "execute"
         assert definition.requires_permission is True
         assert definition.description is not None
@@ -255,7 +255,7 @@ class TestTerminalDefinitions:
         
         # Assert
         assert isinstance(definition, ToolDefinition)
-        assert definition.name == "wait_for_exit"
+        assert definition.name == "terminal/wait_for_exit"
         assert definition.kind == "read"
         assert definition.requires_permission is False
         assert definition.description is not None
@@ -302,7 +302,7 @@ class TestTerminalDefinitions:
         
         # Assert
         assert isinstance(definition, ToolDefinition)
-        assert definition.name == "release_terminal"
+        assert definition.name == "terminal/release"
         assert definition.kind == "delete"
         assert definition.requires_permission is False
         assert definition.description is not None
