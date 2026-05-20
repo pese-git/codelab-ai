@@ -1,51 +1,126 @@
-"""Наивный агент с базовым циклом tool-calling."""
+"""NaiveAgent — реализация LLMAgent с одним вызовом LLM на обращение.
+
+Архитектурный принцип: агент делает ОДИН вызов LLM и возвращает ответ.
+Цикл tool-calling живёт в LLMLoopStage, а не здесь.
+
+Два явных метода:
+  - start_turn: добавляет user message, вызывает LLM
+  - continue_turn: НЕ добавляет user message (история содержит tool_results), вызывает LLM
+"""
 
 import asyncio
 from typing import Any
 
 import structlog
 
-from codelab.server.agent.base import AgentContext, AgentResponse, LLMAgent
+from codelab.server.agent.base import (
+    AgentContext,
+    AgentResponse,
+    ContinuationContext,
+    LLMAgent,
+)
 from codelab.server.agent.plan_extractor import PlanExtractor
-from codelab.server.llm.base import LLMMessage, LLMProvider
-from codelab.server.tools.base import ToolRegistry
+from codelab.server.llm.base import LLMMessage, LLMProvider, LLMResponse
+from codelab.server.tools.base import ToolDefinition, ToolRegistry
 
-# Используем structlog для структурированного логирования
 logger = structlog.get_logger()
 
 
 class NaiveAgent(LLMAgent):
-    """Простой агент с базовым циклом tool-calling.
+    """Агент с одним вызовом LLM.
 
-    Алгоритм:
-    1. Отправляет промпт в LLM
-    2. Если LLM возвращает tool_calls:
-       - Выполняет каждый tool через ToolRegistry
-       - Добавляет результаты в историю
-       - Повторяет запрос к LLM (максимум max_iterations)
-    3. Возвращает финальный текстовый ответ
+    Отвечает за:
+      - Формирование списка messages из контекста.
+      - Один HTTP вызов к LLM провайдеру.
+      - Поддержку отмены через asyncio.Task.
+
+    НЕ отвечает за:
+      - Цикл tool-calling (LLMLoopStage).
+      - Хранение истории сессии (SessionState).
+      - Выполнение инструментов (ToolRegistry).
     """
 
     def __init__(
         self,
         llm: LLMProvider,
-        tools: ToolRegistry,
-        max_iterations: int = 5,
+        tools: ToolRegistry | None = None,
     ) -> None:
         """Инициализация агента.
 
         Args:
-            llm: LLM провайдер для обработки промптов
-            tools: Реестр инструментов для выполнения
-            max_iterations: Максимальное количество итераций цикла tool-calling
+            llm: LLM провайдер для выполнения запросов.
+            tools: Реестр инструментов (не используется для поиска tools —
+                   инструменты приходят через context.available_tools;
+                   параметр оставлен для совместимости с initialize()).
         """
         self.llm = llm
-        self.tools = tools
-        self.max_iterations = max_iterations
-        # Словарь для хранения истории сессий
-        self._session_histories: dict[str, list[LLMMessage]] = {}
-        # Активные asyncio.Task для каждой сессии — для отмены
+        # Хранит tools только для initialize() — поиск tools через context
+        self._tools = tools
+        # Активные asyncio.Task по session_id — для отмены
         self._active_tasks: dict[str, asyncio.Task] = {}
+
+    # ── Публичный интерфейс LLMAgent ────────────────────────────────────────
+
+    async def start_turn(self, context: AgentContext) -> AgentResponse:
+        """Начало нового turn: добавляет user message и вызывает LLM.
+
+        Формирует messages:
+            [история, user(prompt_text)]
+
+        Args:
+            context: Контекст с историей и промптом пользователя.
+
+        Returns:
+            AgentResponse с текстом и/или tool_calls.
+        """
+        messages = list(context.conversation_history)
+
+        # Формируем user message из prompt blocks
+        prompt_text = _format_prompt(context.prompt)
+        if prompt_text:
+            messages.append(LLMMessage(role="user", content=prompt_text))
+
+        return await self._call_llm(
+            messages=messages,
+            tools=context.available_tools,
+            session_id=context.session_id,
+        )
+
+    async def continue_turn(self, context: ContinuationContext) -> AgentResponse:
+        """Продолжение turn после tool_results: НЕ добавляет user message.
+
+        История уже содержит tool_results, добавленные AgentOrchestrator:
+            [..., assistant(tool_calls), tool(result_1), ...]
+        LLM получает эту историю как есть и генерирует следующий ответ.
+
+        Args:
+            context: Контекст с полной историей, включая tool_results.
+
+        Returns:
+            AgentResponse с текстом или новыми tool_calls.
+        """
+        return await self._call_llm(
+            messages=context.history,
+            tools=context.available_tools,
+            session_id=context.session_id,
+        )
+
+    async def cancel_prompt(self, session_id: str) -> None:
+        """Отменить активный LLM запрос для сессии.
+
+        Args:
+            session_id: ID сессии.
+        """
+        task = self._active_tasks.get(session_id)
+        if task is not None and not task.done():
+            logger.info(
+                "cancelling active llm task",
+                session_id=session_id,
+                task_id=id(task),
+            )
+            task.cancel()
+        else:
+            logger.debug("no active llm task to cancel", session_id=session_id)
 
     async def initialize(
         self,
@@ -53,256 +128,148 @@ class NaiveAgent(LLMAgent):
         tool_registry: ToolRegistry,
         config: dict[str, Any],
     ) -> None:
-        """Инициализация агента (переопределение из базового класса)."""
-        self.llm = llm_provider
-        self.tools = tool_registry
-
-    async def process_prompt(self, context: AgentContext) -> AgentResponse:
-        """Обработать prompt и вернуть ответ.
+        """Обновить LLM провайдер после инициализации DI контейнера.
 
         Args:
-            context: Контекст с промптом, историей и инструментами
+            llm_provider: Новый провайдер.
+            tool_registry: Реестр инструментов (зарезервировано).
+            config: Конфигурация (зарезервировано).
+        """
+        self.llm = llm_provider
+        self._tools = tool_registry
+
+    async def end_session(self, session_id: str) -> None:
+        """Отменить активный запрос и очистить ресурсы сессии.
+
+        Args:
+            session_id: ID сессии.
+        """
+        await self.cancel_prompt(session_id)
+        # _active_tasks очищается в finally блоке _call_llm, но на всякий случай:
+        self._active_tasks.pop(session_id, None)
+
+    # ── Внутренняя реализация ────────────────────────────────────────────────
+
+    async def _call_llm(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+        session_id: str,
+    ) -> AgentResponse:
+        """Одиночный вызов LLM. Общая реализация для start_turn и continue_turn.
+
+        Регистрирует текущую asyncio.Task для возможности отмены через cancel_prompt().
+
+        Args:
+            messages: Полный список сообщений для LLM.
+            tools: Доступные инструменты (уже отфильтрованы по capabilities).
+            session_id: ID сессии для управления отменой.
 
         Returns:
-            AgentResponse с финальным ответом и обновленной историей
+            AgentResponse с текстом ответа и/или tool_calls.
+
+        Raises:
+            asyncio.CancelledError: При отмене задачи через cancel_prompt().
         """
-        session_id = context.session_id
-        
-        # Зарегистрировать текущую задачу для возможности отмены
         task = asyncio.current_task()
         if task is not None:
             self._active_tasks[session_id] = task
-        
+
         try:
-            return await self._process_prompt_impl(context)
+            return await self._execute_llm_call(messages, tools, session_id)
         except asyncio.CancelledError:
-            logger.info(
-                "prompt processing cancelled",
-                session_id=session_id,
-            )
+            logger.info("llm_call_cancelled", session_id=session_id)
             raise
         finally:
-            # Удалить задачу из активных после завершения или отмены
             self._active_tasks.pop(session_id, None)
 
-    async def _process_prompt_impl(self, context: AgentContext) -> AgentResponse:
-        """Внутренняя реализация обработки prompt.
-        
-        Вынесена отдельно для корректной работы отмены через asyncio.Task.
+    async def _execute_llm_call(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+        session_id: str,
+    ) -> AgentResponse:
+        """Непосредственный вызов LLM провайдера и парсинг ответа.
+
+        Args:
+            messages: Список сообщений для LLM.
+            tools: Доступные инструменты.
+            session_id: ID сессии для логирования.
+
+        Returns:
+            AgentResponse с разобранным ответом LLM.
         """
-        # Подготовить messages для LLM
-        messages = list(context.conversation_history)
+        tools_dict = _to_openai_tools_format(tools)
 
-        # Добавить user message с промптом
-        # Промпт может содержать list[dict] - преобразуем в текст
-        prompt_text = self._format_prompt(context.prompt)
-        messages.append(LLMMessage(role="user", content=prompt_text))
-
-        # Получить список инструментов для этой сессии
-        available_tools = self.tools.get_available_tools(context.session_id)
-
-        # Преобразовать определения инструментов в формат OpenAI function calling
-        tools_dict = [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }
-            }
-            for tool in available_tools
-        ]
-
-        # Цикл tool-calling
-        iteration = 0
-        while iteration < self.max_iterations:
-            iteration += 1
-
-            # Вызвать LLM
-            response = await self.llm.create_completion(
-                messages=messages,
-                tools=tools_dict if tools_dict else None,
-            )
-
-            # Логирование полученного от LLM ответа
-            logger.info(
-                "llm response received from agent",
-                iteration=iteration,
-                response_length=len(response.text),
-                has_tool_calls=bool(response.tool_calls),
-                tool_calls_count=len(response.tool_calls),
-            )
-            logger.debug(
-                "llm response text content",
-                content=response.text[:200],
-            )
-
-            # Если нет tool calls - вернуть ответ
-            if not response.tool_calls:
-                # Обновить историю в контексте
-                if context.session_id not in self._session_histories:
-                    self._session_histories[context.session_id] = []
-
-                # Добавить assistant message и user message в историю
-                self._session_histories[context.session_id].extend(messages)
-                self._session_histories[context.session_id].append(
-                    LLMMessage(role="assistant", content=response.text)
-                )
-
-                # Извлечь план из текстового ответа LLM
-                plan_extractor = PlanExtractor()
-                extracted_plan = plan_extractor.extract_from_text(response.text)
-
-                return AgentResponse(
-                    text=response.text,
-                    tool_calls=[],
-                    stop_reason=response.stop_reason,
-                    metadata={"iterations": iteration},
-                    plan=extracted_plan,
-                )
-
-            # АРХИТЕКТУРНОЕ ИЗМЕНЕНИЕ (Вариант A - Clean Architecture):
-            # Agent ДЕЛЕГИРУЕТ управление tool calls в PromptOrchestrator.
-            # Согласно SERVER_PERMISSION_INTEGRATION_ARCHITECTURE.md:
-            # - Agent: генерирует tool calls и возвращает их
-            # - PromptOrchestrator: управляет decision flow (allow/reject/ask)
-            # Это позволяет применить permission flow перед выполнением tool.
-            
-            # Обновить историю в контексте
-            if context.session_id not in self._session_histories:
-                self._session_histories[context.session_id] = []
-
-            # Добавить user message и assistant message в историю
-            self._session_histories[context.session_id].extend(messages)
-            self._session_histories[context.session_id].append(
-                LLMMessage(
-                    role="assistant",
-                    content=response.text,
-                    tool_calls=response.tool_calls,
-                )
-            )
-
-            # Логирование для отладки
-            logger.info(
-                "llm returned tool calls - delegating execution to PromptOrchestrator",
-                iteration=iteration,
-                num_tool_calls=len(response.tool_calls),
-                tool_names=[tc.name for tc in response.tool_calls],
-            )
-
-            # Вернуть tool_calls для обработки в PromptOrchestrator
-            # PromptOrchestrator применит _process_tool_calls() которая:
-            # 1. Проверит разрешения (session policy -> global policy -> ask user)
-            # 2. Выполнит tool или отклонит его
-            # 3. Отправит notifications клиенту
-            
-            # Извлечь план из текста или tool call update_plan
-            plan_extractor = PlanExtractor()
-            extracted_plan = plan_extractor.extract_from_text(response.text)
-            if extracted_plan is None:
-                # Попытка извлечь из tool call update_plan
-                extracted_plan = plan_extractor.extract_from_tool_call(response.tool_calls)
-            
-            return AgentResponse(
-                text=response.text,
-                tool_calls=response.tool_calls,
-                stop_reason=response.stop_reason,
-                metadata={"iterations": iteration},
-                plan=extracted_plan,
-            )
-
-        # Достигнут лимит итераций
-        if context.session_id not in self._session_histories:
-            self._session_histories[context.session_id] = []
-
-        self._session_histories[context.session_id].extend(messages)
-
-        return AgentResponse(
-            text="Достигнут максимум итераций tool-calling",
-            tool_calls=[],
-            stop_reason="max_iterations",
-            metadata={"iterations": iteration},
-            plan=None,
+        response: LLMResponse = await self.llm.create_completion(
+            messages=messages,
+            tools=tools_dict if tools_dict else None,
         )
 
-    async def cancel_prompt(self, session_id: str) -> None:
-        """Отменить текущую обработку prompt.
+        logger.info(
+            "llm_response_received",
+            session_id=session_id,
+            response_length=len(response.text),
+            has_tool_calls=bool(response.tool_calls),
+            tool_calls_count=len(response.tool_calls),
+        )
+        logger.debug(
+            "llm_response_content",
+            session_id=session_id,
+            content=response.text[:200],
+        )
 
-        Отменяет активный asyncio.Task для данной сессии, что приводит
-        к прерыванию текущего LLM-запроса (OpenAI async client поддерживает
-        asyncio cancellation).
+        # Извлекаем plan из текста или из tool call update_plan
+        extractor = PlanExtractor()
+        plan = extractor.extract_from_text(response.text)
+        if plan is None and response.tool_calls:
+            plan = extractor.extract_from_tool_call(response.tool_calls)
 
-        Args:
-            session_id: ID сессии
-        """
-        active_task = self._active_tasks.get(session_id)
-        if active_task is not None and not active_task.done():
-            logger.info(
-                "cancelling active prompt task",
-                session_id=session_id,
-                task_id=id(active_task),
-            )
-            active_task.cancel()
-        else:
-            logger.debug(
-                "no active prompt to cancel",
-                session_id=session_id,
-            )
+        return AgentResponse(
+            text=response.text,
+            tool_calls=response.tool_calls if response.tool_calls else [],
+            stop_reason=response.stop_reason,
+            metadata={},
+            plan=plan,
+        )
 
-    def add_to_history(
-        self,
-        session_id: str,
-        role: str,
-        content: str,
-    ) -> None:
-        """Добавить сообщение в историю сессии.
 
-        Args:
-            session_id: ID сессии
-            role: Роль сообщения (user, assistant, tool, system)
-            content: Содержимое сообщения
-        """
-        if session_id not in self._session_histories:
-            self._session_histories[session_id] = []
+# ── Вспомогательные функции модульного уровня ────────────────────────────────
 
-        self._session_histories[session_id].append(LLMMessage(role=role, content=content))
 
-    def get_session_history(self, session_id: str) -> list[LLMMessage]:
-        """Получить историю сообщений для сессии.
+def _format_prompt(prompt: list[dict[str, Any]]) -> str:
+    """Объединить текстовые блоки промпта в строку.
 
-        Args:
-            session_id: ID сессии
+    Args:
+        prompt: Список блоков вида [{"type": "text", "text": "..."}].
 
-        Returns:
-            Список сообщений LLM для этой сессии
-        """
-        return self._session_histories.get(session_id, [])
+    Returns:
+        Объединённый текст, пустая строка если блоков нет.
+    """
+    return "".join(
+        block.get("text", "")
+        for block in prompt
+        if block.get("type") == "text"
+    )
 
-    async def end_session(self, session_id: str) -> None:
-        """Завершить сессию и освободить ресурсы.
 
-        Args:
-            session_id: ID сессии
-        """
-        # Отменить активную задачу если есть
-        await self.cancel_prompt(session_id)
-        # Очистить историю для этой сессии
-        if session_id in self._session_histories:
-            del self._session_histories[session_id]
+def _to_openai_tools_format(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
+    """Преобразовать ToolDefinition в формат OpenAI function calling.
 
-    def _format_prompt(self, prompt: list[dict[str, Any]]) -> str:
-        """Преобразовать список блоков промпта в текст.
+    Args:
+        tools: Список определений инструментов.
 
-        Args:
-            prompt: Список блоков вида [{"type": "text", "text": "..."}]
-
-        Returns:
-            Объединенный текст промпта
-        """
-        result_parts = []
-        for block in prompt:
-            if block.get("type") == "text":
-                result_parts.append(block.get("text", ""))
-
-        return "".join(result_parts)
+    Returns:
+        Список словарей в формате OpenAI API.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        }
+        for tool in tools
+    ]
