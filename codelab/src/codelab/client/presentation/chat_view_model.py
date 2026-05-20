@@ -471,11 +471,16 @@ class ChatViewModel(BaseViewModel):
             return
 
         try:
-            self.logger.info("Canceling prompt", session_id=session_id)
+            self.logger.info(
+                "cancel_prompt_sending_request",
+                session_id=session_id,
+                is_streaming=self.is_streaming.value,
+            )
             await self.coordinator.cancel_prompt(session_id)
+            self.logger.info("cancel_prompt_request_sent", session_id=session_id)
             self.is_streaming.value = False
         except Exception as e:
-            self.logger.exception("Error canceling prompt", error=str(e))
+            self.logger.exception("cancel_prompt_error", error=str(e))
             raise
 
     async def _approve_permission(

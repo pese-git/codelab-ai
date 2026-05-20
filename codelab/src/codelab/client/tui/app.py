@@ -63,6 +63,10 @@ class ACPClientApp(App[None]):
     State management осуществляется через ViewModels.
     """
 
+    # Отключаем стандартный выход по Ctrl+C — используем его для отмены prompt.
+    # Выход назначен на Ctrl+Q.
+    CTRL_C_CAN_QUIT = False
+
     BINDINGS = [
         ("ctrl+q", "quit", "Выход"),
         ("ctrl+n", "new_session", "Новая сессия"),
@@ -411,6 +415,32 @@ class ACPClientApp(App[None]):
             exclusive=False,
         )
 
+    def action_cancel_prompt(self) -> None:
+        """Отменяет текущий LLM-запрос для активной сессии (Ctrl+C / Stop)."""
+        session_id = self._session_vm.selected_session_id.value
+        is_streaming = self._chat_vm.is_streaming.value
+        is_executing = self._chat_vm.cancel_prompt_cmd.is_executing.value
+        self._app_logger.info(
+            "action_cancel_prompt_called",
+            session_id=session_id,
+            is_streaming=is_streaming,
+            is_executing=is_executing,
+        )
+        if not session_id:
+            self._app_logger.warning("cancel_prompt_no_active_session")
+            return
+        if not is_streaming:
+            self._app_logger.debug("cancel_prompt_skipped_not_streaming")
+            return
+        if is_executing:
+            self._app_logger.debug("cancel_prompt_skipped_already_executing")
+            return
+        self._app_logger.info("cancel_prompt_dispatching", session_id=session_id)
+        self.run_worker(
+            self._chat_vm.cancel_prompt_cmd.execute(session_id),
+            exclusive=False,
+        )
+
     def action_toggle_sidebar(self) -> None:
         """Показывает/скрывает боковую панель."""
         try:
@@ -563,6 +593,11 @@ class ACPClientApp(App[None]):
         """Обработчик запроса переключения темы из QuickActionsBar."""
         self._app_logger.info("quick_actions_theme_toggle_requested")
         self.action_toggle_theme()
+
+    def on_prompt_input_cancelled(self, event: PromptInput.Cancelled) -> None:
+        """Обработка нажатия кнопки Stop в PromptInput."""
+        self._app_logger.info("prompt_input_cancelled_received")
+        self.action_cancel_prompt()
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Обработать отправку промпта пользователем.

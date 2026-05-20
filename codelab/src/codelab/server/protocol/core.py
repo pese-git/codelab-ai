@@ -718,7 +718,9 @@ class ACPProtocol:
 
         orchestrator = await self._get_prompt_orchestrator()
         session_id = params.get("sessionId")
+        logger.info("session_cancel_received", session_id=session_id, request_id=message.id)
         if not isinstance(session_id, str):
+            logger.warning("session_cancel_missing_session_id", params=params)
             return ProtocolOutcome(response=None, notifications=[])
 
         session = await self._storage.load_session(session_id)
@@ -733,6 +735,19 @@ class ACPProtocol:
             params=params,
             session=session,
         )
+        logger.info(
+            "session_cancel_handled",
+            session_id=session_id,
+            notifications_count=len(outcome.notifications),
+            followup_count=len(outcome.followup_responses),
+        )
+
+        # Прервать активный LLM-запрос для этой сессии.
+        # handle_cancel помечает флаг и закрывает turn, но asyncio.Task с LLM
+        # продолжает работать до ответа модели — нужно явно его отменить.
+        if self._agent_orchestrator is not None:
+            await self._agent_orchestrator.cancel_prompt(session_id)
+            logger.info("agent_llm_task_cancelled", session_id=session_id)
 
         await self._storage.save_session(session)
 

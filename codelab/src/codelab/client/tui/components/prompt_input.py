@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import structlog
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -20,6 +21,8 @@ from textual.widgets import Button, TextArea
 
 if TYPE_CHECKING:
     from codelab.client.presentation.chat_view_model import ChatViewModel
+
+logger = structlog.get_logger("prompt_input")
 
 
 class PromptTextArea(TextArea):
@@ -76,6 +79,9 @@ class PromptInput(Horizontal):
             super().__init__()
             self.text = text
 
+    class Cancelled(Message):
+        """Событие отмены текущего запроса."""
+
     def __init__(self, chat_vm: ChatViewModel) -> None:
         """Инициализирует PromptInput с обязательным ChatViewModel.
         
@@ -90,19 +96,28 @@ class PromptInput(Horizontal):
         self._draft_text: str = ""
         self._text_area: PromptTextArea | None = None
         self._submit_button: Button | None = None
-        
+        self._stop_button: Button | None = None
+
         # Подписываемся на изменения в ChatViewModel
         self.chat_vm.is_streaming.subscribe(self._on_streaming_changed)
 
     def compose(self) -> ComposeResult:
-        """Создаёт поле ввода и кнопку отправки."""
+        """Создаёт поле ввода и кнопки Send/Stop."""
         self._text_area = PromptTextArea()
         self._text_area.border_title = "Prompt"
         self._text_area.tooltip = "Ctrl+Enter - отправить, Ctrl+Up/Down - история"
         yield self._text_area
-        
+
         self._submit_button = Button("Send", id="submit-button", variant="primary")
         yield self._submit_button
+
+        self._stop_button = Button("Stop", id="stop-button", variant="error")
+        yield self._stop_button
+
+    def on_mount(self) -> None:
+        """Скрываем Stop при монтировании — агент ещё не запущен."""
+        if self._stop_button is not None:
+            self._stop_button.display = False
 
     @property
     def text(self) -> str:
@@ -170,20 +185,34 @@ class PromptInput(Horizontal):
         self._draft_text = ""
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Обработка нажатия кнопки Submit."""
+        """Обработка нажатия кнопок Send и Stop."""
+        logger.debug("button_pressed", button_id=event.button.id)
         if event.button.id == "submit-button":
             self.action_submit()
+        elif event.button.id == "stop-button":
+            # Скрываем кнопку немедленно — до обработки сообщения Textual может
+            # поставить несколько Cancelled в очередь если кнопка нажата дважды.
+            if self._stop_button is not None:
+                self._stop_button.display = False
+            if self._submit_button is not None:
+                self._submit_button.display = True
+            logger.info("stop_button_pressed_posting_cancelled")
+            self.post_message(self.Cancelled())
 
     def _on_streaming_changed(self, is_streaming: bool) -> None:
-        """Обновить статус полей при изменении streaming.
-        
-        Args:
-            is_streaming: True если идет streaming, False иначе
-        """
+        """Переключает Send↔Stop и блокирует поле ввода при streaming."""
+        logger.debug(
+            "streaming_changed",
+            is_streaming=is_streaming,
+            submit_mounted=self._submit_button is not None,
+            stop_mounted=self._stop_button is not None,
+        )
         if self._text_area is not None:
             self._text_area.disabled = is_streaming
         if self._submit_button is not None:
-            self._submit_button.disabled = is_streaming
+            self._submit_button.display = not is_streaming
+        if self._stop_button is not None:
+            self._stop_button.display = is_streaming
 
     def _active_history(self) -> list[str]:
         """Возвращает список истории для активной сессии."""

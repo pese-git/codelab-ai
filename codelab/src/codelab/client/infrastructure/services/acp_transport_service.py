@@ -461,6 +461,29 @@ class ACPTransportService(TransportService):
         """
         return self._server_capabilities is not None
 
+    async def cancel_prompt(self, session_id: str) -> None:
+        """Send session/cancel bypassing the callback lock.
+
+        Uses the per-request response queue directly so the cancel is sent
+        immediately, even while session/prompt holds _callbacks_request_lock.
+        """
+        if not self.is_connected() or self._queues is None:
+            return
+
+        request = ACPMessage.request(
+            method="session/cancel",
+            params={"sessionId": session_id},
+        )
+        request_id = request.id
+        response_queue = await self._queues.get_or_create_response_queue(request_id)
+        await self.send(request.to_dict())
+        try:
+            await asyncio.wait_for(response_queue.get(), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
+        finally:
+            await self._queues.cleanup_response_queue(request_id)
+
     async def request_with_callbacks(
         self,
         method: str,
