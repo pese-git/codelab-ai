@@ -19,6 +19,7 @@ from codelab.server.protocol.handlers.state_manager import StateManager
 from codelab.server.protocol.handlers.tool_call_handler import ToolCallHandler
 from codelab.server.protocol.state import LLMLoopResult, SessionState, ToolResult
 from codelab.server.tools.base import ToolRegistry
+from codelab.server.tools.mapping import llm_name_to_acp_name
 
 from ..base import PromptStage
 from ..context import PromptContext
@@ -407,28 +408,31 @@ class LLMLoopStage(PromptStage):
                 logger.warning("tool_call has no name", session_id=session_id)
                 continue
 
+            # Конвертируем LLM имя обратно в ACP формат
+            acp_tool_name = llm_name_to_acp_name(tool_name)
+
             tool_kind = "other"
-            tool_definition = self._tool_registry.get(tool_name)
+            tool_definition = self._tool_registry.get(acp_tool_name)
             if tool_definition is not None:
                 tool_kind = tool_definition.kind
 
             tool_call_id = self._tool_call_handler.create_tool_call(
                 session=session,
-                title=tool_name,
+                title=acp_tool_name,
                 kind=tool_kind,
-                tool_name=tool_name,
+                tool_name=acp_tool_name,
                 tool_arguments=tool_arguments,
                 tool_call_id_from_llm=tool_call_id_from_llm,
             )
 
             notifications.append(
                 self._tool_call_handler.build_tool_call_notification(
-                    session_id=session_id, tool_call_id=tool_call_id, title=tool_name, kind=tool_kind
+                    session_id=session_id, tool_call_id=tool_call_id, title=acp_tool_name, kind=tool_kind
                 )
             )
 
             self._replay_manager.save_tool_call(
-                session=session, tool_call_id=tool_call_id, title=tool_name, kind=tool_kind, status="pending"
+                session=session, tool_call_id=tool_call_id, title=acp_tool_name, kind=tool_kind, status="pending"
             )
 
             if tool_definition is not None and not tool_definition.requires_permission:
@@ -465,7 +469,7 @@ class LLMLoopStage(PromptStage):
                 )
                 tool_results.append(ToolResult(
                     tool_call_id=tool_call_id_from_llm or tool_call_id,
-                    tool_name=tool_name,
+                    tool_name=acp_tool_name,
                     success=False,
                     error=rejection_msg,
                 ))
@@ -484,7 +488,7 @@ class LLMLoopStage(PromptStage):
                 )
 
                 result = await self._tool_registry.execute_tool(
-                    session_id, tool_name, tool_arguments, session=session
+                    session_id, acp_tool_name, tool_arguments, session=session
                 )
 
                 extracted_content = await self._content_extractor.extract_from_result(tool_call_id, result)
@@ -528,10 +532,10 @@ class LLMLoopStage(PromptStage):
 
                 tool_results.append(ToolResult(
                     tool_call_id=tool_call_id_from_llm or tool_call_id,
-                    tool_name=tool_name,
+                    tool_name=acp_tool_name,
                     success=result.success,
-                    output=result.output if result.success else None,
-                    error=result.error if not result.success else None,
+                    content=extracted_content.content_items,
+                    error=result.error,
                 ))
 
             except Exception as e:

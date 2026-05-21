@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,22 @@ from codelab.client.messages import ACPMessage, RequestPermissionRequest
 
 if TYPE_CHECKING:
     from codelab.client.application.permission_handler import PermissionHandler
+
+
+async def _call_callback(
+    callback: Callable[..., Any] | None,
+    *args: Any,
+) -> Any:
+    """Вызвать callback, поддерживая sync и async функции.
+
+    В stdio режиме callbacks НЕ должны блокировать event loop.
+    Если callback — coroutine function, он будет awaited.
+    """
+    if callback is None:
+        return None
+    if inspect.iscoroutinefunction(callback):
+        return await callback(*args)
+    return callback(*args)
 
 
 class ACPTransportService(TransportService):
@@ -489,13 +506,13 @@ class ACPTransportService(TransportService):
         method: str,
         params: dict[str, Any] | None = None,
         on_update: Callable[[dict[str, Any]], None] | None = None,
-        on_fs_read: Callable[[str], str] | None = None,
-            on_fs_write: Callable[[str, str], bool] | None = None,
-        on_terminal_create: Callable[[str], str] | None = None,
-        on_terminal_output: Callable[[str], dict[str, Any]] | None = None,
-        on_terminal_wait: Callable[[str], int | tuple[int | None, str | None]] | None = None,
-        on_terminal_release: Callable[[str], None] | None = None,
-        on_terminal_kill: Callable[[str], bool] | None = None,
+        on_fs_read: Callable[[str], Any] | None = None,
+        on_fs_write: Callable[[str, str], Any] | None = None,
+        on_terminal_create: Callable[[str], Any] | None = None,
+        on_terminal_output: Callable[[str], Any] | None = None,
+        on_terminal_wait: Callable[[str], Any] | None = None,
+        on_terminal_release: Callable[[str], Any] | None = None,
+        on_terminal_kill: Callable[[str], Any] | None = None,
     ) -> dict[str, Any]:
         """Выполняет request с обработкой callbacks используя routing queues.
 
@@ -860,13 +877,13 @@ class ACPTransportService(TransportService):
         request_id: str | int,
         notification_data: dict[str, Any],
         on_update: Callable[[dict[str, Any]], None] | None,
-        on_fs_read: Callable[[str], str] | None,
-        on_fs_write: Callable[[str, str], bool] | None,
-        on_terminal_create: Callable[[str], str] | None,
-        on_terminal_output: Callable[[str], dict[str, Any]] | None,
-        on_terminal_wait: Callable[[str], int | tuple[int | None, str | None]] | None,
-        on_terminal_release: Callable[[str], None] | None,
-        on_terminal_kill: Callable[[str], bool] | None,
+        on_fs_read: Callable[[str], Any] | None,
+        on_fs_write: Callable[[str, str], Any] | None,
+        on_terminal_create: Callable[[str], Any] | None,
+        on_terminal_output: Callable[[str], Any] | None,
+        on_terminal_wait: Callable[[str], Any] | None,
+        on_terminal_release: Callable[[str], Any] | None,
+        on_terminal_kill: Callable[[str], Any] | None,
     ) -> None:
         """Обрабатывает `session/update` и incoming RPC (`fs/*`, `terminal/*`)."""
         notification = ACPMessage.from_dict(notification_data)
@@ -911,7 +928,9 @@ class ACPTransportService(TransportService):
             )
             try:
                 content = (
-                    on_fs_read(path) if on_fs_read is not None and isinstance(path, str) else ""
+                    await _call_callback(on_fs_read, path)
+                    if on_fs_read is not None and isinstance(path, str)
+                    else ""
                 )
                 self._logger.info(
                     "fs_read_rpc_callback_done",
@@ -958,7 +977,7 @@ class ACPTransportService(TransportService):
             )
             try:
                 success = (
-                    on_fs_write(path, text)
+                    await _call_callback(on_fs_write, path, text)
                     if on_fs_write is not None and isinstance(path, str) and isinstance(text, str)
                     else False
                 )
@@ -1008,7 +1027,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_create is not None,
             )
             terminal_id = (
-                on_terminal_create(command)
+                await _call_callback(on_terminal_create, command)
                 if on_terminal_create is not None and isinstance(command, str)
                 else None
             )
@@ -1053,7 +1072,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_output is not None,
             )
             output_data: dict[str, Any] | None = (
-                on_terminal_output(terminal_id)
+                await _call_callback(on_terminal_output, terminal_id)
                 if on_terminal_output is not None and isinstance(terminal_id, str)
                 else None
             )
@@ -1104,7 +1123,7 @@ class ACPTransportService(TransportService):
             exit_code: int | None = None
             output: str | None = None
             if on_terminal_wait is not None and isinstance(terminal_id, str):
-                wait_result = on_terminal_wait(terminal_id)
+                wait_result = await _call_callback(on_terminal_wait, terminal_id)
                 if isinstance(wait_result, tuple):
                     candidate_exit_code, candidate_output = wait_result
                     exit_code = (
@@ -1150,7 +1169,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_release is not None,
             )
             if on_terminal_release is not None and isinstance(terminal_id, str):
-                on_terminal_release(terminal_id)
+                await _call_callback(on_terminal_release, terminal_id)
             self._logger.debug(
                 "tool_lifecycle_callback_done",
                 rpc_id=notification.id,
@@ -1180,7 +1199,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_kill is not None,
             )
             killed = (
-                on_terminal_kill(terminal_id)
+                await _call_callback(on_terminal_kill, terminal_id)
                 if on_terminal_kill is not None and isinstance(terminal_id, str)
                 else False
             )

@@ -22,6 +22,7 @@ from codelab.server.agent.base import (
 from codelab.server.agent.plan_extractor import PlanExtractor
 from codelab.server.llm.base import LLMMessage, LLMProvider, LLMResponse
 from codelab.server.tools.base import ToolDefinition, ToolRegistry
+from codelab.server.tools.mapping import acp_name_to_llm_name
 
 logger = structlog.get_logger()
 
@@ -256,6 +257,9 @@ def _format_prompt(prompt: list[dict[str, Any]]) -> str:
 def _to_openai_tools_format(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     """Преобразовать ToolDefinition в формат OpenAI function calling.
 
+    Применяет маппинг имён: ACP имена (с `/`) конвертируются
+    в LLM-совместимые имена (с `_`).
+
     Args:
         tools: Список определений инструментов.
 
@@ -266,7 +270,7 @@ def _to_openai_tools_format(tools: list[ToolDefinition]) -> list[dict[str, Any]]
         {
             "type": "function",
             "function": {
-                "name": tool.name,
+                "name": acp_name_to_llm_name(tool.name),
                 "description": tool.description,
                 "parameters": tool.parameters,
             },

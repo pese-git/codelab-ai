@@ -129,8 +129,11 @@ class WebSocketTransport:
         async with self._app_container() as request_scope:
             protocol = await request_scope.get(ACPProtocol)
 
-            # Если on_message не передан, используем protocol.handle
-            handler = on_message if on_message is not None else protocol.handle
+            # Настраиваем send_callback для отправки сообщений из фоновых задач
+            protocol._send_callback = self._send_protocol_message
+
+            # Если on_message не передан, используем protocol.handle_and_process
+            handler = on_message if on_message is not None else protocol.handle_and_process
 
             try:
                 async for message in self._ws:
@@ -350,6 +353,16 @@ class WebSocketTransport:
             if not self._ws.closed:
                 await self._ws.send_json(request_dict)
 
+    async def _send_protocol_message(self, message: ACPMessage) -> None:
+        """Отправляет сообщение из фоновых задач протокола.
+
+        Используется ACPProtocol._execute_tool_in_background для отправки
+        notifications и turn completion.
+        """
+        async with self._ws_send_lock:
+            if not self._ws.closed:
+                await self._ws.send_str(message.to_json())
+
     async def _send_outcome(
         self,
         outcome: ProtocolOutcome,
@@ -424,9 +437,7 @@ class WebSocketTransport:
                 )
             )
 
-        await self._send_outcome(outcome, request_id=request_id)
-
-        # Pending tool execution — выполняем в фоне
+        # Обработка pending_tool_execution для permission response
         if outcome.pending_tool_execution is not None:
             pending = outcome.pending_tool_execution
             self._conn_logger.info(
@@ -434,14 +445,14 @@ class WebSocketTransport:
                 session_id=pending.session_id,
                 tool_call_id=pending.tool_call_id,
             )
-
             asyncio.create_task(
-                self._execute_tool_in_background(
-                    protocol=protocol,
+                protocol._execute_tool_in_background(
                     session_id=pending.session_id,
                     tool_call_id=pending.tool_call_id,
                 )
             )
+
+        await self._send_outcome(outcome, request_id=request_id)
 
     async def _process_prompt_request_in_background(
         self,
@@ -488,55 +499,6 @@ class WebSocketTransport:
                 )
             )
             await self._send_outcome(error_outcome, request_id=request_id)
-
-    async def _execute_tool_in_background(
-        self,
-        *,
-        protocol: ACPProtocol,
-        session_id: str,
-        tool_call_id: str,
-    ) -> None:
-        """Background task для выполнения tool после permission."""
-        try:
-            llm_result = await protocol.execute_pending_tool(
-                session_id=session_id,
-                tool_call_id=tool_call_id,
-            )
-
-            async with self._ws_send_lock:
-                for notification in llm_result.notifications:
-                    if not self._ws.closed:
-                        await self._ws.send_str(notification.to_json())
-                        self._conn_logger.debug(
-                            "llm loop notification sent",
-                            method=notification.method,
-                        )
-
-                if llm_result.pending_permission:
-                    self._conn_logger.debug(
-                        "llm loop deferred for permission",
-                        session_id=session_id,
-                    )
-                    return
-
-                stop_reason = llm_result.stop_reason or "end_turn"
-                turn_completion = await protocol.complete_active_turn(
-                    session_id, stop_reason=stop_reason
-                )
-                if turn_completion is not None and not self._ws.closed:
-                    await self._ws.send_str(turn_completion.to_json())
-                    self._conn_logger.debug(
-                        "turn completion sent after llm loop",
-                        session_id=session_id,
-                        stop_reason=stop_reason,
-                    )
-        except Exception as exc:
-            self._conn_logger.error(
-                "background tool execution failed",
-                session_id=session_id,
-                tool_call_id=tool_call_id,
-                error=str(exc),
-            )
 
     async def _complete_deferred_prompt(
         self,

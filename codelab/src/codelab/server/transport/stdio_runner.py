@@ -15,7 +15,7 @@ stdio транспорта. Создаёт DI контейнер, ClientRPCServi
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -86,7 +86,13 @@ async def run_stdio_server(
 
     client_rpc_service = ClientRPCService(
         send_request_callback=send_rpc_request,
-        client_capabilities={},
+        client_capabilities={
+            "fs": {
+                "readTextFile": True,
+                "writeTextFile": True,
+            },
+            "terminal": True,
+        },
     )
 
     try:
@@ -98,8 +104,15 @@ async def run_stdio_server(
         async with container() as request_scope:
             protocol = await request_scope.get(ACPProtocol)
 
-            # Запускаем цикл обработки
-            await transport.run(on_message=protocol.handle)
+            # Настраиваем send_callback для отправки сообщений из фоновых задач
+            protocol._send_callback = transport.send
+
+            # Запускаем цикл обработки через handle_and_process
+            # чтобы фоновые задачи (pending_tool_execution) работали корректно
+            async def on_message(acp_request: ACPMessage) -> Any:
+                return await protocol.handle_and_process(acp_request)
+
+            await transport.run(on_message=on_message)
 
     except asyncio.CancelledError:
         logger.info("stdio server cancelled")

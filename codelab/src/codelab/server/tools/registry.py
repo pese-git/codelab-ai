@@ -7,6 +7,7 @@ from typing import Any
 import structlog
 
 from codelab.server.tools.base import ToolDefinition, ToolExecutionResult, ToolRegistry
+from codelab.server.tools.mapping import acp_name_to_llm_name, llm_name_to_acp_name
 
 # Используем structlog для структурированного логирования
 logger = structlog.get_logger()
@@ -148,10 +149,14 @@ class SimpleToolRegistry(ToolRegistry):
         return tools
 
     def to_llm_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
-        """Преобразовать определения инструментов для LLM."""
+        """Преобразовать определения инструментов для LLM.
+
+        Применяет маппинг имён: ACP имена (с `/`) конвертируются
+        в LLM-совместимые имена (с `_`).
+        """
         return [
             {
-                "name": tool.name,
+                "name": acp_name_to_llm_name(tool.name),
                 "description": tool.description,
                 "parameters": tool.parameters,
             }
@@ -172,40 +177,46 @@ class SimpleToolRegistry(ToolRegistry):
 
         Args:
             session_id: ID сессии для контекста выполнения
-            tool_name: Имя инструмента
+            tool_name: Имя инструмента (может быть в LLM формате с `_`)
             arguments: Аргументы для выполнения
             session: Опциональный объект SessionState для executors (опционально)
 
         Returns:
             ToolExecutionResult с успехом/ошибкой и metadata если доступен
         """
+        # Конвертируем LLM имя обратно в ACP формат для lookup в registry
+        acp_tool_name = llm_name_to_acp_name(tool_name)
+
         logger.debug(
             "tool registry execute_tool called",
             session_id=session_id,
             tool_name=tool_name,
+            acp_tool_name=acp_tool_name,
             arguments=arguments,
             has_session=session is not None,
         )
         
-        # Проверка существования инструмента
-        if tool_name not in self._tools:
+        # Проверка существования инструмента (по ACP имени)
+        if acp_tool_name not in self._tools:
             logger.error(
                 "tool not found in registry",
                 tool_name=tool_name,
+                acp_tool_name=acp_tool_name,
                 registered_tools=list(self._tools.keys()),
             )
             return ToolExecutionResult(
                 success=False,
-                error=f"Инструмент '{tool_name}' не найден в реестре",
+                error=f"Инструмент '{acp_tool_name}' не найден в реестре",
             )
 
         # Получение обработчика
-        handler = self._handlers[tool_name]
+        handler = self._handlers[acp_tool_name]
         is_async = inspect.iscoroutinefunction(handler)
         
         logger.debug(
             "tool handler found",
             tool_name=tool_name,
+            acp_tool_name=acp_tool_name,
             is_async=is_async,
             handler_type=type(handler).__name__,
         )
@@ -216,6 +227,7 @@ class SimpleToolRegistry(ToolRegistry):
                 logger.debug(
                     "executing async tool handler",
                     tool_name=tool_name,
+                    acp_tool_name=acp_tool_name,
                 )
                 # Для async executors вызываем await
                 # Если session доступен, передаём его в handler
@@ -227,6 +239,7 @@ class SimpleToolRegistry(ToolRegistry):
                 logger.debug(
                     "executing sync tool handler",
                     tool_name=tool_name,
+                    acp_tool_name=acp_tool_name,
                 )
                 # Для синхронных функций вызываем напрямую
                 output = handler(**arguments)
@@ -238,6 +251,7 @@ class SimpleToolRegistry(ToolRegistry):
             logger.info(
                 "tool handler execution completed",
                 tool_name=tool_name,
+                acp_tool_name=acp_tool_name,
                 success=result.success,
                 has_output=bool(result.output),
                 has_error=bool(result.error),
@@ -252,10 +266,11 @@ class SimpleToolRegistry(ToolRegistry):
             logger.error(
                 "tool handler execution failed with exception",
                 tool_name=tool_name,
+                acp_tool_name=acp_tool_name,
                 error=str(exc),
                 exc_info=True,
             )
-            error_msg = f"Ошибка при выполнении инструмента '{tool_name}': {str(exc)}"
+            error_msg = f"Ошибка при выполнении инструмента '{acp_tool_name}': {str(exc)}"
             return ToolExecutionResult(
                 success=False,
                 error=error_msg,

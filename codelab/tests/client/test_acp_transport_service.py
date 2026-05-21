@@ -500,3 +500,146 @@ class TestPermissionCallback:
         permission_handler.handle_request.assert_called_once()
         call_kwargs = permission_handler.handle_request.call_args[1]
         assert call_kwargs["callback"] is None
+
+
+class TestAsyncCallbacks:
+    """Тесты async callbacks для предотвращения deadlock в stdio режиме."""
+
+    @pytest.mark.asyncio
+    async def test_async_fs_read_callback(self) -> None:
+        """Async fs/read callback не блокирует event loop."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        async def async_read(path: str) -> str:
+            await asyncio.sleep(0.01)  # Имитация async I/O
+            return f"async content from {path}"
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "fs/read_text_file",
+                "params": {"path": "/tmp/async.txt"},
+            },
+            on_update=None,
+            on_fs_read=async_read,
+            on_fs_write=None,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        assert response["result"]["content"] == "async content from /tmp/async.txt"
+
+    @pytest.mark.asyncio
+    async def test_async_fs_write_callback(self) -> None:
+        """Async fs/write callback не блокирует event loop."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        async def async_write(path: str, content: str) -> bool:
+            await asyncio.sleep(0.01)  # Имитация async I/O
+            return True
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "fs/write_text_file",
+                "params": {"path": "/tmp/async.txt", "content": "async content"},
+            },
+            on_update=None,
+            on_fs_read=None,
+            on_fs_write=async_write,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        assert response["result"]["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_async_terminal_create_callback(self) -> None:
+        """Async terminal/create callback не блокирует event loop."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        async def async_terminal_create(command: str) -> str:
+            await asyncio.sleep(0.01)  # Имитация async terminal creation
+            return "terminal-123"
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "terminal/create",
+                "params": {"command": "ls", "args": ["-la"]},
+            },
+            on_update=None,
+            on_fs_read=None,
+            on_fs_write=None,
+            on_terminal_create=async_terminal_create,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        assert response["result"]["terminalId"] == "terminal-123"
+
+    @pytest.mark.asyncio
+    async def test_sync_callback_still_works(self) -> None:
+        """Sync callbacks продолжают работать как раньше."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        def sync_read(path: str) -> str:
+            return f"sync content from {path}"
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "fs/read_text_file",
+                "params": {"path": "/tmp/sync.txt"},
+            },
+            on_update=None,
+            on_fs_read=sync_read,
+            on_fs_write=None,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        assert response["result"]["content"] == "sync content from /tmp/sync.txt"

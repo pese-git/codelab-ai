@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -83,6 +84,7 @@ class ACPProtocol:
         prompt_orchestrator: PromptOrchestrator | None = None,
         global_policy_manager: GlobalPolicyManager | None = None,
         middleware: list[MiddlewareFn] | None = None,
+        send_callback: Callable[[ACPMessage], Awaitable[None]] | None = None,
     ) -> None:
         """Инициализирует протокол и хранилище сессий.
 
@@ -96,6 +98,7 @@ class ACPProtocol:
             prompt_orchestrator: Оркестратор prompt-turn (опционально, создаётся лениво).
             global_policy_manager: Менеджер глобальных политик разрешений (опционально).
             middleware: Список middleware функций для сквозной логики (опционально).
+            send_callback: Callback для отправки сообщений транспортом (опционально).
 
         Пример использования:
             protocol = ACPProtocol()
@@ -168,6 +171,9 @@ class ACPProtocol:
 
         # Middleware для сквозной логики (логирование, метрики, auth-check)
         self._middleware: list[MiddlewareFn] = middleware or []
+
+        # Callback для отправки сообщений транспортом (используется фоновыми задачами)
+        self._send_callback: Callable[[ACPMessage], Awaitable[None]] | None = send_callback
 
     _config_specs: dict[str, dict[str, Any]] = {
         "mode": {
@@ -269,6 +275,105 @@ class ACPProtocol:
             wrapped = wrapped_with_middleware
 
         return await wrapped(message)
+
+    async def handle_and_process(
+        self, message: ACPMessage
+    ) -> ProtocolOutcome:
+        """Обрабатывает сообщение и запускает фоновые задачи если нужно.
+
+        Расширяет handle() логикой постобработки outcome:
+        - Если outcome содержит pending_tool_execution, запускает фоновую задачу
+        - Транспорт получает чистый outcome и только отправляет его
+
+        Это основной entry point для транспорта — вместо прямого вызова handle().
+
+        Args:
+            message: Входящее ACPMessage.
+
+        Returns:
+            ProtocolOutcome для отправки транспортом.
+        """
+        outcome = await self.handle(message)
+
+        if outcome.pending_tool_execution is not None:
+            pending = outcome.pending_tool_execution
+            logger.info(
+                "scheduling pending tool execution in background",
+                session_id=pending.session_id,
+                tool_call_id=pending.tool_call_id,
+            )
+            asyncio.create_task(
+                self._execute_tool_in_background(
+                    session_id=pending.session_id,
+                    tool_call_id=pending.tool_call_id,
+                )
+            )
+
+        return outcome
+
+    async def _execute_tool_in_background(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+    ) -> None:
+        """Фоновая задача для выполнения tool после permission approval.
+
+        Выполняет инструмент через LLMLoopStage, отправляет notifications
+        и завершает turn. Вызывается из handle_and_process().
+        """
+        try:
+            llm_result: LLMLoopResult = await self.execute_pending_tool(
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+            )
+
+            # Отправляем все accumulated notifications
+            for notification in llm_result.notifications:
+                await self._send_message(notification)
+
+            # Если LLM loop снова ожидает permission — просто выходим
+            if llm_result.pending_permission:
+                logger.debug(
+                    "llm loop deferred for permission",
+                    session_id=session_id,
+                )
+                return
+
+            # Завершаем turn и отправляем финальный response
+            stop_reason = llm_result.stop_reason or "end_turn"
+            turn_completion = await self.complete_active_turn(
+                session_id, stop_reason=stop_reason
+            )
+            if turn_completion is not None:
+                await self._send_message(turn_completion)
+                logger.debug(
+                    "turn completion sent after llm loop",
+                    session_id=session_id,
+                    stop_reason=stop_reason,
+                )
+        except Exception as exc:
+            logger.error(
+                "background tool execution failed",
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+                error=str(exc),
+                exc_info=True,
+            )
+
+    async def _send_message(self, message: ACPMessage) -> None:
+        """Отправляет сообщение через transport callback.
+
+        Используется для отправки notifications и turn completion
+        из фоновых задач (например, _execute_tool_in_background).
+        """
+        if self._send_callback is not None:
+            await self._send_callback(message)
+        else:
+            logger.warning(
+                "no send callback configured, message not sent",
+                method=message.method,
+            )
 
     async def complete_active_turn(
         self, session_id: str, *, stop_reason: str = "end_turn"

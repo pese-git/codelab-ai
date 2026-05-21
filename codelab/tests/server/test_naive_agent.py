@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from codelab.server.agent.base import AgentContext, ContinuationContext
-from codelab.server.agent.naive import NaiveAgent, _format_prompt
+from codelab.server.agent.naive import NaiveAgent, _format_prompt, _to_openai_tools_format
 from codelab.server.llm.base import LLMMessage, LLMResponse, LLMToolCall
 from codelab.server.llm.mock_provider import MockLLMProvider
 from codelab.server.protocol.state import SessionState
@@ -599,3 +599,72 @@ def test_format_prompt_skips_non_text_blocks() -> None:
 def test_format_prompt_empty_list() -> None:
     """_format_prompt на пустом списке возвращает пустую строку."""
     assert _format_prompt([]) == ""
+
+
+# ============================================================================
+# Тесты _to_openai_tools_format (маппинг имён инструментов)
+# ============================================================================
+
+
+def test_to_openai_tools_format_maps_slash_to_underscore() -> None:
+    """_to_openai_tools_format конвертирует ACP имена (с `/`) в LLM имена (с `_`)."""
+    tools = [
+        ToolDefinition(
+            name="fs/read_text_file",
+            description="Read a text file",
+            parameters={"type": "object", "properties": {"path": {"type": "string"}}},
+            kind="fs",
+        ),
+        ToolDefinition(
+            name="terminal/run_command",
+            description="Run a terminal command",
+            parameters={"type": "object", "properties": {"command": {"type": "string"}}},
+            kind="terminal",
+        ),
+    ]
+
+    result = _to_openai_tools_format(tools)
+
+    assert len(result) == 2
+    assert result[0]["function"]["name"] == "fs_read_text_file"
+    assert result[1]["function"]["name"] == "terminal_run_command"
+
+
+def test_to_openai_tools_format_preserves_description_and_parameters() -> None:
+    """_to_openai_tools_format сохраняет description и parameters без изменений."""
+    params = {"type": "object", "properties": {"path": {"type": "string"}}}
+    tools = [
+        ToolDefinition(
+            name="fs/read",
+            description="Read file content",
+            parameters=params,
+            kind="fs",
+        ),
+    ]
+
+    result = _to_openai_tools_format(tools)
+
+    assert result[0]["function"]["description"] == "Read file content"
+    assert result[0]["function"]["parameters"] == params
+
+
+def test_to_openai_tools_format_handles_names_without_slash() -> None:
+    """_to_openai_tools_format корректно обрабатывает имена без `/`."""
+    tools = [
+        ToolDefinition(
+            name="calculator",
+            description="Math operations",
+            parameters={"type": "object", "properties": {}},
+            kind="math",
+        ),
+    ]
+
+    result = _to_openai_tools_format(tools)
+
+    # Имя без `/` остаётся без изменений
+    assert result[0]["function"]["name"] == "calculator"
+
+
+def test_to_openai_tools_format_empty_list() -> None:
+    """_to_openai_tools_format на пустом списке возвращает пустой список."""
+    assert _to_openai_tools_format([]) == []

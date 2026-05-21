@@ -7,6 +7,7 @@
 - Отслеживание статуса streaming
 """
 
+import asyncio
 import json
 import os
 import uuid
@@ -175,7 +176,7 @@ class ChatViewModel(BaseViewModel):
         self._set_last_stop_reason(session_id, None)
 
         try:
-            # Build terminal lifecycle callbacks backed by the sync executor.
+            # Build terminal lifecycle callbacks backed by the async executor.
             # Results are cached by terminal_id so the multi-step protocol
             # (create → output → wait_for_exit → release) maps onto a single
             # blocking execute() call made on terminal/create.
@@ -184,12 +185,17 @@ class ChatViewModel(BaseViewModel):
                 _results: dict[str, dict[str, Any]] = {}
                 _executor = self._terminal_executor
 
-                def _on_terminal_create(command: str) -> str:
+                async def _on_terminal_create(command: str) -> str:
                     tid = str(uuid.uuid4())
-                    _results[tid] = _executor.execute(command)
+                    # Use async create_terminal + wait_for_exit to avoid blocking event loop
+                    terminal_id = await _executor.create_terminal(command)
+                    exit_code = await _executor.wait_for_exit(terminal_id)
+                    output, _, _ = await _executor.get_output(terminal_id)
+                    await _executor.release_terminal(terminal_id)
+                    _results[tid] = {"output": output, "exit_code": exit_code}
                     return tid
 
-                def _on_terminal_output(terminal_id: str) -> dict[str, Any]:
+                async def _on_terminal_output(terminal_id: str) -> dict[str, Any]:
                     r = _results.get(terminal_id, {})
                     return {
                         "output": r.get("output", ""),
@@ -197,16 +203,16 @@ class ChatViewModel(BaseViewModel):
                         "exitCode": r.get("exit_code"),
                     }
 
-                def _on_terminal_wait_for_exit(
+                async def _on_terminal_wait_for_exit(
                     terminal_id: str,
                 ) -> tuple[int | None, str | None]:
                     r = _results.get(terminal_id, {})
                     return (r.get("exit_code"), r.get("output", ""))
 
-                def _on_terminal_release(terminal_id: str) -> None:
+                async def _on_terminal_release(terminal_id: str) -> None:
                     _results.pop(terminal_id, None)
 
-                def _on_terminal_kill(terminal_id: str) -> bool:
+                async def _on_terminal_kill(terminal_id: str) -> bool:
                     return _results.pop(terminal_id, None) is not None
 
                 terminal_callbacks = {
@@ -555,10 +561,11 @@ class ChatViewModel(BaseViewModel):
         self._persist_active_state()
         self.logger.info("Chat cleared")
 
-    def _handle_fs_read(self, path: str) -> str:
-        """Обработать fs/read_text_file от агента (синхронный).
+    async def _handle_fs_read(self, path: str) -> str:
+        """Обработать fs/read_text_file от агента (async).
 
-        Используется синхронный метод FileSystemExecutor напрямую.
+        Использует asyncio.to_thread для выполнения sync операции
+        без блокировки event loop (критично для stdio режима).
 
         Args:
             path: Путь к файлу для чтения
@@ -577,18 +584,21 @@ class ChatViewModel(BaseViewModel):
                 self.logger.warning("fs_executor_not_initialized", path=path)
                 return ""
 
-            # Используем синхронный метод executor напрямую
-            content = self._fs_executor.read_text_file_sync(path)
+            # Выполняем в thread pool чтобы не блокировать event loop
+            content = await asyncio.to_thread(
+                self._fs_executor.read_text_file_sync, path
+            )
             self.logger.debug("fs_read_success", path=path, content_size=len(content))
             return content
         except Exception as e:
             self.logger.error("fs_read_error", path=path, error=str(e))
             return ""
 
-    def _handle_fs_write(self, path: str, content: str) -> bool:
-        """Обработать fs/write_text_file от агента (синхронный).
+    async def _handle_fs_write(self, path: str, content: str) -> bool:
+        """Обработать fs/write_text_file от агента (async).
 
-        Используется синхронный метод FileSystemExecutor напрямую.
+        Использует asyncio.to_thread для выполнения sync операции
+        без блокировки event loop (критично для stdio режима).
 
         Args:
             path: Путь к файлу для записи
@@ -608,8 +618,10 @@ class ChatViewModel(BaseViewModel):
                 self.logger.warning("fs_executor_not_initialized", path=path)
                 return False
 
-            # Используем синхронный метод executor напрямую
-            self._fs_executor.write_text_file_sync(path, content)
+            # Выполняем в thread pool чтобы не блокировать event loop
+            await asyncio.to_thread(
+                self._fs_executor.write_text_file_sync, path, content
+            )
             self.logger.debug("fs_write_success", path=path, content_size=len(content))
             return True
         except Exception as e:

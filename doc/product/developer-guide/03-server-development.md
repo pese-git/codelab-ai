@@ -16,18 +16,19 @@ server/
 ├── messages.py           # JSON-RPC сообщения
 ├── protocol/             # ACP протокол
 │   ├── __init__.py
-│   ├── core.py           # ACPProtocol
+│   ├── core.py           # ACPProtocol (handle_and_process)
 │   ├── state.py          # Состояния
 │   ├── session_factory.py
 │   └── handlers/         # Обработчики методов
 ├── agent/                # LLM агенты
 │   ├── base.py
-│   ├── naive.py
+│   ├── naive.py          # NaiveAgent (start_turn/continue_turn)
 │   ├── orchestrator.py
 │   └── state.py
 ├── tools/                # Инструменты
 │   ├── base.py
-│   ├── registry.py
+│   ├── registry.py       # SimpleToolRegistry
+│   ├── mapping.py        # Маппинг имён ACP ↔ LLM
 │   ├── definitions/
 │   └── executors/
 ├── storage/              # Хранилище
@@ -42,6 +43,10 @@ server/
 │   ├── service.py
 │   ├── models.py
 │   └── exceptions.py
+├── transport/            # Транспортные реализации
+│   ├── websocket.py      # WebSocketTransport
+│   ├── stdio.py          # StdioServerTransport
+│   └── stdio_runner.py   # run_stdio_server()
 └── mcp/                  # MCP интеграция
     ├── client.py
     └── models.py
@@ -90,10 +95,14 @@ class ACPHttpServer:
             send_callback=ws.send_json,
         )
         
+        # Настраиваем send_callback для отправки из фоновых задач
+        protocol._send_callback = self._send_protocol_message
+        
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
                 data = msg.json()
-                outcome = await protocol.handle(ACPMessage.from_dict(data))
+                # Используем handle_and_process для поддержки фоновых задач
+                outcome = await protocol.handle_and_process(ACPMessage.from_dict(data))
                 await self._send_outcome(ws, outcome)
             elif msg.type == WSMsgType.ERROR:
                 logger.error("WebSocket error", error=ws.exception())
@@ -120,27 +129,14 @@ class ACPProtocol:
         self,
         storage: SessionStorage,
         config: AppConfig,
-        send_callback: Callable[[dict], Awaitable[None]],
+        send_callback: Callable[[dict], Awaitable[None]] | None = None,
     ) -> None:
         self._storage = storage
         self._config = config
-        self._send = send_callback
+        self._send_callback = send_callback  # Для отправки из фоновых задач
         
         # Инициализация handlers
         self._handlers = self._create_handlers()
-    
-    def _create_handlers(self) -> dict[str, Handler]:
-        """Создание обработчиков методов."""
-        return {
-            "initialize": AuthHandler(self._storage, self._config),
-            "session/new": SessionHandler(self._storage),
-            "session/load": SessionHandler(self._storage),
-            "session/list": SessionHandler(self._storage),
-            "session/prompt": PromptHandler(self._storage, self._agent),
-            "session/cancel": PromptHandler(self._storage, self._agent),
-            "session/request_permission": PermissionHandler(self._storage),
-            # ...
-        }
     
     async def handle(self, message: ACPMessage) -> ProtocolOutcome:
         """Диспетчеризация JSON-RPC запроса."""
@@ -153,6 +149,50 @@ class ACPProtocol:
         
         handler = self._handlers[method]
         return await handler.handle(message)
+    
+    async def handle_and_process(self, message: ACPMessage) -> ProtocolOutcome:
+        """Обрабатывает сообщение и запускает фоновые задачи если нужно.
+        
+        Основной entry point для транспорта:
+        1. Вызывает handle() для обработки запроса
+        2. Если outcome содержит pending_tool_execution — запускает фоновую задачу
+        3. Возвращает чистый outcome для отправки транспортом
+        """
+        outcome = await self.handle(message)
+        
+        if outcome.pending_tool_execution is not None:
+            pending = outcome.pending_tool_execution
+            asyncio.create_task(
+                self._execute_tool_in_background(
+                    session_id=pending.session_id,
+                    tool_call_id=pending.tool_call_id,
+                )
+            )
+        
+        return outcome
+    
+    async def _execute_tool_in_background(
+        self, *, session_id: str, tool_call_id: str,
+    ) -> None:
+        """Фоновая задача для выполнения tool после permission approval."""
+        llm_result = await self.execute_pending_tool(
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+        )
+        
+        # Отправляем notifications и turn completion
+        for notification in llm_result.notifications:
+            await self._send_message(notification)
+        
+        if not llm_result.pending_permission:
+            turn_completion = await self.complete_active_turn(session_id)
+            if turn_completion is not None:
+                await self._send_message(turn_completion)
+    
+    async def _send_message(self, message: ACPMessage) -> None:
+        """Отправляет сообщение через transport callback."""
+        if self._send_callback is not None:
+            await self._send_callback(message)
 ```
 
 ### Protocol Outcome
@@ -320,6 +360,30 @@ class LLMAgent(ABC):
     @abstractmethod
     async def end_session(self, session_id: str) -> None:
         """Завершить сессию и освободить ресурсы."""
+```
+
+### Маппинг имён инструментов в NaiveAgent
+
+NaiveAgent использует `acp_name_to_llm_name()` при конвертации инструментов для LLM API:
+
+```python
+def _to_openai_tools_format(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
+    """Преобразовать ToolDefinition в формат OpenAI function calling.
+    
+    Применяет маппинг имён: ACP имена (с `/`) конвертируются
+    в LLM-совместимые имена (с `_`).
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": acp_name_to_llm_name(tool.name),  # fs/read → fs_read
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        }
+        for tool in tools
+    ]
 ```
 
 ### AgentContext и ContinuationContext
@@ -677,26 +741,13 @@ class ToolDefinition:
 class ToolRegistry:
     """Реестр инструментов."""
     
-    def __init__(self) -> None:
-        self._tools: dict[str, ToolDefinition] = {}
-        self._executors: dict[str, ToolExecutor] = {}
-    
-    def register(
-        self,
-        definition: ToolDefinition,
-        executor: ToolExecutor,
-    ) -> None:
-        """Регистрация инструмента."""
-        self._tools[definition.name] = definition
-        self._executors[definition.name] = executor
-    
     def get_definitions(self) -> list[dict]:
         """Получение определений для LLM."""
         return [
             {
                 "type": "function",
                 "function": {
-                    "name": tool.name,
+                    "name": acp_name_to_llm_name(tool.name),  # Маппинг имён
                     "description": tool.description,
                     "parameters": tool.parameters,
                 }
@@ -706,14 +757,16 @@ class ToolRegistry:
     
     async def execute(
         self,
-        name: str,
+        name: str,  # LLM имя (с _)
         arguments: dict,
         context: ExecutionContext,
     ) -> ToolResult:
         """Выполнение инструмента."""
-        executor = self._executors.get(name)
+        # Конвертируем LLM имя обратно в ACP формат
+        acp_name = llm_name_to_acp_name(name)
+        executor = self._executors.get(acp_name)
         if not executor:
-            raise ToolNotFoundError(name)
+            raise ToolNotFoundError(acp_name)
         
         return await executor.execute(arguments, context)
 ```

@@ -73,10 +73,9 @@ class StdioServerTransport(AcpServerTransport):
         sys.stdout.reconfigure(line_buffering=True)
 
         # Создаём StreamReader для stdin
-        loop = asyncio.get_running_loop()
         self._stdin_reader = asyncio.StreamReader()
         protocol = asyncio.StreamReaderProtocol(self._stdin_reader)
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)
+        await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, sys.stdin.buffer)
 
         # Register signal handlers для graceful shutdown
         self._setup_signal_handlers()
