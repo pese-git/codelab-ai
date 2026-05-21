@@ -156,10 +156,25 @@ class TerminalOutputRequest(BaseModel):
     """ID терминального сеанса."""
 
 
+class TerminalExitStatus(BaseModel):
+    """Статус завершения терминала (часть terminal/output response).
+    
+    Соответствует ACP spec TerminalExitStatus.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    exit_code: int | None = Field(None, alias="exitCode")
+    """Код завершения (может быть None если завершён сигналом)."""
+
+    signal: str | None = Field(None, alias="signal")
+    """Сигнал, завершивший процесс (может быть None)."""
+
+
 class TerminalOutputResponse(BaseModel):
     """Ответ с output терминала (получен от клиента).
     
-    Возвращает текущий output из терминала и статус выполнения.
+    Соответствует ACP spec для terminal/output.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -167,11 +182,11 @@ class TerminalOutputResponse(BaseModel):
     output: str
     """Накопленный output терминала."""
 
-    is_complete: bool = Field(..., alias="isComplete")
-    """True если команда завершена."""
+    truncated: bool = False
+    """True если output был обрезан из-за лимита байт."""
 
-    exit_code: int | None = Field(None, alias="exitCode")
-    """Код завершения команды (если завершена)."""
+    exit_status: TerminalExitStatus | None = Field(None, alias="exitStatus")
+    """Статус завершения (присутствует только если команда завершилась)."""
 
 
 class TerminalWaitForExitRequest(BaseModel):
@@ -195,16 +210,16 @@ class TerminalWaitForExitRequest(BaseModel):
 class TerminalWaitForExitResponse(BaseModel):
     """Ответ после завершения команды (получен от клиента).
     
-    Возвращает финальный output и код завершения.
+    Возвращает код завершения и сигнал (по ACP spec).
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str
-    """Полный output после завершения."""
+    exit_code: int | None = Field(None, alias="exitCode")
+    """Код завершения команды (может быть None если завершён сигналом)."""
 
-    exit_code: int = Field(..., alias="exitCode")
-    """Код завершения команды."""
+    signal: str | None = Field(None, alias="signal")
+    """Сигнал, завершивший процесс (может быть None если завершился нормально)."""
 
 
 class TerminalKillRequest(BaseModel):
@@ -231,7 +246,7 @@ class TerminalKillResponse(BaseModel):
     Указывает успешность отправки сигнала.
     """
 
-    success: bool
+    success: bool = True
     """True если сигнал успешно отправлен."""
 
 
@@ -256,5 +271,5 @@ class TerminalReleaseResponse(BaseModel):
     Указывает успешность освобождения ресурсов.
     """
 
-    success: bool
+    success: bool = True
     """True если ресурсы успешно освобождены."""

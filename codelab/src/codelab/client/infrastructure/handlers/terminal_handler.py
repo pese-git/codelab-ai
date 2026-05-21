@@ -202,6 +202,9 @@ class TerminalHandler:
 
         try:
             exit_code = await self.executor.wait_for_exit(terminal_id)
+            
+            # Получаем output терминала
+            output, _, _ = await self.executor.get_output(terminal_id)
 
             logger.info(
                 "agent_terminal_wait_success",
@@ -209,7 +212,7 @@ class TerminalHandler:
                 terminal_id=terminal_id,
                 exit_code=exit_code,
             )
-            return {"exitCode": exit_code}
+            return {"exitCode": exit_code, "output": output}
         except ValueError as e:
             logger.error(
                 "agent_terminal_wait_error",

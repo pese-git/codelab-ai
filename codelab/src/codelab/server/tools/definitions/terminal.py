@@ -86,8 +86,9 @@ class TerminalToolDefinitions:
         return ToolDefinition(
             name="terminal/wait_for_exit",
             description=(
-                "Wait for a terminal to complete execution and retrieve the exit code and output. "
-                "Use after execute_command to get the result of a long-running command."
+                "Wait for a terminal to complete execution and retrieve the exit code. "
+                "The terminal output is retrieved automatically. "
+                "Use after terminal/create to get the result of a long-running command."
             ),
             parameters={
                 "type": "object",

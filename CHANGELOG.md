@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Terminal output flow (ГЭП #11)**: Исправлена работа терминальных инструментов со сторонними клиентами (Zed IDE)
+  - `TerminalWaitForExitResponse` теперь соответствует ACP spec (только `exitCode` и `signal`, без `output`)
+  - `TerminalOutputResponse` использует `exitStatus` и `truncated` по ACP spec
+  - `ClientRPCBridge.terminal_output()` — новый метод для получения output терминала
+  - `TerminalToolExecutor.execute_wait_for_exit()` вызывает `terminal/output` → `wait_for_exit` → `terminal/output`
+  - `ToolResult` теперь передаёт `output` в LLM (исправлена потеря output при создании ToolResult)
+  - Все 2208 тестов проходят, совместимость с Zed IDE подтверждена
+
 ### Added
 - **MCP Integration (Stage 8)**: Поддержка Model Context Protocol
   - Модуль `codelab/src/codelab/server/mcp/` с компонентами:

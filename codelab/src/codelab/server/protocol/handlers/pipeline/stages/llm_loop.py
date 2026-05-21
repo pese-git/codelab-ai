@@ -534,6 +534,7 @@ class LLMLoopStage(PromptStage):
                     tool_call_id=tool_call_id_from_llm or tool_call_id,
                     tool_name=acp_tool_name,
                     success=result.success,
+                    output=result.output,
                     content=extracted_content.content_items,
                     error=result.error,
                 ))

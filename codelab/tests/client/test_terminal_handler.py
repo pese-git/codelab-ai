@@ -164,11 +164,12 @@ class TestTerminalHandlerWaitForExit:
     ) -> None:
         """Тест успешного ожидания завершения."""
         executor_mock.wait_for_exit.return_value = 0
+        executor_mock.get_output.return_value = ("output text", True, 0)
         params = {"sessionId": "sess_123", "terminalId": "term_abc"}
 
         result = await handler.handle_wait_for_exit(params)
 
-        assert result == {"exitCode": 0}
+        assert result["exitCode"] == 0
         executor_mock.wait_for_exit.assert_called_once_with("term_abc")
 
     async def test_handle_wait_for_exit_error_code(
@@ -176,11 +177,12 @@ class TestTerminalHandlerWaitForExit:
     ) -> None:
         """Тест ожидания с non-zero exit code."""
         executor_mock.wait_for_exit.return_value = 1
+        executor_mock.get_output.return_value = ("error output", True, 1)
         params = {"sessionId": "sess_123", "terminalId": "term_abc"}
 
         result = await handler.handle_wait_for_exit(params)
 
-        assert result == {"exitCode": 1}
+        assert result["exitCode"] == 1
 
     async def test_handle_wait_for_exit_missing_id(
         self, handler: TerminalHandler

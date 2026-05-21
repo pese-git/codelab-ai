@@ -182,6 +182,9 @@ class TerminalToolExecutor(ToolExecutor):
     ) -> ToolExecutionResult:
         """Ожидать завершения терминала через ClientRPC.
         
+        По ACP spec terminal/wait_for_exit возвращает только exitCode/signal.
+        Output получается через отдельный вызов terminal/output.
+        
         Args:
             session: Состояние сессии.
             terminal_id: ID терминала.
@@ -198,45 +201,103 @@ class TerminalToolExecutor(ToolExecutor):
                 },
             )
             
-            # Вызов ClientRPC для ожидания завершения
-            result = await self._bridge.wait_terminal_exit(
+            # 1. Сначала пытаемся получить текущий output и статус
+            output_data = await self._bridge.terminal_output(
                 session=session,
                 terminal_id=terminal_id,
             )
             
-            if result is None:
+            output = ""
+            exit_code: int | None = -1
+            signal: str | None = None
+            
+            if output_data:
+                output = output_data.get("output", "")
+                is_complete = output_data.get("is_complete", False)
+                exit_code = output_data.get("exit_code")
+                signal = output_data.get("signal")
+                
+                # Если терминал уже завершён — не нужно ждать
+                if is_complete and exit_code is not None:
+                    logger.debug(
+                        "Терминал уже завершён (получено из terminal/output)",
+                        extra={
+                            "session_id": session.session_id,
+                            "terminal_id": terminal_id,
+                            "exit_code": exit_code,
+                        },
+                    )
+                    exit_message = f"Terminal {terminal_id} exited with code {exit_code}"
+                    content_items = [
+                        {
+                            "type": "text",
+                            "text": f"{exit_message}\n\nOutput:\n{output}",
+                        }
+                    ]
+                    return ToolExecutionResult(
+                        success=exit_code == 0,
+                        output=output,
+                        metadata={
+                            "terminal_id": terminal_id,
+                            "exit_code": exit_code,
+                            "signal": signal,
+                        },
+                        content=content_items,
+                    )
+            
+            # 2. Если ещё не завершён — ждём через wait_for_exit
+            wait_result = await self._bridge.wait_terminal_exit(
+                session=session,
+                terminal_id=terminal_id,
+            )
+            
+            if wait_result is None:
                 return ToolExecutionResult(
                     success=False,
                     error=f"Ошибка при ожидании завершения терминала: {terminal_id}",
                 )
             
-            exit_code = result.get("exit_code", -1)
-            output = result.get("output", "")
+            exit_code = wait_result.get("exit_code")
+            signal = wait_result.get("signal")
+            
+            # 3. После завершения — получаем финальный output
+            final_output_data = await self._bridge.terminal_output(
+                session=session,
+                terminal_id=terminal_id,
+            )
+            if final_output_data:
+                output = final_output_data.get("output", "")
+            
+            resolved_exit_code = exit_code if exit_code is not None else -1
             
             logger.debug(
                 "Терминал завершен",
                 extra={
                     "session_id": session.session_id,
                     "terminal_id": terminal_id,
-                    "exit_code": exit_code,
+                    "exit_code": resolved_exit_code,
+                    "signal": signal,
                 },
             )
             
-            # Сгенерировать content для отправки клиенту и LLM согласно ACP Content Types
-            exit_message = f"Terminal {terminal_id} exited with code {exit_code}"
+            # Сгенерировать content для отправки клиенту и LLM
+            exit_message = f"Terminal {terminal_id} exited with code {resolved_exit_code}"
+            if signal:
+                exit_message = f"Terminal {terminal_id} exited with signal {signal}"
             content_items = [
                 {
                     "type": "text",
-                    "text": f"{exit_message}\n\nOutput:\n{output}"
+                    "text": f"{exit_message}\n\nOutput:\n{output}",
                 }
             ]
             
             return ToolExecutionResult(
-                success=exit_code == 0,
+                success=resolved_exit_code == 0,
                 output=output,
                 metadata={
                     "terminal_id": terminal_id,
-                    "exit_code": exit_code,
+                    "exit_code": resolved_exit_code,
+                    "signal": signal,
                 },
                 content=content_items,
             )
