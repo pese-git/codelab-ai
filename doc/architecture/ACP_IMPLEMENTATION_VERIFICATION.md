@@ -111,7 +111,7 @@
 - Capability checking перед вызовами
 - Path normalization к absolute paths в рамках cwd
 
-### ⚠️ 10. Terminal — Частично реализовано
+### ✅ 10. Terminal — Полностью реализовано
 
 - ✅ `terminal/create` с command, args, env, cwd, outputByteLimit
 - ✅ `terminal/output` с truncated flag и exitStatus (ClientRPCService реализован)
@@ -119,11 +119,12 @@
 - ✅ `terminal/kill` без release
 - ✅ `terminal/release` с kill + cleanup
 - ✅ Terminal embedding в tool calls
-- ⚠️ **ГЭП:** `TerminalWaitForExitResponse` содержал поле `output` — не определено в ACP spec
-- ⚠️ **ГЭП:** `TerminalToolExecutor.execute_wait_for_exit()` ожидал output от `wait_for_exit` вместо вызова `terminal/output`
-- ⚠️ **ГЭП:** `ClientRPCBridge` не имел метода `terminal_output()` для получения вывода
-- ⚠️ **Сторонние клиенты:** Zed IDE возвращает `{"exitCode": 0}` без `output` для `wait_for_exit` — это корректно по spec
-- ⚠️ **Сторонние клиенты:** Zed IDE возвращает `{}` для `terminal/release` — missing `success` field
+- ✅ `TerminalWaitForExitResponse` соответствует ACP spec (только `exitCode` и `signal`)
+- ✅ `TerminalToolExecutor.execute_wait_for_exit()` вызывает `terminal/output` для получения вывода (по spec)
+- ✅ `ClientRPCBridge` имеет метод `terminal_output()` для получения вывода терминала
+- ✅ `TerminalOutputResponse` использует `exitStatus` и `truncated` по ACP spec
+- ✅ `ToolResult` передаёт `output` в LLM — агент видит результат выполнения инструментов
+- ✅ Совместимость со сторонними клиентами (Zed IDE) подтверждена
 
 ### ✅ 11. Agent Plan — Полностью реализовано
 
@@ -227,49 +228,38 @@
 
 Это позволяет codelab работать с любыми ACP клиентами, даже если они не fully implement terminal protocol.
 
-#### 11. Terminal output не получается через `wait_for_exit`
+#### ~~11. Terminal output не получается через `wait_for_exit`~~ ✅ Решено (2026-05-21)
 
-**Файлы:** `server/client_rpc/models.py`, `server/client_rpc/service.py`, `server/tools/integrations/client_rpc_bridge.py`, `server/tools/executors/terminal_executor.py`
+**Файлы:** `server/client_rpc/models.py`, `server/client_rpc/service.py`, `server/tools/integrations/client_rpc_bridge.py`, `server/tools/executors/terminal_executor.py`, `server/protocol/handlers/pipeline/stages/llm_loop.py`
 
 **Проблема:** По спецификации ACP `terminal/wait_for_exit` возвращает **только** `exitCode` и `signal` — **без output**. Output получается через **отдельный метод** `terminal/output`.
 
 Текущая реализация ожидала `output` в ответе `wait_for_exit`, что не соответствует спецификации. При работе со сторонними клиентами (Zed IDE) output всегда пустой.
 
-**План исправления:**
+**Дополнительная проблема:** `ToolResult` создавался без поля `output`, из-за чего LLM получал пустой tool response даже когда executor корректно возвращал результат.
 
-1. **`client_rpc/models.py`** — Убрать `output` из `TerminalWaitForExitResponse`
-   - Удалить поле `output: str = ""` (не определено в ACP spec)
-   - Добавить поле `signal: str | None = None` (по spec)
+**Исправления применены:**
 
-2. **`client_rpc/service.py`** — Обновить `wait_for_exit`
-   - Изменить возвращаемый тип с `tuple[str, int]` на `tuple[int, str | None]` (exit_code, signal)
+1. **`client_rpc/models.py`** — `TerminalWaitForExitResponse` соответствует spec (только `exitCode`, `signal`)
+2. **`client_rpc/models.py`** — `TerminalOutputResponse` использует `exitStatus` и `truncated` по spec
+3. **`client_rpc/service.py`** — `wait_for_exit` возвращает `(exit_code, signal)`, `terminal_output` возвращает `(output, truncated, exit_code, signal)`
+4. **`tools/integrations/client_rpc_bridge.py`** — Добавлен `terminal_output()`, обновлён `wait_terminal_exit()`
+5. **`tools/executors/terminal_executor.py`** — `execute_wait_for_exit()` вызывает `terminal/output` → `wait_for_exit` → `terminal/output`
+6. **`tools/definitions/terminal.py`** — Обновлено описание `wait_for_exit`
+7. **`server/protocol/handlers/pipeline/stages/llm_loop.py`** — `ToolResult` теперь передаёт `output=result.output`
 
-3. **`tools/integrations/client_rpc_bridge.py`** — Добавить `terminal_output`
-   - Новый метод `terminal_output(session, terminal_id)` → `dict | None`
-   - Вызывает `ClientRPCService.terminal_output()` и возвращает `{output, is_complete, exit_code}`
-
-4. **`tools/executors/terminal_executor.py`** — Обновить `execute_wait_for_exit`
-   - Сначала вызвать `terminal/output` для получения output
-   - Затем вызвать `terminal/wait_for_exit` для exit_code (если ещё не завершён)
-   - Объединить результаты в `ToolExecutionResult`
-
-5. **`tools/definitions/terminal.py`** — Обновить описание `wait_for_exit`
-   - Обновить description: убрать упоминание output (он получается через `terminal/output`)
-
-6. **Тесты**
-   - Обновить тесты `test_client_rpc_service.py` для нового сигнатуры `wait_for_exit`
-   - Добавить тесты для `ClientRPCBridge.terminal_output`
-   - Добавить тесты для обновлённого `execute_wait_for_exit`
-
-**Поток после исправления:**
+**Поток (реализован):**
 ```
 LLM: terminal/create → terminal_id
 LLM: terminal/wait_for_exit → executor internally:
-  1. terminal/output → output + is_complete + exit_code (если завершён)
-  2. terminal/wait_for_exit → exit_code (если ещё не завершён)
-  3. Return combined result: output + exit_code
+  1. terminal/output → output + is_complete + exit_code (если завершён → вернуть сразу)
+  2. terminal/wait_for_exit → exit_code + signal (если ещё не завершён)
+  3. terminal/output → финальный output
+  4. Return combined result: output + exit_code + signal
 LLM: terminal/release → cleanup
 ```
+
+**Результат:** Terminal flow полностью соответствует ACP spec и работает со сторонними клиентами (Zed IDE).
 
 #### ~~10. `LLMAgent.process_prompt` — неясный контракт~~ ✅ Решено (2026-05-20)
 

@@ -831,6 +831,46 @@ graph TD
     style I fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
 ```
 
+### 4.1. Terminal output flow (по ACP spec)
+
+**Проблема:** По спецификации ACP `terminal/wait_for_exit` возвращает только `exitCode` и `signal` — без output. Output получается через отдельный метод `terminal/output`.
+
+**Решение:** [`TerminalToolExecutor.execute_wait_for_exit()`](codelab/src/codelab/server/tools/executors/terminal_executor.py) реализует корректный flow:
+
+```mermaid
+sequenceDiagram
+    participant LLM
+    participant Executor as TerminalToolExecutor
+    participant Bridge as ClientRPCBridge
+    participant Client
+
+    LLM->>Executor: terminal/wait_for_exit(terminal_id)
+    Executor->>Bridge: terminal_output(terminal_id)
+    Bridge->>Client: terminal/output RPC
+    Client-->>Bridge: output + exitStatus
+    Bridge-->>Executor: output + is_complete + exit_code
+    
+    alt Terminal уже завершён (is_complete=True)
+        Executor-->>LLM: ToolResult(output + exit_code)
+    else Terminal ещё работает (is_complete=False)
+        Executor->>Bridge: wait_terminal_exit(terminal_id)
+        Bridge->>Client: terminal/wait_for_exit RPC
+        Client-->>Bridge: exitCode + signal
+        Bridge-->>Executor: exit_code + signal
+        Executor->>Bridge: terminal_output(terminal_id)
+        Bridge->>Client: terminal/output RPC
+        Client-->>Bridge: финальный output
+        Bridge-->>Executor: output + exitStatus
+        Executor-->>LLM: ToolResult(output + exit_code + signal)
+    end
+```
+
+**Ключевые изменения (2026-05-21):**
+- `TerminalWaitForExitResponse` — только `exitCode` и `signal` (по spec)
+- `TerminalOutputResponse` — `output`, `truncated`, `exitStatus` (по spec)
+- `ClientRPCBridge.terminal_output()` — новый метод для получения output
+- `ToolResult` передаёт `output` в LLM (исправлена потеря output)
+
 ### 5. PromptOrchestrator как центральный координатор
 
 **Проблема:** Обработка prompt-turn включает множество этапов (валидация, LLM, tools, permissions, обновления).
