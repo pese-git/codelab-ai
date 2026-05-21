@@ -83,14 +83,16 @@ graph TB
 | **MessageRouter** | Infrastructure | Маршрутизация сообщений | [`codelab/src/codelab/client/infrastructure/services/message_router.py`](codelab/src/codelab/client/infrastructure/services/message_router.py:26) |
 | **EventBus** | Infrastructure | Pub/Sub система событий | [`codelab/src/codelab/client/infrastructure/events/bus.py`](codelab/src/codelab/client/infrastructure/events/bus.py) |
 | **StdioClientTransport** | Infrastructure | stdio транспорт (subprocess) | [`codelab/src/codelab/client/infrastructure/stdio_transport.py`](codelab/src/codelab/client/infrastructure/stdio_transport.py) |
-| **ACPProtocol** | Protocol | Диспетчер методов ACP | [`codelab/src/codelab/server/protocol/core.py`](codelab/src/codelab/server/protocol/core.py:39) |
+| **ACPProtocol** | Protocol | Диспетчер методов ACP, `handle_and_process` для фоновых задач | [`codelab/src/codelab/server/protocol/core.py`](codelab/src/codelab/server/protocol/core.py:39) |
 | **Handlers** | Protocol | Обработчики методов (auth, session, prompt) | [`codelab/src/codelab/server/protocol/handlers/`](codelab/src/codelab/server/protocol/handlers/) |
 | **PromptOrchestrator** | Protocol | Главный оркестратор prompt-turn | [`codelab/src/codelab/server/protocol/handlers/prompt_orchestrator.py`](codelab/src/codelab/server/protocol/handlers/prompt_orchestrator.py:32) |
 | **AgentOrchestrator** | Agent | Управление LLM-агентом | [`codelab/src/codelab/server/agent/orchestrator.py`](codelab/src/codelab/server/agent/orchestrator.py:18) |
 | **ToolRegistry** | Tools | Регистрация и управление инструментами | [`codelab/src/codelab/server/tools/registry.py`](codelab/src/codelab/server/tools/registry.py) |
+| **ToolMapping** | Tools | Маппинг имён ACP ↔ LLM (fs/read → fs_read) | [`codelab/src/codelab/server/tools/mapping.py`](codelab/src/codelab/server/tools/mapping.py) |
 | **Storage** | Storage | Persistence для сессий | [`codelab/src/codelab/server/storage/`](codelab/src/codelab/server/storage/) |
 | **WebSocketTransport** | Transport | WebSocket endpoint | [`codelab/src/codelab/server/transport/websocket.py`](codelab/src/codelab/server/transport/websocket.py) |
 | **StdioServerTransport** | Transport | stdio транспорт (stdin/stdout) | [`codelab/src/codelab/server/transport/stdio.py`](codelab/src/codelab/server/transport/stdio.py) |
+| **StdioRunner** | Transport | Запуск stdio сервера с DI | [`codelab/src/codelab/server/transport/stdio_runner.py`](codelab/src/codelab/server/transport/stdio_runner.py) |
 
 ---
 
@@ -638,6 +640,7 @@ graph LR
    - **permission_queue** — запросы разрешений
 4. **Graceful shutdown** — await stop() дожидается завершения loop
 5. **Диагностика** — счетчики сообщений и ошибок для мониторинга
+6. **Async callbacks** — callbacks поддерживают как sync так и async функции через `_call_callback()`, что предотвращает блокировку event loop в stdio режиме
 
 ---
 
@@ -695,26 +698,27 @@ graph TB
 graph TB
     subgraph Protocol["ACPProtocol (transport-agnostic)"]
         Handle["handle(message) → outcome"]
+        HandleAndProcess["handle_and_process(message)\n→ handle() + background tasks"]
+        BackgroundTool["_execute_tool_in_background()\n(фоновая задача)"]
+        SendCallback["_send_callback()\n(отправка из фона)"]
     end
     
     subgraph Transports["Transport Implementations"]
-        WS["WebSocketTransport<br/>aiohttp WebSocket"]
-        STDIO["StdioServerTransport<br/>stdin/stdout"]
+        WS["WebSocketTransport\naiohttp WebSocket"]
+        STDIO["StdioServerTransport\nstdin/stdout"]
     end
     
-    subgraph ClientTransports["Client Transports"]
-        WS_C["WebSocketTransport<br/>aiohttp client"]
-        STDIO_C["StdioClientTransport<br/>subprocess"]
-    end
-    
-    WS --> Handle
-    STDIO --> Handle
-    WS_C --> WS
-    STDIO_C --> STDIO
+    WS --> HandleAndProcess
+    STDIO --> HandleAndProcess
+    HandleAndProcess --> Handle
+    HandleAndProcess --> BackgroundTool
+    BackgroundTool --> SendCallback
+    SendCallback --> WS
+    SendCallback --> STDIO
     
     style Protocol fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
     style Transports fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    style ClientTransports fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    style HandleAndProcess fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
 ```
 
 **Преимущества:**
@@ -722,6 +726,65 @@ graph TB
 - ✅ Локальный режим использует stdio (соответствует spec ACP)
 - ✅ `codelab serve --stdio` для интеграции с IDE plugins
 - ✅ Изолированный процесс сервера в local mode
+
+### Маппинг имён инструментов ACP ↔ LLM
+
+**Проблема:** ACP протокол использует имена инструментов с `/` (например `fs/read_text_file`, `terminal/create`), но некоторые LLM провайдеры (Azure через OpenRouter) не поддерживают символ `/` в именах функций. Допустимый паттерн: `^[a-zA-Z0-9_\.-]+$`.
+
+**Решение:** [`tools/mapping.py`](codelab/src/codelab/server/tools/mapping.py) обеспечивает двусторонний маппинг:
+
+```mermaid
+graph LR
+    subgraph ACP["ACP Protocol Names"]
+        A1["fs/read_text_file"]
+        A2["fs/write_text_file"]
+        A3["terminal/create"]
+        A4["terminal/wait_for_exit"]
+    end
+    
+    subgraph Mapping["ToolMapping"]
+        M1["acp_name_to_llm_name()\n/ → _"]
+        M2["llm_name_to_acp_name()\n_ → / (для известных префиксов)"]
+    end
+    
+    subgraph LLM["LLM API Names"]
+        L1["fs_read_text_file"]
+        L2["fs_write_text_file"]
+        L3["terminal_create"]
+        L4["terminal_wait_for_exit"]
+    end
+    
+    A1 --> M1 --> L1
+    A2 --> M1 --> L2
+    A3 --> M1 --> L3
+    A4 --> M1 --> L4
+    
+    L1 --> M2 --> A1
+    L2 --> M2 --> A2
+    L3 --> M2 --> A3
+    L4 --> M2 --> A4
+    
+    style ACP fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style LLM fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style Mapping fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
+```
+
+**Где применяется:**
+
+| Место | Направление | Описание |
+|-------|-------------|----------|
+| `NaiveAgent._to_openai_tools_format()` | ACP → LLM | При отправке инструментов в LLM API |
+| `SimpleToolRegistry.to_llm_tools()` | ACP → LLM | При конвертации для LLM |
+| `SimpleToolRegistry.execute_tool()` | LLM → ACP | При выполнении инструмента (lookup в registry) |
+| `LLMLoopStage._process_tool_calls()` | LLM → ACP | При обработке tool calls от LLM |
+
+**Пример:**
+```python
+>>> acp_name_to_llm_name("fs/read_text_file")
+"fs_read_text_file"
+>>> llm_name_to_acp_name("fs_read_text_file")
+"fs/read_text_file"
+```
 
 ### 3. Фильтрация инструментов по ClientRuntimeCapabilities
 

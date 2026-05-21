@@ -152,6 +152,7 @@ sequenceDiagram
     participant AG as NaiveAgent
     participant LLM as OpenAIProvider
     participant TR as ToolRegistry
+    participant TM as ToolMapping
 
     U->>C: Вводит prompt
     C->>S: session/prompt
@@ -169,6 +170,8 @@ sequenceDiagram
             ORCH->>AG: continue_turn(ContinuationContext)
             Note over AG: НЕ добавляет user message<br/>история содержит tool_results
         end
+        AG->>TM: acp_name_to_llm_name() для инструментов
+        TM-->>AG: LLM-совместимые имена (с _)
         AG->>LLM: create_completion(messages, tools)
         LLM-->>AG: LLMResponse(text, tool_calls, stop_reason)
         AG-->>ORCH: AgentResponse
@@ -181,6 +184,8 @@ sequenceDiagram
             C-->>U: Показывает ответ
         else stop_reason = tool_use
             loop Для каждого tool call
+                LL->>TM: llm_name_to_acp_name(tool_name)
+                TM-->>LL: ACP имя (с /)
                 LL->>TR: execute_tool() или request_permission
                 TR-->>LL: ToolResult
                 S-->>C: session/update (статус инструмента)
@@ -196,7 +201,8 @@ sequenceDiagram
 flowchart TD
     START([session/prompt]) --> HIST[Подготовить историю сообщений]
     HIST --> TOOLS[Получить список инструментов]
-    TOOLS --> CANCEL{Отмена\nзапрошена?}
+    TOOLS --> MAP1[acp_name_to_llm_name()\n/ → _]
+    MAP1 --> CANCEL{Отмена\nзапрошена?}
     CANCEL -->|Да| CANCELLED([stop_reason = cancelled])
     CANCEL -->|Нет| LLM[Вызов LLM API]
     LLM --> PARSE[Разобрать ответ]
@@ -205,7 +211,8 @@ flowchart TD
     HAS_TOOLS -->|Нет| END_TURN([stop_reason = end_turn])
 
     HAS_TOOLS -->|Да| FOREACH[Для каждого tool call]
-    FOREACH --> POLICY{Политика}
+    FOREACH --> MAP2[llm_name_to_acp_name()\n_ → /]
+    MAP2 --> POLICY{Политика}
     POLICY -->|allow| EXEC[Выполнить инструмент]
     POLICY -->|ask| PERM([Запросить разрешение\nПайплайн приостановлен])
     POLICY -->|reject| FAIL[Пометить failed]
@@ -246,6 +253,41 @@ sequenceDiagram
     S-->>C: session/update {stopReason: cancelled}
     C-->>U: Стриминг остановлен
 ```
+
+## Маппинг имён инструментов
+
+ACP протокол использует имена с `/` (например `fs/read_text_file`), но некоторые LLM провайдеры не поддерживают этот символ. Модуль `tools/mapping.py` обеспечивает двустороннюю конвертацию:
+
+```mermaid
+graph LR
+    subgraph ACP["ACP Protocol"]
+        A1["fs/read_text_file"]
+        A2["terminal/create"]
+    end
+    
+    subgraph Mapping["ToolMapping"]
+        M1["acp_name_to_llm_name()\n/ → _"]
+        M2["llm_name_to_acp_name()\n_ → /"]
+    end
+    
+    subgraph LLM["LLM API"]
+        L1["fs_read_text_file"]
+        L2["terminal_create"]
+    end
+    
+    A1 --> M1 --> L1
+    A2 --> M1 --> L2
+    L1 --> M2 --> A1
+    L2 --> M2 --> A2
+    
+    style ACP fill:#e3f2fd,stroke:#1565c0
+    style LLM fill:#fff3e0,stroke:#e65100
+    style Mapping fill:#f3e5f5,stroke:#6a1b9a
+```
+
+**Применение:**
+- При отправке инструментов в LLM: `acp_name_to_llm_name()`
+- При получении tool calls от LLM: `llm_name_to_acp_name()`
 
 ## Потоки данных
 

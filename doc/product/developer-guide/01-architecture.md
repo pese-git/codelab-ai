@@ -151,6 +151,7 @@ class SendPromptUseCase:
 - **Transport** — WebSocket соединение
 - **EventBus** — слабо связанная коммуникация
 - **Handlers** — обработчики fs/*, terminal/*
+- **Async Callbacks** — `_call_callback()` поддерживает sync и async функции для предотвращения deadlock в stdio режиме
 
 #### Presentation Layer (`client/presentation/`)
 
@@ -179,6 +180,14 @@ class ChatView(Widget):
     def compose(self) -> ComposeResult:
         yield Static(id="messages")
         yield PromptInput()
+    
+    def _update_streaming(self, text: str) -> None:
+        # Используем Content API для безопасного рендеринга
+        # (избегаем crash на markup-like символах в тексте LLM)
+        from textual.content import Content
+        prefix = Content.from_markup("[bold green]⟳ [/]")
+        safe_text = Content.from_text(text)
+        # prefix + safe_text — безопасное комбинирование
 ```
 
 ### Диаграмма потока данных
@@ -312,6 +321,7 @@ class AgentOrchestrator:
 tools/
 ├── base.py              # Базовые классы
 ├── registry.py          # Реестр инструментов
+├── mapping.py           # Маппинг имён ACP ↔ LLM
 ├── definitions/         # Определения инструментов
 │   ├── filesystem.py    # fs/* инструменты
 │   └── terminal.py      # terminal/* инструменты
@@ -321,6 +331,27 @@ tools/
 └── integrations/        # Интеграции
     ├── client_rpc_bridge.py
     └── permission_checker.py
+```
+
+### ToolMapping
+
+Модуль `mapping.py` обеспечивает конвертацию имён инструментов между форматами:
+
+```python
+# ACP → LLM: замена / на _
+acp_name_to_llm_name("fs/read_text_file")  # → "fs_read_text_file"
+
+# LLM → ACP: восстановление / для известных префиксов
+llm_name_to_acp_name("fs_read_text_file")  # → "fs/read_text_file"
+```
+
+**Почему это нужно:** Некоторые LLM провайдеры (Azure через OpenRouter) не поддерживают `/` в именах функций. Паттерн: `^[a-zA-Z0-9_\.-]+$`.
+
+**Где применяется:**
+- `NaiveAgent._to_openai_tools_format()` — при отправке в LLM
+- `SimpleToolRegistry.to_llm_tools()` — при конвертации для LLM
+- `SimpleToolRegistry.execute_tool()` — при lookup в registry
+- `LLMLoopStage._process_tool_calls()` — при обработке tool calls
 ```
 
 ### Storage Layer (`server/storage/`)
@@ -388,6 +419,7 @@ graph LR
         Handler[RPC Handler]
         FS[FileSystem Executor]
         Term[Terminal Executor]
+        AsyncCB[Async Callbacks\n_call_callback()]
     end
     
     subgraph "Server"
@@ -395,10 +427,10 @@ graph LR
         Bridge[RPC Bridge]
     end
     
-    RPC -->|fs/read_text_file| Handler
-    RPC -->|terminal/create| Handler
-    Handler --> FS
-    Handler --> Term
+    RPC -->|fs/read_text_file| AsyncCB
+    RPC -->|terminal/create| AsyncCB
+    AsyncCB --> FS
+    AsyncCB --> Term
     FS -->|response| Bridge
     Term -->|response| Bridge
 ```

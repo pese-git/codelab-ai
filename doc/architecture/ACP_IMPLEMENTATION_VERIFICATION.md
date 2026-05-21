@@ -1,7 +1,8 @@
 # Верифицированный отчёт: Реализация ACP Protocol
 
-**Дата:** 2026-05-20
+**Дата:** 2026-05-21
 **Метод:** Ручная верификация кода vs спецификация `doc/Agent Client Protocol/`
+**Обновлено:** 2026-05-21 — ToolMapping модуль, handle_and_process, async client callbacks, Content API в TUI
 **Обновлено:** 2026-05-20 — устранены гэпы #2, #3, #4, #10, удалён мёртвый код DirectiveResolver, рефакторинг LLMAgent interface
 
 ---
@@ -15,10 +16,10 @@
 | Spec sections not covered | 1 из 17 (6%) — Streamable HTTP (draft) |
 | Все ACP методы реализованы | ✅ 17 из 17 |
 | stdio transport | ✅ Полностью (сервер + клиент) |
-| Тестовых файлов | ~141 |
-| Тестовых методов | ~2,210 |
+| Тестовых файлов | ~145 (+4: mapping, async callbacks) |
+| Тестовых методов | ~2,238 (+28) |
 | Критичных проблем | ✅ 0 |
-| Известных гэпов | 6 (было 8, решено 4) |
+| Известных гэпов | 6 |
 
 ---
 
@@ -162,8 +163,8 @@
 | Транспорт | Статус | Файл |
 |---|---|---|
 | stdio | ✅ Полностью | `server/transport/stdio.py` + `server/transport/stdio_runner.py` |
-| WebSocket | ✅ Полностью | `server/http_server.py` |
-| HTTP | ✅ Есть сервер | `server/http_server.py` |
+| WebSocket | ✅ Полностью | `server/transport/websocket.py` |
+| HTTP | ✅ Есть сервер | `server/transport/websocket.py` |
 | Streamable HTTP | ❌ Draft spec | Не реализован (как и в spec) |
 
 **stdio transport (сервер):** `StdioServerTransport` (211 строк)
@@ -171,12 +172,20 @@
 - Пишет ответы в stdout с line buffering
 - Логи ТОЛЬКО в stderr
 - Signal handlers (SIGTERM, SIGINT) для graceful shutdown
+- `stdio_runner.py` настраивает `protocol._send_callback` для отправки из фоновых задач
+- Использует `protocol.handle_and_process()` — entry point с поддержкой background tool execution
 
 **stdio transport (клиент):** `StdioClientTransport` (285 строк)
 - Запускает агент как subprocess
 - Async context manager с graceful shutdown
 - stdout/stderr background readers
 - Queue-based message delivery
+
+**WebSocket transport:** `WebSocketTransport`
+- aiohttp WebSocket endpoint
+- Настраивает `protocol._send_callback = self._send_protocol_message`
+- Использует `protocol.handle_and_process()` — background tool execution в ACPProtocol
+- `_execute_tool_in_background()` удалён из транспорта (перенесён в ACPProtocol)
 
 ### ✅ 17. Schema — Полностью реализовано
 
@@ -229,7 +238,7 @@
 
 #### ~~4. Несоответствие имён инструментов wire-формату ACP~~ ✅ Решено (2026-05-20)
 
-**Файлы:** `tools/definitions/filesystem.py`, `tools/definitions/terminal.py`
+**Файлы:** `tools/definitions/filesystem.py`, `tools/definitions/terminal.py`, `tools/mapping.py` (новый)
 
 Имена инструментов приведены в соответствие с ACP wire-форматом:
 
@@ -242,6 +251,12 @@
 | `release_terminal` | `terminal/release` |
 
 Теперь `_filter_tools_by_capabilities()` в `orchestrator.py` корректно фильтрует инструменты по capabilities.
+
+**Двусторонний маппинг (2026-05-21):** Добавлен модуль `tools/mapping.py` для конвертации имён между ACP и LLM форматами:
+- `acp_name_to_llm_name()`: `fs/read_text_file` → `fs_read_text_file` (ACP → LLM API)
+- `llm_name_to_acp_name()`: `fs_read_text_file` → `fs/read_text_file` (LLM → ACP registry lookup)
+
+Применяется в: `NaiveAgent._to_openai_tools_format()`, `SimpleToolRegistry.to_llm_tools()`, `SimpleToolRegistry.execute_tool()`, `LLMLoopStage._process_tool_calls()`.
 
 #### 5. Только OpenAI LLM провайдер
 
@@ -300,19 +315,22 @@ graph LR
 
 ```mermaid
 graph TB
-    A[Transport: stdio/WS] --> B[ACPProtocol core.py]
-    B --> C[SessionFactory]
-    B --> D[PromptOrchestrator]
-    B --> E[GlobalPolicyManager]
-    D --> F[Pipeline: 7 stages]
-    D --> G[ToolRegistry]
-    D --> H[PermissionManager]
-    D --> I[ClientRPCHandler]
-    G --> J[FS/Terminal/Plan executors]
-    H --> K[Policy: session + global]
-    I --> L[ClientRPCService]
-    B --> M[SessionStorage: memory/json]
-    B --> N[MCPManager]
+    A[Transport: stdio/WS] -->|handle_and_process| B[ACPProtocol core.py]
+    B -->|handle| C[SessionFactory]
+    B -->|handle| D[PromptOrchestrator]
+    B -->|handle| E[GlobalPolicyManager]
+    B -->|background| F[_execute_tool_in_background]
+    F -->|send_callback| A
+    D --> G[Pipeline: 7 stages]
+    D --> H[ToolRegistry]
+    D --> I[PermissionManager]
+    D --> J[ClientRPCHandler]
+    H --> K[FS/Terminal/Plan executors]
+    H --> L[ToolMapping: acp↔llm names]
+    I --> M[Policy: session + global]
+    J --> N[ClientRPCService]
+    B --> O[SessionStorage: memory/json]
+    B --> P[MCPManager]
 ```
 
 ### Компоненты клиента (Clean Architecture)
@@ -336,6 +354,7 @@ sequenceDiagram
     participant LL as LLMLoopStage
     participant ORCH as AgentOrchestrator
     participant AG as NaiveAgent
+    participant TM as ToolMapping
     participant LLM as OpenAIProvider
     participant TR as ToolRegistry
 
@@ -354,6 +373,8 @@ sequenceDiagram
             ORCH->>AG: continue_turn(ContinuationContext)
             Note over AG: НЕ добавляет user message<br/>история содержит tool_results
         end
+        AG->>TM: acp_name_to_llm_name() для tools
+        TM-->>AG: LLM-совместимые имена (с _)
         AG->>LLM: create_completion(messages, tools)
         LLM-->>AG: LLMResponse(text, tool_calls, stop_reason)
         AG-->>ORCH: AgentResponse
@@ -363,6 +384,8 @@ sequenceDiagram
             LL-->>PO: stop_reason=end_turn
         else tool_use — есть tool calls
             loop Каждый tool call
+                LL->>TM: llm_name_to_acp_name(tool_name)
+                TM-->>LL: ACP имя (с /)
                 LL->>LL: decide_policy()
                 alt allow
                     LL->>TR: execute_tool()
@@ -403,33 +426,9 @@ sequenceDiagram
     S-->>C: {stopReason: "cancelled"}
 ```
 
-### Отмена промпта (Cancellation)
+### Компоненты клиента (Clean Architecture)
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant TS as ACPTransportService
-    participant S as ACPProtocol
-    participant AG as NaiveAgent
-    participant LLM as OpenAI API
-
-    Note over AG,LLM: asyncio.Task — HTTP запрос к LLM
-    AG->>LLM: POST /v1/chat/completions
-
-    C->>TS: Stop (cancel_prompt)
-    Note over TS: Обходит _callbacks_request_lock<br/>через per-request response queue
-    TS->>S: session/cancel (немедленно)
-    S->>AG: active_task.cancel()
-    LLM--xAG: CancelledError
-    AG-->>S: stop_reason=cancelled
-    S-->>C: {stopReason: "cancelled"}
-```
-
----
-
-## Тестовое покрытие
-
-### Сервер (~1,089 тестов, 67 файлов)
+### Сервер (~1,109 тестов, 69 файлов)
 
 | Область | Файлов | Тестов | Покрытие |
 |---|---|---|---|
@@ -442,13 +441,14 @@ sequenceDiagram
 | Plan Builder/Extractor | 2 | 46 | ✅ Полное |
 | Tool Definitions | 1 | 40 | ✅ Полное |
 | Tool Registry | 1 | 20 | ✅ Полное |
+| Tool Mapping | 1 | 18 | ✅ Полное (новый) |
 | Tool Call Handler | 1 | 26 | ✅ Полное |
 | Permission Manager | 3 | 57 | ✅ Полное |
 | Client RPC Handler | 1 | 38 | ✅ Полное |
 | Client RPC Service | 1 | 26 | ✅ Полное |
 | Slash Commands | 2 | 35 | ✅ Полное |
 | HTTP Server | 2 | 18 | ✅ Полное |
-| Agent | 3 | 46 | ✅ Полное (start_turn/continue_turn) |
+| Agent | 3 | 50 | ✅ Полное (start_turn/continue_turn + mapping) |
 | LLM Provider | 1 | 6 | ⚠️ Базовое |
 | MCP Module | 1 | 27 | ✅ Полное |
 | Content | 3 | 68 | ✅ Полное |
@@ -456,15 +456,15 @@ sequenceDiagram
 | Global Policy | 2 | 69 | ✅ Полное |
 | Интеграционные | 10+ | ~100 | ✅ Полное |
 
-### Клиент (~1,022 теста, 67 файлов)
+### Клиент (~1,030 тестов, 69 файлов)
 
 | Область | Файлов | Тестов | Покрытие |
 |---|---|---|---|
 | Domain Entities | 1 | 10 | ✅ |
 | Application | 3 | 21 | ✅ |
-| Infrastructure | 12 | ~170 | ✅ |
-| Presentation | 5 | 73 | ✅ |
-| TUI Components | 32 | ~700 | ✅ |
+| Infrastructure | 12 | ~174 | ✅ (+4 async callbacks) |
+| Presentation | 5 | 77 | ✅ (+4 async fs/terminal) |
+| TUI Components | 32 | ~700 | ✅ (Content API) |
 
 ### Shared Content (~112 тестов, 6 файлов)
 
@@ -497,7 +497,7 @@ sequenceDiagram
 ### P1 — Важные
 
 ~~1. **Устранить дублирование `directives.py`** — оставить один источник~~ ✅ Решено
-2. **Добавить тесты extensibility** — `_meta`, custom methods
+~~2. **Добавить тесты extensibility** — `_meta`, custom methods~~ ✅ Решено (частично)
 3. **Добавить тесты stop reasons** — `max_tokens`, `max_turn_requests`, `refusal`
 4. **Добавить тесты session/list pagination edge cases** — invalid cursor, empty results
 
@@ -510,3 +510,4 @@ sequenceDiagram
 9. **Добавить rate limiting для tool execution**
 10. **Добавить stdio transport E2E тесты**
 11. **Реализовать MCP resources/prompts** — только tools/list и tools/call
+12. **Добавить тесты ToolMapping round-trip** — edge cases с неизвестными префиксами
