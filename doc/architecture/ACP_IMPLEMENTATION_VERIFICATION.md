@@ -2,6 +2,7 @@
 
 **Дата:** 2026-05-21
 **Метод:** Ручная верификация кода vs спецификация `doc/Agent Client Protocol/`
+**Обновлено:** 2026-05-22 — устранён гэп #10 (session/list pagination edge cases), +22 теста
 **Обновлено:** 2026-05-22 — устранён гэп #11 (stop reasons тесты), +57 тестов
 **Обновлено:** 2026-05-21 — ToolMapping модуль, handle_and_process, async client callbacks, Content API в TUI
 **Обновлено:** 2026-05-20 — устранены гэпы #2, #3, #4, #10, удалён мёртвый код DirectiveResolver, рефакторинг LLMAgent interface
@@ -12,15 +13,15 @@
 
 | Метрика | Значение |
 |---|---|
-| Spec sections fully covered | **13** из 17 (76%) |
-| Spec sections partially covered | 3 из 17 (18%) |
+| Spec sections fully covered | **14** из 17 (82%) |
+| Spec sections partially covered | 2 из 17 (12%) |
 | Spec sections not covered | 1 из 17 (6%) — Streamable HTTP (draft) |
 | Все ACP методы реализованы | ✅ 17 из 17 |
 | stdio transport | ✅ Полностью (сервер + клиент) |
-| Тестовых файлов | ~147 (+2: stop reasons) |
-| Тестовых методов | ~2,295 (+57) |
+| Тестовых файлов | ~148 (+1: pagination edge cases) |
+| Тестовых методов | ~2,317 (+22) |
 | Критичных проблем | ✅ 0 |
-| Известных гэпов | 7 |
+| Известных гэпов | 6 |
 
 ---
 
@@ -65,13 +66,13 @@
 - Session ID формат `sess_{uuid4().hex[:12]}`
 - ConfigOptions и Modes в response
 
-### ⚠️ 04. Session List — Частично реализовано
+### ✅ 04. Session List — Полностью реализовано
 
 - ✅ `session/list` с cursor-based pagination (base64-encoded JSON)
 - ✅ Фильтрация по cwd
 - ✅ `session_info_update` notification
 - ✅ Сортировка по `updatedAt` (reverse), page size = 50
-- ❌ Нет тестов на pagination edge cases (invalid cursor, empty results boundary)
+- ✅ Тесты на pagination edge cases (invalid cursor, empty results, boundaries) — 22 теста
 
 ### ✅ 05. Prompt Turn — Полностью реализовано
 
@@ -355,7 +356,7 @@ LLM: terminal/release → cleanup
 | # | Проблема | Статус |
 |---|---|---|
 | 9 | Нет тестов extensibility (`_meta`, custom methods) | Не покрыто |
-| 10 | Нет тестов session/list pagination edge cases | Минимально |
+| 10 | ~~Нет тестов session/list pagination edge cases~~ | ✅ Решено (2026-05-22) |
 | 11 | ~~Stop reasons `max_tokens`, `max_turn_requests`, `refusal` не тестированы~~ | ✅ Решено (2026-05-22) |
 | 12 | Tool call `locations`, `rawInput`, `rawOutput` не тестированы | Не покрыто |
 | 13 | Rate limiting для tool execution | Не реализовано |
@@ -498,7 +499,7 @@ sequenceDiagram
 
 ### Компоненты клиента (Clean Architecture)
 
-### Сервер (~1,166 тестов, 71 файлов)
+### Сервер (~1,188 тестов, 72 файлов)
 
 | Область | Файлов | Тестов | Покрытие |
 |---|---|---|---|
@@ -508,6 +509,7 @@ sequenceDiagram
 | State Manager | 1 | 21 | ✅ Полное |
 | Session Factory | 1 | 15 | ✅ Полное |
 | Storage | 3 | 41 | ✅ Полное |
+| Session List Pagination | 1 | 22 | ✅ Полное (новый) |
 | Plan Builder/Extractor | 2 | 46 | ✅ Полное |
 | Tool Definitions | 1 | 40 | ✅ Полное |
 | Tool Registry | 1 | 20 | ✅ Полное |
@@ -551,7 +553,6 @@ sequenceDiagram
 ### Не покрыто тестами
 
 - Extensibility (`_meta` propagation, custom methods)
-- Session list pagination edge cases
 - Tool call `locations`, `rawInput`, `rawOutput`
 - MCP HTTP/SSE transports
 - stdio transport E2E (сервер + клиент через subprocess)
@@ -571,7 +572,7 @@ sequenceDiagram
 ~~1. **Устранить дублирование `directives.py`** — оставить один источник~~ ✅ Решено
 ~~2. **Добавить тесты extensibility** — `_meta`, custom methods~~ ✅ Решено (частично)
 ~~3. **Добавить тесты stop reasons** — `max_tokens`, `max_turn_requests`, `refusal`~~ ✅ Решено (2026-05-22)
-4. **Добавить тесты session/list pagination edge cases** — invalid cursor, empty results
+~~4. **Добавить тесты session/list pagination edge cases** — invalid cursor, empty results~~ ✅ Решено (2026-05-22)
 5. **Исправить terminal output flow** — `execute_wait_for_exit` должен вызывать `terminal/output` перед `wait_for_exit` (см. ГЭП #11)
 
 ### P2 — Желательные
