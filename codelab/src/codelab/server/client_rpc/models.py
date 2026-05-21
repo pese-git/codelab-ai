@@ -231,7 +231,7 @@ class TerminalKillResponse(BaseModel):
     Указывает успешность отправки сигнала.
     """
 
-    success: bool
+    success: bool = True
     """True если сигнал успешно отправлен."""
 
 
@@ -256,5 +256,5 @@ class TerminalReleaseResponse(BaseModel):
     Указывает успешность освобождения ресурсов.
     """
 
-    success: bool
+    success: bool = True
     """True если ресурсы успешно освобождены."""
