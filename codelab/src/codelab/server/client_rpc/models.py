@@ -200,7 +200,7 @@ class TerminalWaitForExitResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str
+    output: str = ""
     """Полный output после завершения."""
 
     exit_code: int = Field(..., alias="exitCode")
