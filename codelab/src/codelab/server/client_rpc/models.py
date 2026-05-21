@@ -195,16 +195,16 @@ class TerminalWaitForExitRequest(BaseModel):
 class TerminalWaitForExitResponse(BaseModel):
     """Ответ после завершения команды (получен от клиента).
     
-    Возвращает финальный output и код завершения.
+    Возвращает код завершения и сигнал (по ACP spec).
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str = ""
-    """Полный output после завершения."""
+    exit_code: int | None = Field(None, alias="exitCode")
+    """Код завершения команды (может быть None если завершён сигналом)."""
 
-    exit_code: int = Field(..., alias="exitCode")
-    """Код завершения команды."""
+    signal: str | None = Field(None, alias="signal")
+    """Сигнал, завершивший процесс (может быть None если завершился нормально)."""
 
 
 class TerminalKillRequest(BaseModel):

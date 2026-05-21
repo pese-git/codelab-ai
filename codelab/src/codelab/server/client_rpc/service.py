@@ -481,7 +481,7 @@ class ClientRPCService:
         session_id: str,
         terminal_id: str,
         timeout: float | None = None,
-    ) -> tuple[str, int]:
+    ) -> tuple[int | None, str | None]:
         """Блокирующее ожидание завершения команды в терминале.
 
         Args:
@@ -490,7 +490,7 @@ class ClientRPCService:
             timeout: Timeout ожидания в секундах (опционально).
 
         Returns:
-            Кортеж (output, exit_code).
+            Кортеж (exit_code, signal) по ACP spec.
 
         Raises:
             ClientCapabilityMissingError: Клиент не поддерживает terminal.
@@ -509,7 +509,7 @@ class ClientRPCService:
             response_model=TerminalWaitForExitResponse,
         )
 
-        return response.output, response.exit_code
+        return response.exit_code, response.signal
 
     async def kill_terminal(
         self,

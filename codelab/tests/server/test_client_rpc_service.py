@@ -294,13 +294,13 @@ async def test_wait_for_exit(rpc_service: ClientRPCService, mock_send_request: A
         {
             "jsonrpc": "2.0",
             "id": request["id"],
-            "result": {"output": "final output", "exitCode": 0},
+            "result": {"exitCode": 0, "signal": None},
         }
     )
 
-    output, exit_code = await task
-    assert output == "final output"
+    exit_code, signal = await task
     assert exit_code == 0
+    assert signal is None
 
 
 @pytest.mark.asyncio
@@ -321,12 +321,13 @@ async def test_wait_for_exit_with_timeout(
         {
             "jsonrpc": "2.0",
             "id": request["id"],
-            "result": {"output": "output", "exitCode": 1},
+            "result": {"exitCode": 1, "signal": None},
         }
     )
 
-    output, exit_code = await task
+    exit_code, signal = await task
     assert exit_code == 1
+    assert signal is None
 
 
 @pytest.mark.asyncio
