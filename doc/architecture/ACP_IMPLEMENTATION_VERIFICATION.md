@@ -2,6 +2,7 @@
 
 **Дата:** 2026-05-21
 **Метод:** Ручная верификация кода vs спецификация `doc/Agent Client Protocol/`
+**Обновлено:** 2026-05-22 — устранён гэп #11 (stop reasons тесты), +57 тестов
 **Обновлено:** 2026-05-21 — ToolMapping модуль, handle_and_process, async client callbacks, Content API в TUI
 **Обновлено:** 2026-05-20 — устранены гэпы #2, #3, #4, #10, удалён мёртвый код DirectiveResolver, рефакторинг LLMAgent interface
 
@@ -16,10 +17,10 @@
 | Spec sections not covered | 1 из 17 (6%) — Streamable HTTP (draft) |
 | Все ACP методы реализованы | ✅ 17 из 17 |
 | stdio transport | ✅ Полностью (сервер + клиент) |
-| Тестовых файлов | ~145 (+4: mapping, async callbacks) |
-| Тестовых методов | ~2,238 (+28) |
+| Тестовых файлов | ~147 (+2: stop reasons) |
+| Тестовых методов | ~2,295 (+57) |
 | Критичных проблем | ✅ 0 |
-| Известных гэпов | 8 |
+| Известных гэпов | 7 |
 
 ---
 
@@ -313,6 +314,20 @@ LLM: terminal/release → cleanup
 
 Применяется в: `NaiveAgent._to_openai_tools_format()`, `SimpleToolRegistry.to_llm_tools()`, `SimpleToolRegistry.execute_tool()`, `LLMLoopStage._process_tool_calls()`.
 
+#### ~~11. Stop reasons `max_tokens`, `max_turn_requests`, `refusal` не тестированы~~ ✅ Решено (2026-05-22)
+
+**Файлы:** `tests/server/test_prompt_directives.py` (новый, 33 теста), `tests/server/pipeline/test_directives_stage.py` (новый, 18 тестов), `tests/server/test_protocol.py` (+2 теста), `tests/server/test_naive_agent.py` (+6 тестов)
+
+**Добавлено 57 тестов**, покрывающих все ACP stop reasons:
+
+1. **`extract_prompt_directives`** — парсинг slash-команд `/stop-max-tokens`, `/stop-max-turn-requests`, `/refuse`
+2. **`resolve_prompt_directives`** — `_meta.promptDirectives.forcedStopReason` для всех reasons, приоритет _meta над текстом
+3. **`DirectivesStage`** — установка `context.stop_reason`, pipeline continuation (не останавливает), комбинации с другими директивами
+4. **`normalize_stop_reason`** — нормализация `max_iterations` → `end_turn`, `tool_use` → `end_turn`, `error` → `end_turn`
+5. **`resolve_prompt_stop_reason`** — все ACP reasons проходят корректно
+6. **LLM propagation** — `NaiveAgent.start_turn/continue_turn` propagates `max_tokens`, `refusal`, `tool_use` от LLM провайдера
+7. **Integration** — `_meta` forcedStopReason для `max_turn_requests` и `refusal` через полный pipeline
+
 #### 5. Только OpenAI LLM провайдер
 
 - `llm/openai_provider.py` — полная реализация
@@ -341,7 +356,7 @@ LLM: terminal/release → cleanup
 |---|---|---|
 | 9 | Нет тестов extensibility (`_meta`, custom methods) | Не покрыто |
 | 10 | Нет тестов session/list pagination edge cases | Минимально |
-| 11 | Stop reasons `max_tokens`, `max_turn_requests`, `refusal` не тестированы | Не покрыто |
+| 11 | ~~Stop reasons `max_tokens`, `max_turn_requests`, `refusal` не тестированы~~ | ✅ Решено (2026-05-22) |
 | 12 | Tool call `locations`, `rawInput`, `rawOutput` не тестированы | Не покрыто |
 | 13 | Rate limiting для tool execution | Не реализовано |
 | 14 | SQLite storage | Не реализовано (только memory + JSON file) |
@@ -483,7 +498,7 @@ sequenceDiagram
 
 ### Компоненты клиента (Clean Architecture)
 
-### Сервер (~1,109 тестов, 69 файлов)
+### Сервер (~1,166 тестов, 71 файлов)
 
 | Область | Файлов | Тестов | Покрытие |
 |---|---|---|---|
@@ -503,13 +518,14 @@ sequenceDiagram
 | Client RPC Service | 1 | 26 | ✅ Полное |
 | Slash Commands | 2 | 35 | ✅ Полное |
 | HTTP Server | 2 | 18 | ✅ Полное |
-| Agent | 3 | 50 | ✅ Полное (start_turn/continue_turn + mapping) |
+| Agent | 3 | 56 | ✅ Полное (start_turn/continue_turn + mapping + stop_reasons) |
 | LLM Provider | 1 | 6 | ⚠️ Базовое |
 | MCP Module | 1 | 27 | ✅ Полное |
 | Content | 3 | 68 | ✅ Полное |
-| Pipeline | 1 | 18 | ✅ Полное |
+| Pipeline | 2 | 63 | ✅ Полное (+18 DirectivesStage) |
 | Global Policy | 2 | 69 | ✅ Полное |
-| Интеграционные | 10+ | ~100 | ✅ Полное |
+| Prompt Directives | 1 | 33 | ✅ Полное (новый) |
+| Интеграционные | 10+ | ~106 | ✅ Полное (+6 stop reasons) |
 
 ### Клиент (~1,030 тестов, 69 файлов)
 
@@ -536,7 +552,6 @@ sequenceDiagram
 
 - Extensibility (`_meta` propagation, custom methods)
 - Session list pagination edge cases
-- Stop reasons: `max_tokens`, `max_turn_requests`, `refusal`
 - Tool call `locations`, `rawInput`, `rawOutput`
 - MCP HTTP/SSE transports
 - stdio transport E2E (сервер + клиент через subprocess)
@@ -555,7 +570,7 @@ sequenceDiagram
 
 ~~1. **Устранить дублирование `directives.py`** — оставить один источник~~ ✅ Решено
 ~~2. **Добавить тесты extensibility** — `_meta`, custom methods~~ ✅ Решено (частично)
-3. **Добавить тесты stop reasons** — `max_tokens`, `max_turn_requests`, `refusal`
+~~3. **Добавить тесты stop reasons** — `max_tokens`, `max_turn_requests`, `refusal`~~ ✅ Решено (2026-05-22)
 4. **Добавить тесты session/list pagination edge cases** — invalid cursor, empty results
 5. **Исправить terminal output flow** — `execute_wait_for_exit` должен вызывать `terminal/output` перед `wait_for_exit` (см. ГЭП #11)
 

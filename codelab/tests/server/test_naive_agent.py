@@ -668,3 +668,158 @@ def test_to_openai_tools_format_handles_names_without_slash() -> None:
 def test_to_openai_tools_format_empty_list() -> None:
     """_to_openai_tools_format на пустом списке возвращает пустой список."""
     assert _to_openai_tools_format([]) == []
+
+
+# ============================================================================
+# Тесты propagation LLM stop_reason через NaiveAgent
+# ============================================================================
+
+
+class CapturingMockLLMProvider(MockLLMProvider):
+    """Mock LLM провайдер с настраиваемым stop_reason."""
+
+    def __init__(
+        self,
+        response: str = "Test response",
+        tool_calls: list[LLMToolCall] | None = None,
+        stop_reason: str = "end_turn",
+    ) -> None:
+        super().__init__(response=response, tool_calls=tool_calls)
+        self._stop_reason = stop_reason
+
+    async def create_completion(
+        self,
+        messages: list[LLMMessage],
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        self.last_messages = messages
+        self.last_tools = tools
+        return LLMResponse(
+            text=self.response,
+            tool_calls=self.tool_calls,
+            stop_reason=self._stop_reason,
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_turn_propagates_llm_max_tokens_stop_reason(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """start_turn propagates stop_reason='max_tokens' от LLM провайдера."""
+    llm = CapturingMockLLMProvider(response="Limit reached", stop_reason="max_tokens")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+    context = _make_context(session_state, tool_registry, "Hello")
+
+    response = await agent.start_turn(context)
+
+    assert response.stop_reason == "max_tokens"
+    assert response.text == "Limit reached"
+    assert response.tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_turn_propagates_llm_refusal_stop_reason(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """start_turn propagates stop_reason='refusal' от LLM провайдера."""
+    llm = CapturingMockLLMProvider(response="I refuse", stop_reason="refusal")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+    context = _make_context(session_state, tool_registry, "Hello")
+
+    response = await agent.start_turn(context)
+
+    assert response.stop_reason == "refusal"
+    assert response.text == "I refuse"
+
+
+@pytest.mark.asyncio
+async def test_start_turn_propagates_llm_tool_use_stop_reason(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """start_turn propagates stop_reason='tool_use' от LLM провайдера."""
+    tool_calls = [
+        LLMToolCall(
+            id="call_1",
+            name="calculator",
+            arguments={"operation": "add", "a": 1, "b": 2},
+        )
+    ]
+    llm = CapturingMockLLMProvider(response="", tool_calls=tool_calls, stop_reason="tool_use")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+    context = _make_context(session_state, tool_registry, "Calculate 1+2")
+
+    response = await agent.start_turn(context)
+
+    assert response.stop_reason == "tool_use"
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "calculator"
+
+
+@pytest.mark.asyncio
+async def test_continue_turn_propagates_llm_max_tokens_stop_reason(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """continue_turn propagates stop_reason='max_tokens' от LLM провайдера."""
+    llm = CapturingMockLLMProvider(response="Token limit", stop_reason="max_tokens")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+
+    history = [
+        LLMMessage(role="user", content="Calculate"),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                LLMToolCall(
+                    id="call_1",
+                    name="calculator",
+                    arguments={"operation": "add", "a": 1, "b": 2},
+                ),
+            ],
+        ),
+        LLMMessage(role="tool", content="3.0", tool_call_id="call_1"),
+    ]
+    continuation = _make_continuation(session_state, tool_registry, history)
+
+    response = await agent.continue_turn(continuation)
+
+    assert response.stop_reason == "max_tokens"
+    assert response.text == "Token limit"
+
+
+@pytest.mark.asyncio
+async def test_continue_turn_propagates_llm_refusal_stop_reason(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """continue_turn propagates stop_reason='refusal' от LLM провайдера."""
+    llm = CapturingMockLLMProvider(response="I won't continue", stop_reason="refusal")
+    agent = NaiveAgent(llm=llm, tools=tool_registry)
+
+    history = [
+        LLMMessage(role="user", content="Do something"),
+        LLMMessage(role="assistant", content="Ok"),
+    ]
+    continuation = _make_continuation(session_state, tool_registry, history)
+
+    response = await agent.continue_turn(continuation)
+
+    assert response.stop_reason == "refusal"
+    assert response.text == "I won't continue"
+
+
+@pytest.mark.asyncio
+async def test_start_turn_default_stop_reason_is_end_turn(
+    naive_agent: NaiveAgent,
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """По умолчанию MockLLMProvider возвращает stop_reason='end_turn'."""
+    context = _make_context(session_state, tool_registry, "Hello")
+    response = await naive_agent.start_turn(context)
+
+    assert response.stop_reason == "end_turn"

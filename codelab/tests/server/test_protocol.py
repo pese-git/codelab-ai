@@ -841,6 +841,64 @@ async def test_prompt_can_finish_with_meta_forced_stop_reason() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_can_finish_with_meta_forced_stop_reason_max_turn_requests() -> None:
+    protocol = ACPProtocol()
+    created = await protocol.handle(
+        ACPMessage.request("session/new", {"cwd": "/tmp", "mcpServers": []})
+    )
+    assert created.response is not None
+    assert isinstance(created.response.result, dict)
+    session_id = created.response.result["sessionId"]
+
+    outcome = await protocol.handle(
+        ACPMessage.request(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "plain prompt"}],
+                "_meta": {
+                    "promptDirectives": {
+                        "forcedStopReason": "max_turn_requests",
+                    }
+                },
+            },
+        )
+    )
+
+    assert outcome.response is not None
+    assert outcome.response.result == {"stopReason": "max_turn_requests"}
+
+
+@pytest.mark.asyncio
+async def test_prompt_can_finish_with_meta_forced_stop_reason_refusal() -> None:
+    protocol = ACPProtocol()
+    created = await protocol.handle(
+        ACPMessage.request("session/new", {"cwd": "/tmp", "mcpServers": []})
+    )
+    assert created.response is not None
+    assert isinstance(created.response.result, dict)
+    session_id = created.response.result["sessionId"]
+
+    outcome = await protocol.handle(
+        ACPMessage.request(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "plain prompt"}],
+                "_meta": {
+                    "promptDirectives": {
+                        "forcedStopReason": "refusal",
+                    }
+                },
+            },
+        )
+    )
+
+    assert outcome.response is not None
+    assert outcome.response.result == {"stopReason": "refusal"}
+
+
+@pytest.mark.asyncio
 async def test_session_list_returns_created_session() -> None:
     protocol = ACPProtocol()
     created = await protocol.handle(
