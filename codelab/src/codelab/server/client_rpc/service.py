@@ -445,7 +445,7 @@ class ClientRPCService:
         self,
         session_id: str,
         terminal_id: str,
-    ) -> tuple[str, bool, int | None]:
+    ) -> tuple[str, bool, int | None, str | None]:
         """Получить текущий output терминала.
 
         Args:
@@ -453,9 +453,9 @@ class ClientRPCService:
             terminal_id: ID терминального сеанса.
 
         Returns:
-            Кортеж (output, is_complete, exit_code).
-            is_complete True если команда завершена.
-            exit_code содержит код завершения (если завершена).
+            Кортеж (output, truncated, exit_code, signal).
+            truncated True если output был обрезан.
+            exit_code и signal из exitStatus (если команда завершилась).
 
         Raises:
             ClientCapabilityMissingError: Клиент не поддерживает terminal.
@@ -474,7 +474,9 @@ class ClientRPCService:
             response_model=TerminalOutputResponse,
         )
 
-        return response.output, response.is_complete, response.exit_code
+        exit_code = response.exit_status.exit_code if response.exit_status else None
+        signal = response.exit_status.signal if response.exit_status else None
+        return response.output, response.truncated, exit_code, signal
 
     async def wait_for_exit(
         self,

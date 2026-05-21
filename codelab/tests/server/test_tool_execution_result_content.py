@@ -338,8 +338,10 @@ class TestTerminalExecutorContent:
         # Arrange
         executor._bridge.terminal_output = AsyncMock(return_value={  # type: ignore
             "output": "test output",
+            "truncated": False,
             "is_complete": True,
             "exit_code": 0,
+            "signal": None,
         })
 
         # Act
@@ -362,15 +364,19 @@ class TestTerminalExecutorContent:
     ) -> None:
         """Контент wait включает exit code."""
         # Arrange
-        executor._bridge.terminal_output = AsyncMock(return_value=None)  # type: ignore
+        executor._bridge.terminal_output = AsyncMock(side_effect=[  # type: ignore
+            None,
+            {
+                "output": "output",
+                "truncated": False,
+                "is_complete": True,
+                "exit_code": 42,
+                "signal": None,
+            },
+        ])
         executor._bridge.wait_terminal_exit = AsyncMock(return_value={  # type: ignore
             "exit_code": 42,
             "signal": None,
-        })
-        executor._bridge.terminal_output = AsyncMock(return_value={  # type: ignore
-            "output": "output",
-            "is_complete": True,
-            "exit_code": 42,
         })
 
         # Act
@@ -392,15 +398,19 @@ class TestTerminalExecutorContent:
     ) -> None:
         """Контент wait включает вывод команды."""
         # Arrange
-        executor._bridge.terminal_output = AsyncMock(return_value=None)  # type: ignore
+        executor._bridge.terminal_output = AsyncMock(side_effect=[  # type: ignore
+            None,
+            {
+                "output": "Hello from terminal",
+                "truncated": False,
+                "is_complete": True,
+                "exit_code": 0,
+                "signal": None,
+            },
+        ])
         executor._bridge.wait_terminal_exit = AsyncMock(return_value={  # type: ignore
             "exit_code": 0,
             "signal": None,
-        })
-        executor._bridge.terminal_output = AsyncMock(return_value={  # type: ignore
-            "output": "Hello from terminal",
-            "is_complete": True,
-            "exit_code": 0,
         })
 
         # Act

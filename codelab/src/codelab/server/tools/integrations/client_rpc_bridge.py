@@ -300,7 +300,8 @@ class ClientRPCBridge:
             terminal_id: ID терминала.
             
         Returns:
-            Словарь {output, is_complete, exit_code} или None при ошибке.
+            Словарь {output, truncated, exit_code, signal, is_complete} или None при ошибке.
+            is_complete вычисляется из наличия exit_status.
             
         Логирует все ошибки перед возвращением None.
         """
@@ -313,10 +314,12 @@ class ClientRPCBridge:
                 },
             )
             
-            output, is_complete, exit_code = await self._service.terminal_output(
+            output, truncated, exit_code, signal = await self._service.terminal_output(
                 session_id=session.session_id,
                 terminal_id=terminal_id,
             )
+            
+            is_complete = exit_code is not None or signal is not None
             
             logger.debug(
                 "Output терминала получен",
@@ -324,14 +327,17 @@ class ClientRPCBridge:
                     "session_id": session.session_id,
                     "terminal_id": terminal_id,
                     "output_size": len(output),
+                    "truncated": truncated,
                     "is_complete": is_complete,
                 },
             )
             
             return {
                 "output": output,
+                "truncated": truncated,
                 "is_complete": is_complete,
                 "exit_code": exit_code,
+                "signal": signal,
             }
             
         except ClientCapabilityMissingError as e:

@@ -239,14 +239,15 @@ async def test_terminal_output(rpc_service: ClientRPCService, mock_send_request:
         {
             "jsonrpc": "2.0",
             "id": request["id"],
-            "result": {"output": "hello world", "isComplete": False, "exitCode": None},
+            "result": {"output": "hello world", "truncated": False},
         }
     )
 
-    output, is_complete, exit_code = await task
+    output, truncated, exit_code, signal = await task
     assert output == "hello world"
-    assert is_complete is False
+    assert truncated is False
     assert exit_code is None
+    assert signal is None
 
 
 @pytest.mark.asyncio
@@ -266,14 +267,19 @@ async def test_terminal_output_completed(
         {
             "jsonrpc": "2.0",
             "id": request["id"],
-            "result": {"output": "completed", "isComplete": True, "exitCode": 0},
+            "result": {
+                "output": "completed",
+                "truncated": False,
+                "exitStatus": {"exitCode": 0, "signal": None},
+            },
         }
     )
 
-    output, is_complete, exit_code = await task
+    output, truncated, exit_code, signal = await task
     assert output == "completed"
-    assert is_complete is True
+    assert truncated is False
     assert exit_code == 0
+    assert signal is None
 
 
 @pytest.mark.asyncio

@@ -215,6 +215,7 @@ class TerminalToolExecutor(ToolExecutor):
                 output = output_data.get("output", "")
                 is_complete = output_data.get("is_complete", False)
                 exit_code = output_data.get("exit_code")
+                signal = output_data.get("signal")
                 
                 # Если терминал уже завершён — не нужно ждать
                 if is_complete and exit_code is not None:
@@ -239,6 +240,7 @@ class TerminalToolExecutor(ToolExecutor):
                         metadata={
                             "terminal_id": terminal_id,
                             "exit_code": exit_code,
+                            "signal": signal,
                         },
                         content=content_items,
                     )
