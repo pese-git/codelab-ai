@@ -86,7 +86,13 @@ async def run_stdio_server(
 
     client_rpc_service = ClientRPCService(
         send_request_callback=send_rpc_request,
-        client_capabilities={},
+        client_capabilities={
+            "fs": {
+                "readTextFile": True,
+                "writeTextFile": True,
+            },
+            "terminal": True,
+        },
     )
 
     try:
@@ -104,9 +110,7 @@ async def run_stdio_server(
             # Запускаем цикл обработки через handle_and_process
             # чтобы фоновые задачи (pending_tool_execution) работали корректно
             async def on_message(acp_request: ACPMessage) -> Any:
-                outcome = await protocol.handle_and_process(acp_request)
-                await transport._send_outcome(outcome)
-                return outcome
+                return await protocol.handle_and_process(acp_request)
 
             await transport.run(on_message=on_message)
 
