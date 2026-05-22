@@ -91,11 +91,11 @@ class WriteTextFileRequest(BaseModel):
 class WriteTextFileResponse(BaseModel):
     """Подтверждение записи (получено от клиента).
     
-    Указывает успешность операции записи.
+    Согласно ACP spec, response не содержит полей кроме опционального _meta.
+    Наличие ответа (без ошибки) означает успешную запись.
     """
 
-    success: bool
-    """True если файл успешно записан."""
+    model_config = ConfigDict(extra="allow")
 
 
 # ===== Terminal Models =====
@@ -243,11 +243,11 @@ class TerminalKillRequest(BaseModel):
 class TerminalKillResponse(BaseModel):
     """Подтверждение прерывания команды (получено от клиента).
     
-    Указывает успешность отправки сигнала.
+    Согласно ACP spec, response не содержит полей кроме опционального _meta.
+    Наличие ответа (без ошибки) означает успешную отправку сигнала.
     """
 
-    success: bool = True
-    """True если сигнал успешно отправлен."""
+    model_config = ConfigDict(extra="allow")
 
 
 class TerminalReleaseRequest(BaseModel):
@@ -268,8 +268,8 @@ class TerminalReleaseRequest(BaseModel):
 class TerminalReleaseResponse(BaseModel):
     """Подтверждение освобождения ресурсов (получено от клиента).
     
-    Указывает успешность освобождения ресурсов.
+    Согласно ACP spec, response не содержит полей кроме опционального _meta.
+    Наличие ответа (без ошибки) означает успешное освобождение ресурсов.
     """
 
-    success: bool = True
-    """True если ресурсы успешно освобождены."""
+    model_config = ConfigDict(extra="allow")

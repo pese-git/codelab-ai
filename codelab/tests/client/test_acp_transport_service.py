@@ -289,12 +289,12 @@ class TestFsWriteTextFile:
         transport.send_str.assert_awaited_once()
         sent_payload = json.loads(transport.send_str.call_args[0][0])
         assert sent_payload["id"] == "rpc-write-1"
-        assert sent_payload["result"] == {"success": True}
+        assert sent_payload["result"] == {}
         assert written_files == [("/tmp/test.md", "# Hello")]
 
     @pytest.mark.asyncio
-    async def test_fs_write_request_returns_success_false_on_callback_failure(self) -> None:
-        """Клиент возвращает {success: false} если callback вернул False."""
+    async def test_fs_write_request_returns_empty_response_on_callback_failure(self) -> None:
+        """Клиент возвращает {} (ACP spec) даже если callback вернул False."""
         service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
         transport = service._transport  # noqa: SLF001 - test setup
@@ -324,7 +324,8 @@ class TestFsWriteTextFile:
         transport.send_str.assert_awaited_once()
         sent_payload = json.loads(transport.send_str.call_args[0][0])
         assert sent_payload["id"] == "rpc-write-2"
-        assert sent_payload["result"] == {"success": False}
+        # ACP spec: response is always {} (failure would be an error response)
+        assert sent_payload["result"] == {}
 
     @pytest.mark.asyncio
     async def test_fs_write_request_error_sends_error_response(self) -> None:
@@ -573,7 +574,8 @@ class TestAsyncCallbacks:
         transport.send_str.assert_awaited_once()
         call_args = transport.send_str.call_args[0][0]
         response = json.loads(call_args)
-        assert response["result"]["success"] is True
+        # ACP spec: empty response means success
+        assert response["result"] == {}
 
     @pytest.mark.asyncio
     async def test_async_terminal_create_callback(self) -> None:

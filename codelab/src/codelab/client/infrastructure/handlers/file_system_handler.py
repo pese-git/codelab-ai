@@ -161,7 +161,7 @@ class FileSystemHandler:
         )
 
         try:
-            success = await self.executor.write_text_file(path, content)
+            await self.executor.write_text_file(path, content)
             
             logger.info(
                 "agent_write_text_file_success",
@@ -169,7 +169,8 @@ class FileSystemHandler:
                 path=path,
                 content_size=len(content),
             )
-            return {"success": success}
+            # ACP spec: empty response means success
+            return {}
         except (OSError, ValueError) as e:
             logger.error(
                 "agent_write_text_file_error",

@@ -385,13 +385,14 @@ class ClientRPCService:
             sessionId=session_id, path=path, content=content
         )
 
-        response = await self._call_method(
+        await self._call_method(
             method="fs/write_text_file",
             params=request.model_dump(by_alias=True),
             response_model=WriteTextFileResponse,
         )
 
-        return response.success
+        # ACP spec: наличие response (без ошибки) означает успех
+        return True
 
     # ===== Terminal методы =====
 
@@ -540,13 +541,14 @@ class ClientRPCService:
             sessionId=session_id, terminalId=terminal_id, signal=signal
         )
 
-        response = await self._call_method(
+        await self._call_method(
             method="terminal/kill",
             params=request.model_dump(by_alias=True),
             response_model=TerminalKillResponse,
         )
 
-        return response.success
+        # ACP spec: наличие response (без ошибки) означает успех
+        return True
 
     async def release_terminal(
         self,
@@ -573,10 +575,11 @@ class ClientRPCService:
             sessionId=session_id, terminalId=terminal_id
         )
 
-        response = await self._call_method(
+        await self._call_method(
             method="terminal/release",
             params=request.model_dump(by_alias=True),
             response_model=TerminalReleaseResponse,
         )
 
-        return response.success
+        # ACP spec: наличие response (без ошибки) означает успех
+        return True

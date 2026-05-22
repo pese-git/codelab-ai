@@ -220,7 +220,7 @@ class TestTerminalHandlerKill:
 
         result = await handler.handle_kill(params)
 
-        assert result == {"success": True}
+        assert result == {}
         executor_mock.kill_terminal.assert_called_once_with("term_abc")
 
     async def test_handle_kill_missing_id(
@@ -269,7 +269,7 @@ class TestTerminalHandlerRelease:
 
         result = await handler.handle_release(params)
 
-        assert result == {"success": True}
+        assert result == {}
         executor_mock.release_terminal.assert_called_once_with("term_abc")
 
     async def test_handle_release_missing_id(

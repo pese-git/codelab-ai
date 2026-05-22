@@ -991,9 +991,9 @@ class ACPTransportService(TransportService):
                     "tool_lifecycle_response_sending",
                     rpc_id=notification.id,
                     rpc_method=rpc_method,
-                    result_keys=["success"],
                 )
-                response_data = {"success": success}
+                # ACP spec: empty response means success
+                response_data = {}
                 await self.send(ACPMessage.response(notification.id, response_data).to_dict())
                 self._logger.debug(
                     "tool_lifecycle_response_sent",

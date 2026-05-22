@@ -127,7 +127,7 @@ async def test_write_text_file_success(
     assert request["params"]["content"] == "new content"
 
     rpc_service.handle_response(
-        {"jsonrpc": "2.0", "id": request["id"], "result": {"success": True}}
+        {"jsonrpc": "2.0", "id": request["id"], "result": {}}
     )
 
     result = await task
@@ -352,7 +352,7 @@ async def test_kill_terminal(rpc_service: ClientRPCService, mock_send_request: A
     assert request["params"]["signal"] == "SIGKILL"
 
     rpc_service.handle_response(
-        {"jsonrpc": "2.0", "id": request["id"], "result": {"success": True}}
+        {"jsonrpc": "2.0", "id": request["id"], "result": {}}
     )
 
     result = await task
@@ -374,7 +374,7 @@ async def test_kill_terminal_default_signal(
     assert request["params"]["signal"] == "SIGTERM"
 
     rpc_service.handle_response(
-        {"jsonrpc": "2.0", "id": request["id"], "result": {"success": True}}
+        {"jsonrpc": "2.0", "id": request["id"], "result": {}}
     )
 
     result = await task
@@ -396,7 +396,7 @@ async def test_release_terminal(rpc_service: ClientRPCService, mock_send_request
     assert request["params"]["terminalId"] == "term_456"
 
     rpc_service.handle_response(
-        {"jsonrpc": "2.0", "id": request["id"], "result": {"success": True}}
+        {"jsonrpc": "2.0", "id": request["id"], "result": {}}
     )
 
     result = await task
@@ -678,7 +678,7 @@ async def test_multiple_concurrent_requests(
     ids = [req["id"] for req in mock_send_request.sent_requests]
 
     # Ответить в другом порядке
-    rpc_service.handle_response({"jsonrpc": "2.0", "id": ids[2], "result": {"success": True}})
+    rpc_service.handle_response({"jsonrpc": "2.0", "id": ids[2], "result": {}})
     result3 = await task3
     assert result3 is True
 

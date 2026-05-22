@@ -450,7 +450,7 @@ class TestPromptOrchestratorHandleClientRpcResponse:
             session,
             "sess_1",
             "fs_write",
-            {"success": True},
+            {},
             None,
         )
 
