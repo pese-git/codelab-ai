@@ -247,22 +247,21 @@ export CODELAB_LLM_API_KEY=$SECRET_KEY
 chmod 600 ~/.codelab/config/.env
 ```
 
-## Валидация конфигурации
+## Проверка конфигурации
 
-Проверка текущей конфигурации:
+Для проверки текущей конфигурации просмотрите файлы:
 
 ```bash
-codelab config show
+# Глобальная конфигурация
+cat ~/.codelab/config/.env
+
+# Локальная конфигурация
+cat .env
 ```
 
-Пример вывода:
-```
-CodeLab Configuration:
-  LLM Provider: openai
-  LLM Model: gpt-4o
-  Server: 127.0.0.1:8765
-  Log Level: INFO
-  Home: /Users/user/.codelab
+Или проверьте через переменные окружения:
+```bash
+env | grep CODELAB_
 ```
 
 ## Миграция конфигурации

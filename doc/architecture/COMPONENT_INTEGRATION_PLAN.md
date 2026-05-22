@@ -19,12 +19,12 @@
 
 | # | Компонент | SP | Коммит | Описание |
 |---|-----------|----|---------|-----------| 
-| 1 | **ToolCallList** | 3 | [`b5808d4`](https://github.com/OpenIdeaLab/acp-protocol/commit/b5808d4) | Интеграция в `ToolPanel` с ProgressBar |
-| 2 | **FileChangePreview** | 3 | [`4dba8c2`](https://github.com/OpenIdeaLab/acp-protocol/commit/4dba8c2) | [`FileChangePreviewModal`](codelab/src/codelab/client/tui/components/file_change_preview_modal.py) — модальное окно diff для файловых операций |
-| 3 | **MessageBubble** | 7 | [`7b29afb`](https://github.com/OpenIdeaLab/acp-protocol/commit/7b29afb) | Интеграция в `ChatView` — стилизованные сообщения с ролями |
-| 4 | **TerminalPanel** | 3 | [`d399baa`](https://github.com/OpenIdeaLab/acp-protocol/commit/d399baa) | Улучшенный `TerminalOutputPanel` с toolbar |
-| 5 | **PermissionRequest** | 2 | [`4116439`](https://github.com/OpenIdeaLab/acp-protocol/commit/4116439) | Альтернатива InlinePermissionWidget в [`ChatViewPermissionManager`](codelab/src/codelab/client/tui/components/chat_view_permission_manager.py) |
-| 6 | **ActionBar** | 2 | [`27582c3`](https://github.com/OpenIdeaLab/acp-protocol/commit/27582c3), [`a84d476`](https://github.com/OpenIdeaLab/acp-protocol/commit/a84d476) | [`QuickActionsBar`](codelab/src/codelab/client/tui/components/quick_actions_bar.py) с MVVM интеграцией |
+| 1 | **ToolCallList** | 3 | [`b5808d4`](https://github.com/pese-git/codelab-ai/commit/b5808d4) | Интеграция в `ToolPanel` с ProgressBar |
+| 2 | **FileChangePreview** | 3 | [`4dba8c2`](https://github.com/pese-git/codelab-ai/commit/4dba8c2) | [`FileChangePreviewModal`](codelab/src/codelab/client/tui/components/file_change_preview_modal.py) — модальное окно diff для файловых операций |
+| 3 | **MessageBubble** | 7 | [`7b29afb`](https://github.com/pese-git/codelab-ai/commit/7b29afb) | Интеграция в `ChatView` — стилизованные сообщения с ролями |
+| 4 | **TerminalPanel** | 3 | [`d399baa`](https://github.com/pese-git/codelab-ai/commit/d399baa) | Улучшенный `TerminalOutputPanel` с toolbar |
+| 5 | **PermissionRequest** | 2 | [`4116439`](https://github.com/pese-git/codelab-ai/commit/4116439) | Альтернатива InlinePermissionWidget в [`ChatViewPermissionManager`](codelab/src/codelab/client/tui/components/chat_view_permission_manager.py) |
+| 6 | **ActionBar** | 2 | [`27582c3`](https://github.com/pese-git/codelab-ai/commit/27582c3), [`a84d476`](https://github.com/pese-git/codelab-ai/commit/a84d476) | [`QuickActionsBar`](codelab/src/codelab/client/tui/components/quick_actions_bar.py) с MVVM интеграцией |
 
 ### Новые файлы P1
 
@@ -45,10 +45,10 @@
 
 | # | Компонент | SP | Коммит | Описание |
 |---|-----------|----|---------|-----------| 
-| 1 | **SearchInput** | 2 | [`c5cb16b`](https://github.com/OpenIdeaLab/acp-protocol/commit/c5cb16b) | Компонент поиска с debounce, историей, тесты (25+) |
-| 2 | **CollapsiblePanel** | 2 | [`0fc6ed8`](https://github.com/OpenIdeaLab/acp-protocol/commit/0fc6ed8) | Сворачиваемые панели, AccordionGroup alias, тесты (30) |
-| 3 | **ContextMenu** | 3 | [`4522e4e`](https://github.com/OpenIdeaLab/acp-protocol/commit/4522e4e) | Контекстное меню с методами show/hide/from_items, тесты (35) |
-| 4 | **MainLayout** | 5 | [`f66117e`](https://github.com/OpenIdeaLab/acp-protocol/commit/f66117e) | Главный layout с LayoutConfig, toggle_sidebar/panel, тесты (14) |
+| 1 | **SearchInput** | 2 | [`c5cb16b`](https://github.com/pese-git/codelab-ai/commit/c5cb16b) | Компонент поиска с debounce, историей, тесты (25+) |
+| 2 | **CollapsiblePanel** | 2 | [`0fc6ed8`](https://github.com/pese-git/codelab-ai/commit/0fc6ed8) | Сворачиваемые панели, AccordionGroup alias, тесты (30) |
+| 3 | **ContextMenu** | 3 | [`4522e4e`](https://github.com/pese-git/codelab-ai/commit/4522e4e) | Контекстное меню с методами show/hide/from_items, тесты (35) |
+| 4 | **MainLayout** | 5 | [`f66117e`](https://github.com/pese-git/codelab-ai/commit/f66117e) | Главный layout с LayoutConfig, toggle_sidebar/panel, тесты (14) |
 
 ### Новые файлы P2
 

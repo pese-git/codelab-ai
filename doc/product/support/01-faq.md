@@ -27,7 +27,7 @@ CodeLab поддерживает:
 
 ```bash
 # Клонирование репозитория
-git clone https://github.com/your-org/codelab.git
+git clone https://github.com/pese-git/codelab-ai.git
 cd codelab
 
 # Установка зависимостей
@@ -103,7 +103,23 @@ codelab serve --port 4096
 
 ## Разработка
 
-### Как запустить тесты?
+### Как интегрировать с IDE?
+
+Используйте stdio транспорт для интеграции с Zed IDE и другими редакторами:
+
+```bash
+codelab serve --stdio
+```
+
+Подробнее: [Интеграция с Zed IDE](../user-guide/10-zed-ide-integration.md)
+
+### Как подключить MCP серверы?
+
+MCP серверы указываются при создании сессии через параметр `mcpServers`. CodeLab автоматически подключится к указанным MCP серверам и добавит их инструменты.
+
+### Что такое Dishka DI?
+
+Dishka — это DI контейнер, используемый CodeLab для управления зависимостями. На сервере используются два скоупа: APP (синглтоны) и REQUEST (per-connection).
 
 ```bash
 cd codelab

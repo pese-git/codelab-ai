@@ -6,7 +6,7 @@
 
 ```bash
 # 1. Клонирование репозитория
-git clone https://github.com/your-org/acp-protocol.git
+git clone https://github.com/pese-git/codelab-ai.git
 cd acp-protocol/codelab
 
 # 2. Установка зависимостей
@@ -140,7 +140,7 @@ uv run codelab --help
 ```
 Usage: codelab [OPTIONS] COMMAND [ARGS]...
 
-  CodeLab - ACP server and client
+  CodeLab - AI-powered coding assistant
 
 Commands:
   serve    Start the ACP server
@@ -155,9 +155,8 @@ uv run codelab serve --port 8765
 
 Ожидаемый вывод:
 ```
-INFO     Server starting on 127.0.0.1:8765
-INFO     Web UI available at http://127.0.0.1:8765/
-INFO     WebSocket endpoint: ws://127.0.0.1:8765/ws
+INFO     starting_server_mode host=127.0.0.1 port=8765 enable_web=True
+INFO     endpoints_available ws_api=ws://127.0.0.1:8765/acp/ws web_ui=http://127.0.0.1:8765/
 ```
 
 ## Обновление

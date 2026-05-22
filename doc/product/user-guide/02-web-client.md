@@ -98,8 +98,17 @@ codelab serve --port 9000
 
 ```bash
 # Только WebSocket API, без Web UI
-codelab serve --disable-web
+codelab serve --no-web
 ```
+
+**Примечание:** Web UI требует установки `textual-web`:
+```bash
+pip install 'codelab[web]'
+# или
+uv sync --extra web
+```
+
+Если `textual-web` не установлен, на корневом пути `/` будет отображаться информативная страница с инструкциями по установке.
 
 ### Привязка к внешнему интерфейсу
 

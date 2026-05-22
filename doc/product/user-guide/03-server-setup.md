@@ -157,15 +157,14 @@ Mock провайдер не требует API ключа и возвращае
 
 ### Включение аутентификации
 
-```bash
-codelab serve --require-auth --auth-api-key="your-secret-key"
-```
-
-Клиент должен передать ключ при подключении:
+Установите переменную окружения `ACP_SERVER_API_KEY`:
 
 ```bash
-codelab connect --api-key="your-secret-key"
+export ACP_SERVER_API_KEY="your-secret-key"
+codelab serve
 ```
+
+Клиент должен будет предоставить API ключ при инициализации через метод `authenticate`.
 
 ## Хранение сессий
 

@@ -1,599 +1,287 @@
-# Тестирование
+# Тестирование CodeLab
 
-> Руководство по тестированию CodeLab.
+> Руководство по запуску и написанию тестов для CodeLab.
 
 ## Обзор
 
-CodeLab использует pytest для тестирования. Проект содержит ~1800 тестов, покрывающих клиент и сервер.
+CodeLab имеет ~2200 тестов, покрывающих клиентскую и серверную части, включая unit, integration и E2E тесты.
 
 ```
-codelab/tests/
-├── client/           # Тесты клиента (~1100)
+tests/
+├── client/                 # Тесты клиента (~1100)
 │   ├── domain/
 │   ├── application/
 │   ├── infrastructure/
 │   ├── presentation/
 │   └── tui/
-├── server/           # Тесты сервера (~700)
+├── server/                 # Тесты сервера (~700)
 │   ├── protocol/
 │   ├── agent/
 │   ├── tools/
 │   ├── storage/
-│   └── e2e/
-└── conftest.py       # Общие fixtures
+│   ├── mcp/
+│   └── e2e/               # E2E тесты (24)
+└── conftest.py
 ```
 
 ## Запуск тестов
 
-### Все тесты
+### Полный набор проверок
 
 ```bash
-# Через Makefile
+# Из корня репозитория
 make check
 
-# Или напрямую
+# Или вручную
 cd codelab
+uv run ruff check .
+uv run ty check
 uv run python -m pytest
 ```
 
-### Отдельные модули
+### Запуск тестов
 
 ```bash
-# Тесты клиента
-uv run python -m pytest tests/client/
+# Все тесты
+uv run python -m pytest
 
-# Тесты сервера
+# Только серверные тесты
 uv run python -m pytest tests/server/
 
-# Конкретный файл
-uv run python -m pytest tests/server/test_protocol.py
+# Только клиентские тесты
+uv run python -m pytest tests/client/
 
-# Конкретный тест
-uv run python -m pytest tests/server/test_protocol.py::TestACPProtocol::test_handle_initialize
-```
-
-### Опции pytest
-
-```bash
-# Подробный вывод
-uv run python -m pytest -v
-
-# Остановка на первой ошибке
-uv run python -m pytest -x
-
-# Параллельное выполнение
-uv run python -m pytest -n auto
-
-# С покрытием
+# Тесты с покрытием
 uv run python -m pytest --cov=codelab --cov-report=html
 
-# Только помеченные тесты
-uv run python -m pytest -m "not slow"
+# Конкретный тест
+uv run python -m pytest tests/server/test_prompt_orchestrator.py -v
+
+# Тесты по маркеру
+uv run python -m pytest -m "asyncio"
+uv run python -m pytest -m "slow"
+```
+
+### E2E тесты
+
+```bash
+# Все E2E тесты
+uv run python -m pytest tests/server/e2e/
+
+# Конкретный E2E тест
+uv run python -m pytest tests/server/e2e/test_e2e_text_content.py -v
 ```
 
 ## Структура тестов
 
-### Naming conventions
+### Unit тесты
+
+Тестируют отдельные компоненты в изоляции:
 
 ```python
-# Файлы: test_<module>.py
-# Классы: Test<Class>
-# Методы: test_<behavior>
+import pytest
+from codelab.server.protocol.handlers.state_manager import StateManager
 
-# Пример
-class TestChatViewModel:
-    def test_send_message_updates_loading_state(self): ...
-    def test_send_message_calls_use_case(self): ...
-    def test_error_is_set_on_failure(self): ...
+@pytest.mark.asyncio
+async def test_state_manager_create_turn():
+    manager = StateManager()
+    turn = manager.create_active_turn()
+    assert turn is not None
+    assert turn.tool_calls == []
 ```
+
+### Integration тесты
+
+Тестируют взаимодействие компонентов:
+
+```python
+@pytest.mark.asyncio
+async def test_session_lifecycle():
+    storage = InMemoryStorage()
+    protocol = ACPProtocol(storage=storage, ...)
+    
+    # Создание сессии
+    result = await protocol.handle(ACPMessage.request("session/new", {}))
+    session_id = result.response["result"]["sessionId"]
+    
+    # Загрузка сессии
+    result = await protocol.handle(ACPMessage.request("session/load", {"sessionId": session_id}))
+    assert result.response["result"]["sessionId"] == session_id
+```
+
+### E2E тесты
+
+Тестируют полный цикл обработки контента:
+
+```python
+@pytest.mark.asyncio
+async def test_e2e_text_content():
+    # ToolExecutor → ContentExtractor → ContentValidator → ContentFormatter
+    result = await executor.execute("fs/read_text_file", {"path": "test.txt"})
+    content = extractor.extract(result)
+    validation = validator.validate(content)
+    formatted = formatter.format_for_openai(content, "call_123")
+    
+    assert validation.is_valid
+    assert formatted["role"] == "tool"
+    assert "content" in formatted
+```
+
+## Категории тестов
+
+### Серверные тесты
+
+| Категория | Файлы | Описание |
+|-----------|-------|----------|
+| Protocol | `test_protocol.py`, `test_prompt_orchestrator.py` | Обработчики методов ACP |
+| Agent | `test_agent_orchestrator.py`, `test_naive_agent.py` | LLM агент |
+| Tools | `test_tool_registry.py`, `test_filesystem_executor.py`, `test_terminal_executor.py` | Инструменты |
+| Storage | `test_storage_memory.py`, `test_storage_json_file.py` | Хранилище сессий |
+| MCP | `test_mcp_client.py`, `test_mcp_manager.py`, `test_mcp_tool_adapter.py` | MCP интеграция (27 тестов) |
+| Content | `test_content_extraction.py`, `test_content_formatting.py`, `test_content_validator.py` | Content pipeline |
+| Permissions | `test_permission_manager.py`, `test_permission_flow.py`, `test_permission_policy_persistence.py` | Система разрешений (51 тест) |
+
+### Клиентские тесты
+
+| Категория | Файлы | Описание |
+|-----------|-------|----------|
+| Domain | `test_entities.py`, `test_events.py` | Сущности и события |
+| Application | `test_use_cases.py`, `test_session_coordinator.py` | Use Cases |
+| Infrastructure | `test_transport.py`, `test_background_receive_loop.py`, `test_event_bus.py` | Инфраструктура |
+| Presentation | `test_chat_view_model.py`, `test_observable.py` | ViewModels |
+| TUI | `test_tui_chat_view.py`, `test_tui_sidebar.py`, `test_tui_*.py` | TUI компоненты |
+| MVVM | `test_tui_*_mvvm.py` | MVVM интеграция (82 теста) |
+
+### E2E тесты (24 теста)
+
+| Файл | Тесты | Описание |
+|------|-------|----------|
+| `test_e2e_text_content.py` | 4 | Text content pipeline |
+| `test_e2e_diff_content.py` | 4 | Diff content pipeline |
+| `test_e2e_image_content.py` | 4 | Image content pipeline |
+| `test_e2e_audio_content.py` | 4 | Audio content pipeline |
+| `test_e2e_embedded_content.py` | 4 | Embedded content pipeline |
+| `test_e2e_resource_link_content.py` | 4 | Resource link content pipeline |
+
+## Фикстуры
+
+### Общие фикстуры
+
+```python
+@pytest.fixture
+def mock_llm_provider():
+    provider = MockLLMProvider()
+    provider.set_response("Hello, world!")
+    return provider
+
+@pytest.fixture
+def in_memory_storage():
+    return InMemoryStorage()
+
+@pytest.fixture
+def event_bus():
+    return EventBus()
+```
+
+### E2E фикстуры
+
+```python
+@pytest.fixture
+def content_extractor():
+    return ContentExtractor()
+
+@pytest.fixture
+def content_validator():
+    return ContentValidator()
+
+@pytest.fixture
+def content_formatter():
+    return ContentFormatter()
+```
+
+## Написание тестов
 
 ### AAA паттерн
 
 ```python
-def test_create_session(self):
-    # Arrange (подготовка)
-    storage = AsyncMock(spec=SessionStorage)
-    handler = SessionHandler(storage)
-    message = ACPMessage(method="session/new", params={"title": "Test"})
+@pytest.mark.asyncio
+async def test_example():
+    # Arrange
+    manager = StateManager()
     
-    # Act (действие)
-    outcome = await handler.handle(message)
+    # Act
+    turn = manager.create_active_turn()
     
-    # Assert (проверка)
-    assert outcome.error is None
-    assert "session_id" in outcome.response
-    storage.save.assert_called_once()
+    # Assert
+    assert turn is not None
 ```
 
-## Unit тесты
-
-### Тестирование ViewModels
+### Тестирование Observable
 
 ```python
-import pytest
-from unittest.mock import AsyncMock, Mock
-
-from codelab.client.presentation.chat_view_model import ChatViewModel
-
-
-class TestChatViewModel:
-    """Unit тесты ChatViewModel."""
+@pytest.mark.asyncio
+async def test_observable_updates():
+    vm = ChatViewModel(event_bus=EventBus(), logger=mock_logger)
+    updates = []
+    vm.messages.subscribe(updates.append)
     
-    @pytest.fixture
-    def event_bus(self) -> Mock:
-        """Mock EventBus."""
-        return Mock()
+    vm.messages.set([Message(role="user", content="Hello")])
     
-    @pytest.fixture
-    def send_prompt_use_case(self) -> AsyncMock:
-        """Mock SendPromptUseCase."""
-        return AsyncMock()
-    
-    @pytest.fixture
-    def view_model(self, event_bus, send_prompt_use_case) -> ChatViewModel:
-        """Создание тестируемого ViewModel."""
-        return ChatViewModel(
-            event_bus=event_bus,
-            send_prompt_use_case=send_prompt_use_case,
-        )
-    
-    async def test_initial_state(self, view_model):
-        """Проверка начального состояния."""
-        assert view_model.messages.get() == []
-        assert view_model.is_loading.get() is False
-        assert view_model.error.get() is None
-    
-    async def test_send_message_sets_loading(self, view_model):
-        """Проверка что send_message устанавливает is_loading."""
-        # Act
-        task = asyncio.create_task(view_model.send_message("Hello"))
-        await asyncio.sleep(0)  # Позволяем таске начаться
-        
-        # Assert
-        assert view_model.is_loading.get() is True
-        
-        await task
-        assert view_model.is_loading.get() is False
-    
-    async def test_send_message_calls_use_case(self, view_model, send_prompt_use_case):
-        """Проверка вызова use case."""
-        await view_model.send_message("Hello World")
-        
-        send_prompt_use_case.execute.assert_called_once_with("Hello World")
-    
-    async def test_send_message_handles_error(self, view_model, send_prompt_use_case):
-        """Проверка обработки ошибок."""
-        send_prompt_use_case.execute.side_effect = Exception("Network error")
-        
-        await view_model.send_message("Hello")
-        
-        assert view_model.error.get() == "Network error"
-        assert view_model.is_loading.get() is False
+    assert len(updates) == 1
+    assert updates[0][0].role == "user"
 ```
 
-### Тестирование Handlers
+### Тестирование EventBus
 
 ```python
-class TestSessionHandler:
-    """Unit тесты SessionHandler."""
+@pytest.mark.asyncio
+async def test_event_bus_publish_subscribe():
+    bus = EventBus()
+    received = []
     
-    @pytest.fixture
-    def storage(self) -> AsyncMock:
-        return AsyncMock(spec=SessionStorage)
+    bus.subscribe(SessionCreatedEvent, lambda e: received.append(e))
+    await bus.publish(SessionCreatedEvent(session_id="123"))
     
-    @pytest.fixture
-    def handler(self, storage) -> SessionHandler:
-        return SessionHandler(storage)
-    
-    async def test_new_session_creates_session(self, handler, storage):
-        """Тест создания сессии."""
-        message = ACPMessage(
-            method="session/new",
-            params={"title": "Test Session"},
-        )
-        
-        outcome = await handler.handle(message)
-        
-        assert outcome.error is None
-        assert "session_id" in outcome.response
-        assert outcome.response["title"] == "Test Session"
-        storage.save.assert_called_once()
-    
-    async def test_load_session_returns_session(self, handler, storage):
-        """Тест загрузки существующей сессии."""
-        # Arrange
-        session = SessionState(id="test-id", title="Existing")
-        storage.load.return_value = session
-        
-        message = ACPMessage(
-            method="session/load",
-            params={"session_id": "test-id"},
-        )
-        
-        # Act
-        outcome = await handler.handle(message)
-        
-        # Assert
-        assert outcome.error is None
-        assert outcome.response["session_id"] == "test-id"
-    
-    async def test_load_session_not_found(self, handler, storage):
-        """Тест загрузки несуществующей сессии."""
-        storage.load.return_value = None
-        
-        message = ACPMessage(
-            method="session/load",
-            params={"session_id": "unknown"},
-        )
-        
-        outcome = await handler.handle(message)
-        
-        assert outcome.error is not None
-        assert "not found" in str(outcome.error.message).lower()
+    assert len(received) == 1
+    assert received[0].session_id == "123"
 ```
 
-## Интеграционные тесты
-
-### Тестирование с реальным Storage
-
-```python
-class TestStorageIntegration:
-    """Интеграционные тесты хранилища."""
-    
-    @pytest.fixture
-    def temp_dir(self, tmp_path) -> Path:
-        """Временная директория для тестов."""
-        return tmp_path / "sessions"
-    
-    @pytest.fixture
-    def storage(self, temp_dir) -> JsonFileStorage:
-        """Реальное хранилище."""
-        return JsonFileStorage(temp_dir)
-    
-    async def test_save_and_load(self, storage):
-        """Тест сохранения и загрузки."""
-        session = SessionState(
-            id="test-1",
-            title="Test",
-            messages=[Message(role="user", content="Hello")],
-        )
-        
-        # Save
-        await storage.save(session)
-        
-        # Load
-        loaded = await storage.load("test-1")
-        
-        assert loaded is not None
-        assert loaded.id == session.id
-        assert loaded.title == session.title
-        assert len(loaded.messages) == 1
-    
-    async def test_list_all(self, storage):
-        """Тест получения списка сессий."""
-        # Create sessions
-        for i in range(3):
-            await storage.save(SessionState(id=f"session-{i}"))
-        
-        # List
-        sessions = await storage.list_all()
-        
-        assert len(sessions) == 3
-```
-
-### Тестирование Protocol
-
-```python
-class TestProtocolIntegration:
-    """Интеграционные тесты протокола."""
-    
-    @pytest.fixture
-    async def protocol(self) -> ACPProtocol:
-        """Создание протокола с реальными компонентами."""
-        storage = InMemoryStorage()
-        config = AppConfig()
-        
-        notifications = []
-        
-        async def send_callback(msg):
-            notifications.append(msg)
-        
-        return ACPProtocol(
-            storage=storage,
-            config=config,
-            send_callback=send_callback,
-        )
-    
-    async def test_full_session_lifecycle(self, protocol):
-        """Тест полного жизненного цикла сессии."""
-        # Initialize
-        outcome = await protocol.handle(ACPMessage(
-            method="initialize",
-            params={"client_info": {"name": "test"}},
-        ))
-        assert outcome.error is None
-        
-        # Create session
-        outcome = await protocol.handle(ACPMessage(
-            method="session/new",
-            params={"title": "Test"},
-        ))
-        assert outcome.error is None
-        session_id = outcome.response["session_id"]
-        
-        # Load session
-        outcome = await protocol.handle(ACPMessage(
-            method="session/load",
-            params={"session_id": session_id},
-        ))
-        assert outcome.error is None
-        assert outcome.response["session_id"] == session_id
-```
-
-## E2E тесты
-
-### Тестирование WebSocket
-
-```python
-class TestE2EWebSocket:
-    """E2E тесты через WebSocket."""
-    
-    @pytest.fixture
-    async def server(self):
-        """Запуск тестового сервера."""
-        server = ACPHttpServer(host="127.0.0.1", port=0)
-        task = asyncio.create_task(server.run())
-        
-        # Ждем запуска
-        await asyncio.sleep(0.1)
-        
-        yield server
-        
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    
-    @pytest.fixture
-    async def ws_client(self, server):
-        """WebSocket клиент."""
-        async with aiohttp.ClientSession() as session:
-            url = f"ws://{server.host}:{server.port}/acp/ws"
-            async with session.ws_connect(url) as ws:
-                yield ws
-    
-    async def test_initialize(self, ws_client):
-        """Тест инициализации."""
-        await ws_client.send_json({
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {"client_info": {"name": "test"}},
-            "id": 1,
-        })
-        
-        response = await ws_client.receive_json()
-        
-        assert "result" in response
-        assert response["id"] == 1
-    
-    async def test_create_and_prompt_session(self, ws_client):
-        """Тест создания сессии и отправки промпта."""
-        # Initialize
-        await ws_client.send_json({
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {},
-            "id": 1,
-        })
-        await ws_client.receive_json()
-        
-        # Create session
-        await ws_client.send_json({
-            "jsonrpc": "2.0",
-            "method": "session/new",
-            "params": {},
-            "id": 2,
-        })
-        response = await ws_client.receive_json()
-        session_id = response["result"]["session_id"]
-        
-        # Send prompt
-        await ws_client.send_json({
-            "jsonrpc": "2.0",
-            "method": "session/prompt",
-            "params": {
-                "session_id": session_id,
-                "prompt": {"text": "Hello"},
-            },
-            "id": 3,
-        })
-        
-        # Receive updates
-        updates = []
-        while True:
-            msg = await asyncio.wait_for(
-                ws_client.receive_json(),
-                timeout=5.0,
-            )
-            updates.append(msg)
-            if "result" in msg and msg.get("id") == 3:
-                break
-        
-        assert len(updates) > 0
-```
-
-## Fixtures
-
-### Общие fixtures
-
-```python
-# tests/conftest.py
-
-import pytest
-from pathlib import Path
-
-
-@pytest.fixture
-def project_root() -> Path:
-    """Корень проекта."""
-    return Path(__file__).parent.parent
-
-
-@pytest.fixture
-def test_data_dir(project_root) -> Path:
-    """Директория с тестовыми данными."""
-    return project_root / "tests" / "data"
-
-
-@pytest.fixture
-async def mock_transport() -> AsyncMock:
-    """Mock транспорта."""
-    transport = AsyncMock()
-    transport.send.return_value = None
-    return transport
-
-
-@pytest.fixture
-def sample_session() -> SessionState:
-    """Пример сессии для тестов."""
-    return SessionState(
-        id="test-session-id",
-        title="Test Session",
-        created_at=datetime.utcnow(),
-        messages=[
-            Message(role="user", content="Hello"),
-            Message(role="assistant", content="Hi there!"),
-        ],
-    )
-```
-
-### Fixtures для LLM
-
-```python
-@pytest.fixture
-def mock_llm_provider() -> AsyncMock:
-    """Mock LLM провайдера."""
-    provider = AsyncMock(spec=LLMProvider)
-    
-    async def mock_stream(*args, **kwargs):
-        yield LLMChunk(text="Hello, ")
-        yield LLMChunk(text="how can I help?")
-    
-    provider.stream.return_value = mock_stream()
-    return provider
-```
-
-## Маркеры
-
-### Определение маркеров
-
-```python
-# pytest.ini или pyproject.toml
-
-[tool.pytest.ini_options]
-markers = [
-    "slow: marks tests as slow",
-    "integration: marks tests as integration tests",
-    "e2e: marks tests as end-to-end tests",
-]
-```
-
-### Использование маркеров
-
-```python
-import pytest
-
-
-@pytest.mark.slow
-async def test_complex_operation():
-    """Медленный тест."""
-    ...
-
-
-@pytest.mark.integration
-async def test_with_real_database():
-    """Интеграционный тест."""
-    ...
-
-
-@pytest.mark.e2e
-async def test_full_user_flow():
-    """E2E тест."""
-    ...
-
-
-# Запуск без медленных тестов
-# uv run python -m pytest -m "not slow"
-```
-
-## Проверка качества
+## Качество кода
 
 ### Линтинг
 
 ```bash
-# Ruff
 uv run ruff check .
-
-# С исправлением
-uv run ruff check --fix .
+uv run ruff check --fix .  # Автоисправление
 ```
 
 ### Type checking
 
 ```bash
-# Ty (или mypy)
 uv run ty check
 ```
 
-### Полная проверка
+### Форматирование
 
 ```bash
-# Makefile
-make check
-
-# Запускает:
-# 1. ruff check
-# 2. ty check
-# 3. pytest
+uv run ruff format .
 ```
 
-## Best Practices
-
-### ✅ Рекомендуется
-
-1. **Один assert на тест** (когда возможно)
-2. **Описательные имена тестов**
-3. **AAA паттерн** (Arrange-Act-Assert)
-4. **Изоляция тестов** — тесты не должны зависеть друг от друга
-5. **Mock внешних зависимостей**
-
-### ⚠️ Избегать
-
-1. Тестов без assertions
-2. Зависимостей между тестами
-3. Реальных сетевых вызовов в unit тестах
-4. Хардкода путей и портов
-
-## Coverage
-
-### Генерация отчета
+## Покрытие кода
 
 ```bash
+# Генерация отчёта
 uv run python -m pytest --cov=codelab --cov-report=html
+
+# Открыть отчёт
 open htmlcov/index.html
 ```
 
-### Минимальное покрытие
-
-```toml
-# pyproject.toml
-[tool.coverage.report]
-fail_under = 80
-```
+**Целевое покрытие:** 85%+ для критических путей.
 
 ## См. также
 
-- [Архитектура](01-architecture.md) — структура проекта
-- [Разработка клиента](02-client-development.md)
-- [Разработка сервера](03-server-development.md)
+- [Архитектура](01-architecture.md) — общая архитектура системы
+- [Разработка клиента](02-client-development.md) — детали реализации клиента
+- [Разработка сервера](03-server-development.md) — детали реализации сервера
+- [Вклад в проект](06-contributing.md) — как внести вклад

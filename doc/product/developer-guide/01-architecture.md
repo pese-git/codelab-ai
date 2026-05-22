@@ -4,34 +4,36 @@
 
 ## Обзор
 
-CodeLab реализует клиент-серверную архитектуру на основе [Agent Client Protocol (ACP)](../../Agent%20Client%20Protocol/get-started/01-Introduction.md). Проект состоит из двух основных компонентов:
+CodeLab реализует клиент-серверную архитектуру на основе [Agent Client Protocol (ACP)](../../Agent%20Client%20Protocol/get-started/01-Introduction.md). Проект использует **Dishka DI контейнер** для управления зависимостями и следует принципам **Clean Architecture** на клиенте.
 
 ```mermaid
 graph TB
-    subgraph "Client"
-        TUI[TUI App]
-        Clean[Clean Architecture]
-        MVVM[MVVM Pattern]
+    subgraph Client["Клиент (Clean Architecture + MVVM)"]
+        TUI[TUI App<br/>45 компонентов]
+        VM[9 ViewModels]
+        UC[5 Use Cases]
+        TS[ACPTransportService]
     end
     
-    subgraph "Transport"
-        WS[WebSocket<br/>JSON-RPC 2.0]
+    subgraph Transport["Транспорт"]
+        WS[WebSocket]
+        STDIO[stdio]
     end
     
-    subgraph "Server"
-        HTTP[HTTP Server]
-        Protocol[ACP Protocol]
-        Agent[LLM Agent]
-        Storage[Storage]
+    subgraph Server["Сервер (Dishka DI)"]
+        HTTP[ACPHttpServer]
+        AP[ACPProtocol]
+        PO[PromptOrchestrator]
+        AO[AgentOrchestrator]
+        TR[ToolRegistry]
+        Storage[(SessionStorage)]
     end
     
-    TUI --> Clean
-    Clean --> MVVM
-    MVVM --> WS
-    WS --> HTTP
-    HTTP --> Protocol
-    Protocol --> Agent
-    Protocol --> Storage
+    TUI --> VM --> UC --> TS
+    TS --> WS & STDIO
+    WS & STDIO --> HTTP --> AP --> PO
+    PO --> AO --> TR
+    AP --> Storage
 ```
 
 ## Структура проекта
@@ -41,439 +43,353 @@ codelab/
 ├── src/codelab/
 │   ├── cli.py              # Единая точка входа CLI
 │   ├── shared/             # Общие модули
-│   │   ├── messages.py     # JSON-RPC сообщения
-│   │   ├── logging.py      # Структурированное логирование
+│   │   ├── messages.py     # JSON-RPC сообщения (ACPMessage, JsonRpcError)
+│   │   ├── logging.py      # Structlog конфигурация
 │   │   └── content/        # ACP Content Types
-│   ├── client/             # TUI клиент
-│   │   ├── domain/         # Domain Layer
-│   │   ├── application/    # Application Layer
-│   │   ├── infrastructure/ # Infrastructure Layer
-│   │   ├── presentation/   # Presentation Layer
-│   │   └── tui/            # TUI Layer
-│   └── server/             # ACP сервер
-│       ├── protocol/       # Протокол ACP
-│       ├── agent/          # LLM агенты
-│       ├── tools/          # Инструменты агента
+│   ├── client/             # TUI клиент (Clean Architecture)
+│   │   ├── domain/         # Entities, Repositories, Events
+│   │   ├── application/    # Use Cases, DTOs, State Machine
+│   │   ├── infrastructure/ # DI, Transport, Handlers, EventBus
+│   │   ├── presentation/   # 9 ViewModels (MVVM)
+│   │   └── tui/            # 45 Textual компонентов
+│   └── server/             # ACP сервер (Dishka DI)
+│       ├── di.py           # Dishka контейнер (APP/REQUEST scope)
+│       ├── config.py       # Pydantic конфигурация
+│       ├── http_server.py  # HTTP/WebSocket сервер
+│       ├── protocol/       # ACP протокол
+│       ├── agent/          # LLM агент
+│       ├── tools/          # Инструменты
 │       ├── storage/        # Хранилище сессий
-│       └── llm/            # LLM провайдеры
-└── tests/                  # Тесты
+│       ├── mcp/            # MCP интеграция
+│       └── client_rpc/     # Agent→Client RPC
+└── tests/                  # Тесты (~2200)
 ```
 
 ## Архитектура клиента
 
-### Clean Architecture
-
-Клиент реализует Clean Architecture с 5 слоями:
+### Clean Architecture (5 слоёв)
 
 ```mermaid
 graph TB
-    subgraph "TUI Layer"
-        Widgets[Textual Widgets]
+    subgraph TUI["TUI Layer"]
         App[ACPClientApp]
+        Components[45 компонентов]
     end
     
-    subgraph "Presentation Layer"
-        VM[ViewModels]
-        Observable[Observable State]
+    subgraph Presentation["Presentation Layer"]
+        VM[9 ViewModels]
+        Obs[Observable<T>]
     end
     
-    subgraph "Application Layer"
-        UC[Use Cases]
-        SM[State Machine]
-        DTO[DTOs]
+    subgraph Application["Application Layer"]
+        UC[5 Use Cases]
+        SM[UIStateMachine]
+        PH[PermissionHandler]
     end
     
-    subgraph "Infrastructure Layer"
-        DI[DI Container]
-        Transport[Transport]
-        EventBus[Event Bus]
-        Handlers[Handlers]
+    subgraph Infrastructure["Infrastructure Layer"]
+        DI[Dishka Container]
+        TS[ACPTransportService]
+        BgLoop[BackgroundReceiveLoop]
+        Router[MessageRouter]
+        EB[EventBus]
     end
     
-    subgraph "Domain Layer"
-        Entities[Entities]
-        Repos[Repositories]
+    subgraph Domain["Domain Layer"]
+        Entities[Session, Message]
+        Repos[Repository interfaces]
+        Events[16 Domain Events]
     end
     
-    Widgets --> VM
-    VM --> UC
-    UC --> DI
-    DI --> Transport
-    DI --> EventBus
-    Transport --> Handlers
-    UC --> Entities
-    Entities --> Repos
+    App --> Components --> VM --> Obs
+    VM --> UC --> SM --> PH
+    PH --> DI --> TS --> BgLoop --> Router --> EB
+    EB --> Entities & Repos & Events
 ```
 
-### Слои клиента
+### Domain Layer (`client/domain/`)
 
-#### Domain Layer (`client/domain/`)
+**Сущности:**
+- `Session` — ACP сессия с ID, capabilities, auth status
+- `Message` — протокольное сообщение (request/response/notification)
+- `Permission` — запрос разрешения
+- `ToolCall` — вызов инструмента агентом
 
-Базовые сущности и интерфейсы:
+**Интерфейсы:**
+- `SessionRepository(ABC)` — save, load, delete, list_all
+- `HistoryRepository(ABC)` — save_message, load_history, clear_history
+- `TransportService(ABC)` — connect, disconnect, request_with_callbacks, cancel_prompt
+- `SessionService(ABC)` — initialize, create_session, send_prompt, cancel_prompt
 
-```python
-# entities.py
-@dataclass
-class Session:
-    """Сущность сессии."""
-    id: str
-    title: str | None
-    created_at: datetime
-    messages: list[Message]
+**Domain Events (16 типов):**
+- Session: `SessionCreatedEvent`, `SessionInitializedEvent`, `SessionClosedEvent`, `SessionLoadedEvent`
+- Prompt: `PromptStartedEvent`, `PromptCompletedEvent`, `PromptCancelledEvent`
+- Permission: `PermissionRequestedEvent`, `PermissionGrantedEvent`, `PermissionDeniedEvent`
+- Error: `ErrorOccurredEvent`, `ConnectionLostEvent`, `ConnectionRestoredEvent`
+- Tool Call: `ToolCallStartedEvent`, `ToolCallCompletedEvent`, `ToolCallFailedEvent`
 
-@dataclass
-class Message:
-    """Сущность сообщения."""
-    role: Literal["user", "assistant"]
-    content: list[ContentPart]
-    timestamp: datetime
-```
+### Application Layer (`client/application/`)
 
-#### Application Layer (`client/application/`)
+**Use Cases (5):**
+- `InitializeUseCase` — подключение к серверу, отправка `initialize`
+- `CreateSessionUseCase` — создание сессии через `session/new`
+- `LoadSessionUseCase` — загрузка сессии через `session/load` с replay updates
+- `SendPromptUseCase` — отправка `session/prompt` с callbacks
+- `ListSessionsUseCase` — список сессий через `session/list`
 
-Use Cases и бизнес-логика:
+**SessionCoordinator** — оркестратор, композирующий все use cases.
 
-```python
-class SendPromptUseCase:
-    """Use case отправки промпта."""
-    
-    async def execute(self, session_id: str, text: str) -> None:
-        # Валидация
-        # Отправка через transport
-        # Обновление состояния
-```
+**PermissionHandler** — полный цикл запроса разрешений: парсинг → UI modal → ожидание → отправка ответа.
 
-#### Infrastructure Layer (`client/infrastructure/`)
+**UIStateMachine** — управление состояниями UI: `INITIALIZING`, `READY`, `PROCESSING_PROMPT`, `WAITING_PERMISSION`, `CANCELLING`, `RECONNECTING`, `ERROR`.
 
-Техническая реализация:
+### Infrastructure Layer (`client/infrastructure/`)
 
-- **DIBootstrapper** — инициализация DI контейнера
-- **Transport** — WebSocket соединение
-- **EventBus** — слабо связанная коммуникация
-- **Handlers** — обработчики fs/*, terminal/*
-- **Async Callbacks** — `_call_callback()` поддерживает sync и async функции для предотвращения deadlock в stdio режиме
+**DI Container (Dishka):**
+- `create_client_container()` — фабрика контейнера
+- `ClientProvider` — инфраструктурные сервисы (транспорт, репозитории, обработчики)
+- `ViewModelProvider` — 9 ViewModels
 
-#### Presentation Layer (`client/presentation/`)
+**Транспорт:**
+- `WebSocketTransport` — aiohttp WebSocket клиент
+- `StdioClientTransport` — запуск агента как subprocess
+- `ACPTransportService` — основной сервис транспорта с `request_with_callbacks()` и lock-free `cancel_prompt()`
 
-ViewModels для MVVM:
+**BackgroundReceiveLoop** — единый `receive()` на WebSocket для избежания race condition. Маршрутизирует сообщения через `MessageRouter` в `RoutingQueues`:
+- `response_queues` — per-request ответные очереди
+- `notification_queue` — общие уведомления (session/update, fs/*, terminal/*)
+- `permission_queue` — запросы разрешений
 
-```python
-class ChatViewModel(BaseViewModel):
-    """ViewModel для Chat View."""
-    
-    messages: Observable[list[Message]]
-    is_loading: Observable[bool]
-    
-    async def send_message(self, text: str) -> None:
-        self.is_loading.set(True)
-        await self._send_prompt_use_case.execute(text)
-```
+**EventBus** — pub/sub система для domain events с поддержкой sync/async handlers.
 
-#### TUI Layer (`client/tui/`)
+**Handlers:**
+- `FileSystemHandler` + `FileSystemExecutor` — fs/read_text_file, fs/write_text_file
+- `TerminalHandler` + `TerminalExecutor` — terminal/create, output, wait_for_exit, release, kill
 
-Textual компоненты:
+### Presentation Layer (`client/presentation/`)
 
-```python
-class ChatView(Widget):
-    """Виджет чата."""
-    
-    def compose(self) -> ComposeResult:
-        yield Static(id="messages")
-        yield PromptInput()
-    
-    def _update_streaming(self, text: str) -> None:
-        # Используем Content API для безопасного рендеринга
-        # (избегаем crash на markup-like символах в тексте LLM)
-        from textual.content import Content
-        prefix = Content.from_markup("[bold green]⟳ [/]")
-        safe_text = Content.from_text(text)
-        # prefix + safe_text — безопасное комбинирование
-```
+**MVVM паттерн с Observable состоянием:**
 
-### Диаграмма потока данных
+| ViewModel | Ответственность |
+|-----------|-----------------|
+| `UIViewModel` | Глобальное UI: connection_status, sidebar, modals, toasts |
+| `SessionViewModel` | Управление сессиями: список, создание, переключение |
+| `ChatViewModel` | Чат и prompt-turn: сообщения, streaming, tool calls, permissions |
+| `PlanViewModel` | Отображение плана агента |
+| `TerminalViewModel` | Вывод терминала |
+| `FileSystemViewModel` | Дерево файлов |
+| `FileViewerViewModel` | Просмотр файла (modal) |
+| `PermissionViewModel` | Модальное окно разрешений |
+| `TerminalLogViewModel` | Лог терминала (modal) |
 
-```mermaid
-sequenceDiagram
-    participant UI as TUI Widget
-    participant VM as ViewModel
-    participant UC as Use Case
-    participant TR as Transport
-    participant SV as Server
-    
-    UI->>VM: user_input
-    VM->>UC: execute()
-    UC->>TR: send_message()
-    TR->>SV: JSON-RPC
-    SV-->>TR: response
-    TR-->>UC: result
-    UC-->>VM: update_state()
-    VM-->>UI: notify_change()
-```
+**Observable<T>** — реактивное свойство с уведомлением об изменениях.
+**ObservableCommand** — async команда с `is_executing` и `error` observables.
+
+### TUI Layer (`client/tui/`)
+
+**45 компонентов** в `tui/components/`:
+- **Основные:** `ChatView`, `Sidebar`, `FileTree`, `PromptInput`, `ToolPanel`, `HeaderBar`, `FooterBar`
+- **Сообщения:** `MessageBubble`, `MessageList`, `StreamingText`, `ThinkingIndicator`
+- **Инструменты:** `ToolCallCard`, `ToolCallList`, `TerminalOutput`, `TerminalPanel`
+- **Разрешения:** `PermissionModal`, `PermissionBadge`, `InlinePermissionWidget`
+- **Файлы:** `FileViewer`, `FileChangePreview`, `FileChangePreviewModal`
+- **Навигация:** `CommandPalette`, `Tabs`, `CollapsiblePanel`, `ContextMenu`
+- **Утилиты:** `Toast`, `Spinner`, `Progress`, `SearchInput`, `StatusLine`, `KeyboardManager`, `MarkdownViewer`
+- **Макет:** `MainLayout` (OpenCode-style: sidebar, content, dock regions)
+
+**NavigationManager** — централизованное управление фокусом и навигацией.
+**ThemeManager** — переключение тем (dark/light).
 
 ## Архитектура сервера
 
-### Общая структура
+### Dishka DI контейнер
 
-```mermaid
-graph TB
-    subgraph "Transport Layer"
-        HTTP[ACPHttpServer]
-        WS[WebSocket Handler]
-    end
-    
-    subgraph "Protocol Layer"
-        Protocol[ACPProtocol]
-        Dispatcher[Method Dispatcher]
-    end
-    
-    subgraph "Handlers"
-        Auth[Auth Handler]
-        Session[Session Handler]
-        Prompt[Prompt Handler]
-        Perm[Permission Handler]
-    end
-    
-    subgraph "Agent Layer"
-        Orch[Agent Orchestrator]
-        LLM[LLM Provider]
-        Tools[Tool Registry]
-    end
-    
-    subgraph "Storage Layer"
-        Storage[(Session Storage)]
-        Policies[(Policy Storage)]
-    end
-    
-    HTTP --> WS
-    WS --> Protocol
-    Protocol --> Dispatcher
-    Dispatcher --> Auth
-    Dispatcher --> Session
-    Dispatcher --> Prompt
-    Dispatcher --> Perm
-    Session --> Storage
-    Prompt --> Orch
-    Orch --> LLM
-    Orch --> Tools
-    Perm --> Policies
-```
+**Скоупы:**
+- **APP scope** — синглтоны на всё время жизни сервера
+- **REQUEST scope** — на одно WebSocket соединение
+
+**Провайдеры (9):**
+
+| Провайдер | Скоуп | Создаёт |
+|-----------|-------|---------|
+| `ManagersProvider` | APP | StateManager, PlanBuilder, TurnLifecycleManager, ToolCallHandler, PermissionManager, ClientRPCHandler |
+| `SlashCommandsProvider` | APP | CommandRegistry, SlashCommandRouter |
+| `StorageProvider` | APP | GlobalPolicyStorage, GlobalPolicyManager |
+| `LLMProvider_` | APP | OpenAIProvider или MockLLMProvider |
+| `ToolsProvider` | APP | SimpleToolRegistry |
+| `AgentProvider` | APP | AgentOrchestrator |
+| `PipelineProvider` | APP | LLMLoopStage, PromptPipeline (7 стадий) |
+| `PromptOrchestratorProvider` | APP | ClientRPCServiceHolder, PromptOrchestrator |
+| `RequestProvider` | REQUEST | ACPProtocol |
+
+**Holder паттерн:** `ClientRPCServiceHolder` — мост между APP и REQUEST scope. `ClientRPCService` создаётся вручную в `handle_ws_request` и устанавливается в holder перед REQUEST scope.
 
 ### Protocol Layer (`server/protocol/`)
 
-Ядро ACP протокола:
+**ACPProtocol** — транспорт-agnostic диспетчер методов ACP. Принимает `ACPMessage`, возвращает `ProtocolOutcome`.
 
-```python
-class ACPProtocol:
-    """Главный класс протокола ACP."""
-    
-    async def handle(self, message: ACPMessage) -> ProtocolOutcome:
-        """Диспетчеризация JSON-RPC запросов."""
-        method = message.method
-        handler = self._get_handler(method)
-        return await handler.handle(message)
-```
+**Зарегистрированные методы:**
 
-### Handler Layer (`server/protocol/handlers/`)
+| Метод | Файл | Описание |
+|-------|------|----------|
+| `initialize` | `handlers/auth.py` | Инициализация, обмен capabilities |
+| `authenticate` | `handlers/auth.py` | Аутентификация |
+| `session/new` | `handlers/session.py` | Создание сессии |
+| `session/load` | `handlers/session.py` | Загрузка сессии |
+| `session/list` | `handlers/session.py` | Список сессий |
+| `session/prompt` | `handlers/prompt.py` | Обработка промпта (через PromptOrchestrator) |
+| `session/cancel` | `handlers/prompt.py` | Отмена промпта |
+| `session/request_permission_response` | `handlers/permissions.py` | Ответ на запрос разрешения |
+| `session/set_config_option` | `handlers/config.py` | Установка опции |
+| `session/set_mode` | `handlers/config.py` | Установка режима |
 
-Обработчики методов протокола:
+**PromptOrchestrator** — центральный координатор prompt-turn. Инжектирует 10+ зависимостей: StateManager, PlanBuilder, TurnLifecycleManager, ToolCallHandler, PermissionManager, ClientRPCHandler, ToolRegistry, LLMLoopStage, ClientRPCServiceHolder, GlobalPolicyManager, CommandRegistry, PromptPipeline.
 
-| Модуль | Методы |
-|--------|--------|
-| `auth.py` | `authenticate`, `initialize` |
-| `session.py` | `session/new`, `session/load`, `session/list` |
-| `prompt.py` | `session/prompt`, `session/cancel` |
-| `permissions.py` | `session/request_permission` |
-| `config.py` | `session/set_config_option`, `session/set_mode` |
+### Pipeline система (`protocol/handlers/pipeline/`)
+
+**7 стадий обработки промпта:**
+
+1. `ValidationStage` — валидация входных данных
+2. `SlashCommandStage` — обработка `/help`, `/mode`, `/status`
+3. `PlanBuildingStage` — построение плана выполнения
+4. `TurnLifecycleStage(open)` — открытие turn, отправка session/started
+5. `DirectivesStage` — обработка директив промпта, фильтрация инструментов
+6. `LLMLoopStage` — основной цикл LLM с tool calls (до 10 итераций)
+7. `TurnLifecycleStage(close)` — закрытие turn
+
+**LLMLoopStage** — главная стадия:
+- Вызов LLM через AgentOrchestrator
+- Обработка tool calls с проверкой разрешений
+- Выполнение инструментов через ToolRegistry
+- Отправка session/update уведомлений
+
+### Slash Commands (`protocol/handlers/slash_commands/`)
+
+**Встроенные команды:**
+- `/help` — список доступных команд
+- `/mode` — переключение режима сессии
+- `/status` — текущее состояние сессии
+
+**Архитектура:** CommandRegistry → SlashCommandRouter → CommandHandler
 
 ### Agent Layer (`server/agent/`)
 
-Управление LLM агентом:
+**Архитектура:** Один LLM вызов на turn; цикл tool calls живёт в `LLMLoopStage`, НЕ в агенте.
 
-```mermaid
-graph TB
-    Orch[Agent Orchestrator]
-    Agent[Naive Agent]
-    LLM[LLM Provider]
-    Tools[Tool Registry]
-    RPC[Client RPC]
-    
-    Orch --> Agent
-    Agent --> LLM
-    Agent --> Tools
-    Tools --> RPC
-```
+| Файл | Класс | Описание |
+|------|-------|----------|
+| `base.py` | `LLMAgent(ABC)` | Интерфейс: `start_turn()`, `continue_turn()`, `cancel_prompt()` |
+| `naive.py` | `NaiveAgent` | Реализация с OpenAI function calling |
+| `orchestrator.py` | `AgentOrchestrator` | Построение контекстов, фильтрация инструментов по capabilities |
+| `plan_extractor.py` | `PlanExtractor` | Извлечение плана из LLM ответа |
 
-```python
-class AgentOrchestrator:
-    """Оркестратор LLM агента."""
-    
-    async def process_prompt(self, prompt: str) -> AsyncIterator[Update]:
-        """Обработка промпта с потоковыми обновлениями."""
-        async for update in self.agent.run(prompt):
-            yield update
-```
+**Фильтрация инструментов:** `_SERVER_SIDE_TOOL_KINDS = {"think", "plan"}` — всегда доступны. Остальные (fs_read, fs_write, terminal) требуют matching client capabilities.
 
 ### Tool System (`server/tools/`)
 
-Система инструментов:
+**Компоненты:**
+- `ToolDefinition` — имя, описание, параметры, kind, requires_permission
+- `ToolExecutionResult` — success, output, error, metadata, content
+- `SimpleToolRegistry` — in-memory реестр с sync/async executors
 
-```
-tools/
-├── base.py              # Базовые классы
-├── registry.py          # Реестр инструментов
-├── mapping.py           # Маппинг имён ACP ↔ LLM
-├── definitions/         # Определения инструментов
-│   ├── filesystem.py    # fs/* инструменты
-│   └── terminal.py      # terminal/* инструменты
-├── executors/           # Исполнители
-│   ├── filesystem_executor.py
-│   └── terminal_executor.py
-└── integrations/        # Интеграции
-    ├── client_rpc_bridge.py
-    └── permission_checker.py
-```
+**Инструменты:**
 
-### ToolMapping
+| Инструмент | Kind | Requires Permission |
+|------------|------|---------------------|
+| `fs/read_text_file` | read | Да |
+| `fs/write_text_file` | edit | Да |
+| `terminal/create` | execute | Да |
+| `terminal/wait_for_exit` | read | Нет |
+| `terminal/release` | delete | Нет |
+| `terminal/kill` | execute | Нет |
+| `terminal/output` | read | Нет |
+| `update_plan` | think | Нет |
 
-Модуль `mapping.py` обеспечивает конвертацию имён инструментов между форматами:
+**ToolMapping:** `acp_name_to_llm_name()` (/ → _) и `llm_name_to_acp_name()` (_ → /) для совместимости с LLM провайдерами.
 
-```python
-# ACP → LLM: замена / на _
-acp_name_to_llm_name("fs/read_text_file")  # → "fs_read_text_file"
+### MCP Integration (`server/mcp/`)
 
-# LLM → ACP: восстановление / для известных префиксов
-llm_name_to_acp_name("fs_read_text_file")  # → "fs/read_text_file"
-```
+| Файл | Класс | Описание |
+|------|-------|----------|
+| `models.py` | Pydantic модели | MCPRequest, MCPResponse, MCPTool, MCPServerConfig |
+| `transport.py` | `StdioTransport` | Stdio subprocess для MCP |
+| `client.py` | `MCPClient` | Клиент для одного MCP-сервера |
+| `manager.py` | `MCPManager` | Управление несколькими серверами на сессию |
+| `tool_adapter.py` | `MCPToolAdapter` | Адаптация MCP инструментов к ACP |
 
-**Почему это нужно:** Некоторые LLM провайдеры (Azure через OpenRouter) не поддерживают `/` в именах функций. Паттерн: `^[a-zA-Z0-9_\.-]+$`.
-
-**Где применяется:**
-- `NaiveAgent._to_openai_tools_format()` — при отправке в LLM
-- `SimpleToolRegistry.to_llm_tools()` — при конвертации для LLM
-- `SimpleToolRegistry.execute_tool()` — при lookup в registry
-- `LLMLoopStage._process_tool_calls()` — при обработке tool calls
-```
+**Именование:** `mcp:server_id:tool_name` (namespace для избежания конфликтов).
 
 ### Storage Layer (`server/storage/`)
 
-Хранение данных:
+| Backend | Файл | Описание |
+|---------|------|----------|
+| `SessionStorage(ABC)` | `base.py` | Интерфейс: save, load, delete, list (paginated) |
+| `InMemoryStorage` | `memory.py` | Dict-based, для development |
+| `JsonFileStorage` | `json_file.py` | Один файл на сессию, async I/O |
+| `CachedSessionStorage` | `cached.py` | LRU cache (200 sessions) wrapper |
+| `GlobalPolicyStorage` | `global_policy_storage.py` | Глобальные политики разрешений |
 
-```python
-class SessionStorage(ABC):
-    """Абстрактный интерфейс хранилища."""
-    
-    @abstractmethod
-    async def save(self, session: SessionState) -> None: ...
-    
-    @abstractmethod
-    async def load(self, session_id: str) -> SessionState | None: ...
+**CLI:** `--storage memory` или `--storage json:/path`, всегда обёрнуто в `CachedSessionStorage`.
 
-class JsonFileStorage(SessionStorage):
-    """Хранение в JSON файлах."""
-    
-class InMemoryStorage(SessionStorage):
-    """In-memory хранение (development)."""
-```
-
-## Взаимодействие компонентов
+## Потоки данных
 
 ### Жизненный цикл запроса
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant HTTP as HTTP Server
-    participant Protocol
-    participant Handler
-    participant Agent
-    participant LLM
-    participant Tools
-    
-    Client->>HTTP: WebSocket connect
-    HTTP->>Protocol: handle(initialize)
-    Protocol->>Handler: AuthHandler
-    Handler-->>Client: initialized
-    
-    Client->>Protocol: session/new
-    Protocol->>Handler: SessionHandler
-    Handler-->>Client: session created
-    
-    Client->>Protocol: session/prompt
-    Protocol->>Handler: PromptHandler
-    Handler->>Agent: process_prompt
-    Agent->>LLM: generate
-    LLM-->>Agent: response + tool_calls
-    Agent->>Tools: execute
-    Tools->>Client: permission/request
-    Client-->>Tools: permission/response
-    Tools-->>Agent: result
-    Agent-->>Handler: update
-    Handler-->>Client: session/update
-```
+    participant U as User
+    participant C as Client
+    participant S as ACPProtocol
+    participant PO as PromptOrchestrator
+    participant LL as LLMLoopStage
+    participant AO as AgentOrchestrator
+    participant LLM as LLM Provider
+    participant TR as ToolRegistry
 
-### Bidirectional RPC
-
-```mermaid
-graph LR
-    subgraph "Client"
-        Handler[RPC Handler]
-        FS[FileSystem Executor]
-        Term[Terminal Executor]
-        AsyncCB[Async Callbacks\n_call_callback()]
+    U->>C: Вводит prompt
+    C->>S: session/prompt
+    S->>PO: process_prompt_turn()
+    PO->>LL: process(context)
+    
+    loop LLM Loop (до 10 итераций)
+        LL->>AO: process_prompt/continue_turn
+        AO->>LLM: create_completion(messages, tools)
+        LLM-->>AO: LLMResponse(text, tool_calls, stop_reason)
+        
+        alt stop_reason = end_turn
+            LL-->>PO: stop_reason=end_turn
+        else stop_reason = tool_use
+            loop Для каждого tool call
+                LL->>TR: execute_tool() или request_permission
+                TR-->>LL: ToolResult
+                S-->>C: session/update
+            end
+            LL->>LL: continue_turn с tool_results
+        end
     end
     
-    subgraph "Server"
-        RPC[ClientRPCService]
-        Bridge[RPC Bridge]
-    end
-    
-    RPC -->|fs/read_text_file| AsyncCB
-    RPC -->|terminal/create| AsyncCB
-    AsyncCB --> FS
-    AsyncCB --> Term
-    FS -->|response| Bridge
-    Term -->|response| Bridge
+    PO-->>S: ProtocolOutcome
+    S-->>C: session/update + result
+    C-->>U: Показывает ответ
 ```
 
-## Паттерны проектирования
+### Отмена промпта
 
-### Используемые паттерны
+`ACPTransportService.request_with_callbacks()` удерживает глобальный `asyncio.Lock` на всё время выполнения `session/prompt`. Чтобы отмена не вставала в очередь за этим локом, `cancel_prompt()` обходит `_callbacks_request_lock`:
 
-| Паттерн | Применение |
-|---------|------------|
-| **Clean Architecture** | Структура клиента |
-| **MVVM** | Presentation layer |
-| **Repository** | Domain layer |
-| **Factory** | Создание сессий, handlers |
-| **Observer** | Observable state |
-| **Command** | Use Cases |
-| **Strategy** | LLM providers |
-| **Chain of Responsibility** | Protocol handlers |
-
-### Dependency Injection
-
-```python
-class DIBootstrapper:
-    """Bootstrapper DI контейнера."""
-    
-    def bootstrap(self) -> Container:
-        container = Container()
-        
-        # Transport
-        container.register(Transport, WebSocketTransport)
-        
-        # Use Cases
-        container.register(SendPromptUseCase)
-        
-        # ViewModels
-        container.register(ChatViewModel)
-        
-        return container
 ```
+cancel_prompt(session_id) → обходит _callbacks_request_lock
+    └─ создаёт per-request response queue
+    └─ отправляет session/cancel напрямую через send()
+    └─ ждёт ответа (timeout 5 с) и очищает очередь
+```
+
+На стороне сервера `session/cancel` отменяет активный `asyncio.Task` с LLM-запросом через `AgentOrchestrator.cancel_prompt()`, что немедленно прерывает HTTP-запрос к модели (`CancelledError`).
 
 ## Дополнительные материалы
 
 - [Разработка клиента](02-client-development.md) — детали реализации клиента
 - [Разработка сервера](03-server-development.md) — детали реализации сервера
-- [Архитектура разрешений](../../architecture/CLIENT_PERMISSION_HANDLING_ARCHITECTURE.md)
-- [Архитектура Client Methods](../../architecture/CLIENT_METHODS_ARCHITECTURE.md)
+- [Обработчики протокола](04-protocol-handlers.md) — создание новых handlers
+- [Тестирование](05-testing.md) — запуск и написание тестов
+- [Вклад в проект](06-contributing.md) — как внести вклад

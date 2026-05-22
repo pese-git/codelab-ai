@@ -7,7 +7,7 @@
 ### Клонирование репозитория
 
 ```bash
-git clone https://github.com/OpenIdeaLab/acp-protocol.git
+git clone https://github.com/pese-git/codelab-ai.git
 cd acp-protocol
 ```
 
@@ -395,4 +395,17 @@ fix: исправлена утечка памяти в ChatView
 - MAJOR.MINOR.PATCH
 - Пример: 1.2.3
 
-###
+### Процесс выпуска
+
+1. Обновить `CHANGELOG.md` — перенести [Unreleased] в новую версию
+2. Обновить версию в `pyproject.toml`
+3. Создать тег: `git tag v1.2.3`
+4. Отправить тег: `git push origin v1.2.3`
+5. Создать GitHub Release с описанием изменений
+
+## См. также
+
+- [AGENTS.md](../../../AGENTS.md) — инструкции для агентных ассистентов
+- [Тестирование](05-testing.md) — запуск и написание тестов
+- [Архитектура](01-architecture.md) — общая архитектура системы
+- [CHANGELOG.md](../../../CHANGELOG.md) — история изменений

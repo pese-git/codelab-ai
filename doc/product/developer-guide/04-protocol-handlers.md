@@ -1,565 +1,416 @@
-# Создание обработчиков протокола
+# Обработчики протокола CodeLab
 
-> Руководство по созданию новых Protocol Handlers для ACP сервера.
+> Руководство по созданию и расширению обработчиков методов ACP.
 
 ## Обзор
 
-Protocol Handlers — компоненты, обрабатывающие JSON-RPC методы ACP протокола. Каждый handler отвечает за группу связанных методов.
+Обработчики протокола расположены в `server/protocol/handlers/` и вызываются через `PromptOrchestrator` — центральный координатор prompt-turn.
 
 ```mermaid
-graph LR
-    Message[JSON-RPC Message]
-    Protocol[ACPProtocol]
-    Dispatcher[Dispatcher]
-    Handler[Handler]
-    Response[Response]
-    
-    Message --> Protocol
-    Protocol --> Dispatcher
-    Dispatcher --> Handler
-    Handler --> Response
+graph TB
+    AP[ACPProtocol] --> PO[PromptOrchestrator]
+    PO --> Pipeline[PromptPipeline]
+    Pipeline --> V[ValidationStage]
+    Pipeline --> SC[SlashCommandStage]
+    Pipeline --> PB[PlanBuildingStage]
+    Pipeline --> TL1[TurnLifecycleStage]
+    Pipeline --> DS[DirectivesStage]
+    Pipeline --> LL[LLMLoopStage]
+    Pipeline --> TL2[TurnLifecycleStage]
+    PO --> SM[StateManager]
+    PO --> PM[PermissionManager]
+    PO --> TCH[ToolCallHandler]
+    PO --> CRH[ClientRPCHandler]
+    PO --> GPM[GlobalPolicyManager]
 ```
 
-## Архитектура Handlers
+## Менеджеры
 
-### Структура директории
+### StateManager
 
-```
-server/protocol/handlers/
-├── __init__.py
-├── auth.py              # authenticate, initialize
-├── session.py           # session/new, load, list
-├── prompt.py            # session/prompt, cancel
-├── permissions.py       # session/request_permission
-├── config.py            # session/set_config_option
-├── tool_call_handler.py # Обработка tool calls
-├── client_rpc_handler.py# RPC к клиенту
-```
-
-### Базовый Handler
+Управление состоянием сессии:
 
 ```python
-from abc import ABC, abstractmethod
-from codelab.server.protocol import ACPMessage, ProtocolOutcome
-
-class Handler(ABC):
-    """Базовый класс обработчика протокола."""
-    
-    @abstractmethod
-    async def handle(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обработка входящего сообщения.
-        
-        Args:
-            message: JSON-RPC сообщение
-            
-        Returns:
-            ProtocolOutcome с результатом или ошибкой
-        """
+class StateManager:
+    def create_active_turn(self) -> ActiveTurnState:
+        """Создать состояние активного turn."""
         ...
     
-    @property
-    @abstractmethod
-    def methods(self) -> list[str]:
-        """Список методов, которые обрабатывает handler."""
+    def add_tool_call(self, turn: ActiveTurnState, tool_call: ToolCallState) -> None:
+        """Добавить tool call к turn."""
+        ...
+    
+    def update_tool_call_status(self, turn: ActiveTurnState, tool_call_id: str, status: str) -> None:
+        """Обновить статус tool call."""
         ...
 ```
 
-## Создание Handler
+### PlanBuilder
 
-### Шаг 1: Определение Handler
+Построение планов выполнения:
 
 ```python
-# server/protocol/handlers/my_handler.py
-
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from codelab.server.protocol import ACPMessage, ProtocolOutcome
-from codelab.shared.messages import JsonRpcError
-
-if TYPE_CHECKING:
-    from codelab.server.storage import SessionStorage
-    from codelab.server.my_service import MyService
-
-
-class MyHandler:
-    """Обработчик кастомных методов.
+class PlanBuilder:
+    def build_plan(self, prompt: list[dict]) -> AgentPlan:
+        """Построить план из промпта."""
+        ...
     
-    Обрабатывает методы:
-    - my/action: Выполнение действия
-    - my/query: Запрос данных
-    """
+    def update_plan(self, plan: AgentPlan, updates: list[dict]) -> AgentPlan:
+        """Обновить план."""
+        ...
+```
+
+### TurnLifecycleManager
+
+Жизненный цикл prompt-turn:
+
+```python
+class TurnLifecycleManager:
+    async def open_turn(self, session: SessionState) -> list[Notification]:
+        """Открыть turn, отправить session/started."""
+        ...
     
-    def __init__(
+    async def close_turn(self, session: SessionState, stop_reason: str) -> list[Notification]:
+        """Закрыть turn, отправить session/update."""
+        ...
+    
+    async def add_event(self, session: SessionState, event: dict) -> None:
+        """Добавить событие в events_history."""
+        ...
+```
+
+### ToolCallHandler
+
+Обработка tool calls:
+
+```python
+class ToolCallHandler:
+    async def execute_tool(
         self,
-        storage: SessionStorage,
-        service: MyService,
-    ) -> None:
-        """Инициализация handler.
+        tool_id: str,
+        arguments: dict,
+        context: ToolCallContext,
+    ) -> ToolExecutionResult:
+        """Выполнить инструмент."""
+        ...
+```
+
+### PermissionManager
+
+Управление разрешениями:
+
+```python
+class PermissionManager:
+    async def check_permission(
+        self,
+        session_id: str,
+        tool_id: str,
+        arguments: dict,
+    ) -> PermissionResult:
+        """Проверить разрешение (global → session → ask)."""
+        ...
+    
+    async def allow_always(self, session_id: str, tool_id: str) -> None:
+        """Разрешить всегда."""
+        ...
+    
+    async def reject_always(self, session_id: str, tool_id: str) -> None:
+        """Запретить всегда."""
+        ...
+```
+
+### GlobalPolicyManager
+
+Глобальные политики разрешений:
+
+```python
+class GlobalPolicyManager:
+    async def initialize(self) -> None:
+        """Загрузить политики из GlobalPolicyStorage."""
+        ...
+    
+    async def get_policy(self, tool_id: str) -> PolicyAction:
+        """Получить глобальную политику."""
+        ...
+    
+    async def set_policy(self, tool_id: str, action: PolicyAction) -> None:
+        """Установить глобальную политику."""
+        ...
+```
+
+### ClientRPCHandler
+
+Обработка agent→client RPC:
+
+```python
+class ClientRPCHandler:
+    async def handle_response(self, response: ACPMessage) -> None:
+        """Обработать ответ от клиента."""
+        ...
+    
+    async def handle_permission_response(self, response: ACPMessage) -> None:
+        """Обработать ответ на запрос разрешения."""
+        ...
+```
+
+## Pipeline стадии
+
+### Базовый класс
+
+```python
+class PipelineStage(ABC):
+    @abstractmethod
+    async def execute(self, context: PipelineContext) -> StageResult:
+        """Выполнить стадию."""
+        ...
+```
+
+### ValidationStage
+
+Валидация входных данных:
+
+```python
+class ValidationStage(PipelineStage):
+    async def execute(self, context: PipelineContext) -> StageResult:
+        # Проверка session ID
+        if not context.session_id:
+            return StageResult.error("session_id is required")
         
-        Args:
-            storage: Хранилище сессий
-            service: Сервис бизнес-логики
-        """
-        self._storage = storage
-        self._service = service
+        # Проверка prompt array
+        if not context.prompt:
+            return StageResult.error("prompt is required")
+        
+        # Проверка состояния сессии (нет активного turn)
+        if context.session.has_active_turn:
+            return StageResult.error("session has active turn")
+        
+        return StageResult.continue_()
+```
+
+### SlashCommandStage
+
+Обработка slash команд:
+
+```python
+class SlashCommandStage(PipelineStage):
+    async def execute(self, context: PipelineContext) -> StageResult:
+        prompt_text = extract_text(context.prompt)
+        
+        if prompt_text.startswith("/"):
+            command = prompt_text[1:].split()[0]
+            if self._router.has_command(command):
+                result = await self._router.execute(command, context)
+                return StageResult.success(result)
+        
+        return StageResult.continue_()
+```
+
+### LLMLoopStage
+
+Главная стадия — цикл LLM с tool calls:
+
+```python
+class LLMLoopStage(PipelineStage):
+    async def execute(self, context: PipelineContext) -> StageResult:
+        for iteration in range(self._max_iterations):
+            # Вызов LLM
+            response = await self._agent_orchestrator.process_prompt(context)
+            
+            if response.stop_reason == "end_turn":
+                return StageResult.success(stop_reason="end_turn")
+            
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for tool_call in response.tool_calls:
+                    # Проверка разрешений
+                    permission = await self._permission_manager.check_permission(
+                        context.session_id, tool_call.name, tool_call.arguments
+                    )
+                    
+                    if permission == "allow":
+                        result = await self._tool_registry.execute_tool(tool_call)
+                        tool_results.append(result)
+                    elif permission == "ask":
+                        # Запрос разрешения у клиента
+                        user_decision = await self._request_permission(tool_call)
+                        if user_decision == "allow":
+                            result = await self._tool_registry.execute_tool(tool_call)
+                            tool_results.append(result)
+                        else:
+                            tool_results.append(ToolResult.failed("permission denied"))
+                    else:  # reject
+                        tool_results.append(ToolResult.failed("policy reject"))
+                
+                # Продолжение с результатами
+                context = context.with_tool_results(tool_results)
+                continue
+            
+            return StageResult.success(stop_reason=response.stop_reason)
+        
+        return StageResult.success(stop_reason="max_turn_requests")
+```
+
+## Slash Commands
+
+### Базовый класс
+
+```python
+class SlashCommandHandler(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
     
     @property
-    def methods(self) -> list[str]:
-        """Методы handler."""
-        return ["my/action", "my/query"]
+    @abstractmethod
+    def description(self) -> str: ...
     
-    async def handle(self, message: ACPMessage) -> ProtocolOutcome:
-        """Диспетчеризация по методам."""
-        method = message.method
-        
-        if method == "my/action":
-            return await self._handle_action(message)
-        elif method == "my/query":
-            return await self._handle_query(message)
-        
-        return ProtocolOutcome.error(
-            JsonRpcError.method_not_found(method)
-        )
-    
-    async def _handle_action(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обработка my/action."""
-        params = message.params or {}
-        
-        # Валидация параметров
-        session_id = params.get("session_id")
-        if not session_id:
-            return ProtocolOutcome.error(
-                JsonRpcError.invalid_params("session_id is required")
-            )
-        
-        data = params.get("data")
-        if not data:
-            return ProtocolOutcome.error(
-                JsonRpcError.invalid_params("data is required")
-            )
-        
-        # Проверка сессии
-        session = await self._storage.load(session_id)
-        if not session:
-            return ProtocolOutcome.error(
-                JsonRpcError.invalid_params(f"Session {session_id} not found")
-            )
-        
-        # Бизнес-логика
-        try:
-            result = await self._service.perform_action(session, data)
-        except ValueError as e:
-            return ProtocolOutcome.error(
-                JsonRpcError.invalid_params(str(e))
-            )
-        except Exception as e:
-            return ProtocolOutcome.error(
-                JsonRpcError.internal_error(str(e))
-            )
-        
-        # Успешный результат
-        return ProtocolOutcome.success({
-            "success": True,
-            "result": result,
-        })
-    
-    async def _handle_query(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обработка my/query."""
-        params = message.params or {}
-        
-        query = params.get("query", "")
-        
-        results = await self._service.search(query)
-        
-        return ProtocolOutcome.success({
-            "results": results,
-            "count": len(results),
-        })
+    @abstractmethod
+    async def execute(self, context: CommandContext) -> CommandResult: ...
 ```
 
-### Шаг 2: Регистрация Handler
+### Встроенные команды
 
+**StatusCommandHandler:**
 ```python
-# server/protocol/core.py
-
-class ACPProtocol:
-    """Протокол ACP с диспетчеризацией."""
+class StatusCommandHandler(SlashCommandHandler):
+    name = "status"
+    description = "Показать состояние сессии"
     
-    def _create_handlers(self) -> dict[str, Handler]:
-        """Создание и регистрация handlers."""
-        handlers = {}
-        
-        # Существующие handlers
-        auth_handler = AuthHandler(self._storage, self._config)
-        for method in auth_handler.methods:
-            handlers[method] = auth_handler
-        
-        session_handler = SessionHandler(self._storage)
-        for method in session_handler.methods:
-            handlers[method] = session_handler
-        
-        # Новый handler
-        my_handler = MyHandler(self._storage, self._service)
-        for method in my_handler.methods:
-            handlers[method] = my_handler
-        
-        return handlers
+    async def execute(self, context: CommandContext) -> CommandResult:
+        session = context.session
+        return CommandResult.success(
+            f"Session: {session.id}\n"
+            f"Mode: {session.mode}\n"
+            f"Tools: {len(session.available_tools)}"
+        )
 ```
 
-### Шаг 3: Тестирование
-
+**ModeCommandHandler:**
 ```python
-# tests/test_my_handler.py
-
-import pytest
-from unittest.mock import AsyncMock, Mock
-
-from codelab.server.protocol.handlers.my_handler import MyHandler
-from codelab.server.protocol import ACPMessage
-
-
-class TestMyHandler:
-    """Тесты MyHandler."""
+class ModeCommandHandler(SlashCommandHandler):
+    name = "mode"
+    description = "Переключить режим сессии"
     
-    @pytest.fixture
-    def storage(self) -> AsyncMock:
-        return AsyncMock()
-    
-    @pytest.fixture
-    def service(self) -> AsyncMock:
-        return AsyncMock()
-    
-    @pytest.fixture
-    def handler(self, storage, service) -> MyHandler:
-        return MyHandler(storage, service)
-    
-    async def test_handle_action_success(self, handler, storage, service):
-        """Тест успешного выполнения action."""
-        # Arrange
-        storage.load.return_value = Mock(id="session-1")
-        service.perform_action.return_value = {"id": "result-1"}
-        
-        message = ACPMessage(
-            method="my/action",
-            params={
-                "session_id": "session-1",
-                "data": {"key": "value"},
-            },
-        )
-        
-        # Act
-        outcome = await handler.handle(message)
-        
-        # Assert
-        assert outcome.error is None
-        assert outcome.response["success"] is True
-        assert outcome.response["result"]["id"] == "result-1"
-    
-    async def test_handle_action_missing_session_id(self, handler):
-        """Тест ошибки при отсутствии session_id."""
-        message = ACPMessage(
-            method="my/action",
-            params={"data": {}},
-        )
-        
-        outcome = await handler.handle(message)
-        
-        assert outcome.error is not None
-        assert "session_id is required" in str(outcome.error)
-    
-    async def test_handle_action_session_not_found(self, handler, storage):
-        """Тест ошибки при несуществующей сессии."""
-        storage.load.return_value = None
-        
-        message = ACPMessage(
-            method="my/action",
-            params={
-                "session_id": "unknown",
-                "data": {},
-            },
-        )
-        
-        outcome = await handler.handle(message)
-        
-        assert outcome.error is not None
-        assert "not found" in str(outcome.error)
+    async def execute(self, context: CommandContext) -> CommandResult:
+        mode = context.args[0] if context.args else "code"
+        context.session.mode = mode
+        return CommandResult.success(f"Mode set to: {mode}")
 ```
 
-## Работа с Notifications
+**HelpCommandHandler:**
+```python
+class HelpCommandHandler(SlashCommandHandler):
+    name = "help"
+    description = "Показать список команд"
+    
+    def __init__(self, registry: CommandRegistry):
+        self._registry = registry
+    
+    async def execute(self, context: CommandContext) -> CommandResult:
+        commands = self._registry.list_commands()
+        help_text = "\n".join(f"/{cmd.name} - {cmd.description}" for cmd in commands)
+        return CommandResult.success(help_text)
+```
 
-### Отправка notifications
+### Создание новой команды
+
+1. Создайте файл в `handlers/slash_commands/builtin/`
+2. Наследуйте `SlashCommandHandler`
+3. Зарегистрируйте в `SlashCommandsProvider`:
 
 ```python
-async def _handle_long_action(self, message: ACPMessage) -> ProtocolOutcome:
-    """Обработка с промежуточными notifications."""
-    params = message.params or {}
-    session_id = params["session_id"]
+class MyCommandHandler(SlashCommandHandler):
+    @property
+    def name(self) -> str:
+        return "mycommand"
     
-    notifications = []
+    @property
+    def description(self) -> str:
+        return "Моя команда"
     
-    # Этап 1
-    notifications.append({
-        "jsonrpc": "2.0",
-        "method": "session/update",
-        "params": {
-            "session_id": session_id,
-            "updates": [{"type": "progress", "value": 0.3}],
+    async def execute(self, context: CommandContext) -> CommandResult:
+        return CommandResult.success("Выполнено!")
+
+# В SlashCommandsProvider.get_command_registry():
+registry.register(MyCommandHandler())
+```
+
+## Уведомления
+
+### Типы уведомлений
+
+| Тип | Описание |
+|-----|----------|
+| `session/started` | Turn начат |
+| `session/update` | Обновление состояния |
+| `agent_message_chunk` | Часть ответа агента |
+| `user_message_chunk` | Часть сообщения пользователя |
+| `tool_call` | Вызов инструмента |
+| `tool_call_result` | Результат инструмента |
+| `tool_call_update` | Обновление статуса инструмента |
+| `plan` | План агента |
+
+### Отправка уведомлений
+
+```python
+# В PromptOrchestrator
+notifications = self._turn_lifecycle_manager.open_turn(session)
+for notification in notifications:
+    yield notification
+
+# В LLMLoopStage
+yield Notification(
+    method="session/update",
+    params={
+        "sessionId": session_id,
+        "update": {
+            "type": "tool_call",
+            "toolCall": tool_call.dict(),
         },
-    })
-    
-    # Выполнение работы
-    result = await self._service.process()
-    
-    # Этап 2
-    notifications.append({
-        "jsonrpc": "2.0",
-        "method": "session/update",
-        "params": {
-            "session_id": session_id,
-            "updates": [{"type": "progress", "value": 1.0}],
-        },
-    })
-    
-    return ProtocolOutcome.with_notifications(
-        result={"completed": True},
-        notifications=notifications,
-    )
+    },
+)
 ```
 
 ## Обработка ошибок
 
-### Типы ошибок JSON-RPC
+### Иерархия исключений
 
-```python
-from codelab.shared.messages import JsonRpcError
-
-# Метод не найден
-JsonRpcError.method_not_found("unknown/method")
-
-# Неверные параметры
-JsonRpcError.invalid_params("session_id is required")
-
-# Внутренняя ошибка
-JsonRpcError.internal_error("Database connection failed")
-
-# Кастомная ошибка
-JsonRpcError(
-    code=-32001,
-    message="Custom error",
-    data={"details": "Additional info"},
-)
+```
+ACPError
+├── ValidationError
+├── AuthenticationError
+├── AuthorizationError
+├── PermissionDeniedError
+├── StorageError
+│   ├── SessionNotFoundError
+│   └── SessionAlreadyExistsError
+├── AgentProcessingError
+├── ToolExecutionError
+├── ProtocolError
+└── InvalidStateError
 ```
 
-### Обработка исключений
+### Пример обработки
 
 ```python
-async def _handle_action(self, message: ACPMessage) -> ProtocolOutcome:
-    """Обработка с правильной обработкой ошибок."""
+async def handle_session_new(self, message: ACPMessage) -> ProtocolOutcome:
     try:
-        # Валидация
-        params = self._validate_params(message.params)
-        
-        # Выполнение
-        result = await self._service.execute(params)
-        
-        return ProtocolOutcome.success(result)
-    
+        session = await self._storage.create_session(...)
+        return ProtocolOutcome.success(session.dict())
+    except SessionAlreadyExistsError:
+        return ProtocolOutcome.error(
+            code=-32600,
+            message="Session already exists",
+        )
     except ValidationError as e:
-        # Ошибка валидации — invalid_params
         return ProtocolOutcome.error(
-            JsonRpcError.invalid_params(str(e))
-        )
-    
-    except NotFoundError as e:
-        # Не найдено — кастомный код
-        return ProtocolOutcome.error(
-            JsonRpcError(code=-32002, message=str(e))
-        )
-    
-    except PermissionError as e:
-        # Нет доступа
-        return ProtocolOutcome.error(
-            JsonRpcError(code=-32003, message="Permission denied")
-        )
-    
-    except Exception as e:
-        # Неожиданная ошибка
-        logger.exception("Unexpected error in handler")
-        return ProtocolOutcome.error(
-            JsonRpcError.internal_error("Internal server error")
+            code=-32602,
+            message=f"Invalid params: {e}",
         )
 ```
-
-## Паттерны
-
-### Валидация параметров
-
-```python
-from dataclasses import dataclass
-from typing import TypedDict
-
-
-class ActionParams(TypedDict):
-    """Типизированные параметры my/action."""
-    session_id: str
-    data: dict
-    options: dict | None
-
-
-@dataclass
-class ValidatedParams:
-    """Валидированные параметры."""
-    session_id: str
-    data: dict
-    options: dict
-
-
-def validate_action_params(params: dict | None) -> ValidatedParams:
-    """Валидация параметров action.
-    
-    Raises:
-        ValidationError: При неверных параметрах
-    """
-    if not params:
-        raise ValidationError("params is required")
-    
-    session_id = params.get("session_id")
-    if not session_id or not isinstance(session_id, str):
-        raise ValidationError("session_id must be a non-empty string")
-    
-    data = params.get("data")
-    if not isinstance(data, dict):
-        raise ValidationError("data must be an object")
-    
-    options = params.get("options", {})
-    if not isinstance(options, dict):
-        raise ValidationError("options must be an object")
-    
-    return ValidatedParams(
-        session_id=session_id,
-        data=data,
-        options=options,
-    )
-```
-
-### Проверка состояния сессии
-
-```python
-async def _require_session(
-    self,
-    session_id: str,
-    *,
-    require_active: bool = False,
-) -> SessionState:
-    """Получение сессии с проверками.
-    
-    Args:
-        session_id: ID сессии
-        require_active: Требовать активную сессию
-        
-    Returns:
-        SessionState
-        
-    Raises:
-        SessionNotFoundError: Сессия не найдена
-        SessionNotActiveError: Сессия не активна
-    """
-    session = await self._storage.load(session_id)
-    
-    if not session:
-        raise SessionNotFoundError(session_id)
-    
-    if require_active and not session.is_active:
-        raise SessionNotActiveError(session_id)
-    
-    return session
-```
-
-### Асинхронная обработка
-
-```python
-async def _handle_prompt(self, message: ACPMessage) -> ProtocolOutcome:
-    """Обработка prompt с асинхронной генерацией."""
-    params = message.params or {}
-    session_id = params["session_id"]
-    
-    # Запуск фоновой задачи
-    task = asyncio.create_task(
-        self._process_prompt_async(session_id, params)
-    )
-    
-    # Сохранение для возможной отмены
-    self._running_tasks[session_id] = task
-    
-    # Немедленный ответ
-    return ProtocolOutcome.success({
-        "status": "processing",
-        "session_id": session_id,
-    })
-
-async def _process_prompt_async(
-    self,
-    session_id: str,
-    params: dict,
-) -> None:
-    """Асинхронная обработка prompt."""
-    try:
-        async for update in self._agent.process(params):
-            # Отправка notification
-            await self._send_notification({
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {
-                    "session_id": session_id,
-                    "updates": [update.to_dict()],
-                },
-            })
-    finally:
-        # Очистка
-        self._running_tasks.pop(session_id, None)
-```
-
-## Логирование
-
-```python
-import structlog
-
-logger = structlog.get_logger(__name__)
-
-
-class MyHandler:
-    async def handle(self, message: ACPMessage) -> ProtocolOutcome:
-        log = logger.bind(
-            method=message.method,
-            message_id=message.id,
-        )
-        
-        log.debug("Handling message")
-        
-        try:
-            result = await self._process(message)
-            log.info("Message handled successfully")
-            return result
-        except Exception as e:
-            log.error("Error handling message", error=str(e))
-            raise
-```
-
-## Checklist создания Handler
-
-- [ ] Определить методы, которые будет обрабатывать handler
-- [ ] Создать класс handler с зависимостями
-- [ ] Реализовать метод `handle()` с диспетчеризацией
-- [ ] Добавить валидацию параметров
-- [ ] Обработать все возможные ошибки
-- [ ] Написать unit тесты
-- [ ] Зарегистрировать handler в `ACPProtocol`
-- [ ] Добавить документацию
 
 ## См. также
 
-- [Разработка сервера](03-server-development.md) — общая архитектура сервера
-- [Тестирование](05-testing.md) — руководство по тестированию
-- [ACP Protocol Specification](../../Agent%20Client%20Protocol/protocol/01-Overview.md) — спецификация протокола
+- [Архитектура](01-architecture.md) — общая архитектура системы
+- [Разработка сервера](03-server-development.md) — детали реализации сервера
+- [Тестирование](05-testing.md) — запуск и написание тестов

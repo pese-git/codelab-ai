@@ -49,11 +49,11 @@ uv pip install -e ".[web]"
 # Установка из ветки develop
 pipx install "git+https://github.com/pese-git/codelab-ai.git@develop#subdirectory=codelab"
 
-# Или установка из ветки master (по умолчанию)
+# Или установка из ветки main (по умолчанию)
 pipx install "git+https://github.com/pese-git/codelab-ai.git#subdirectory=codelab"
 ```
 
-> **Примечание:** Параметр `@develop` (или любое другое имя ветки/тега) — необязательный. Если не указан, будет использована ветка по умолчанию (`master`).
+> **Примечание:** Параметр `@develop` (или любое другое имя ветки/тега) — необязательный. Если не указан, будет использована ветка по умолчанию (`main`).
 
 После установки команда `codelab` будет доступна глобально.
 
@@ -377,6 +377,69 @@ cancel_prompt(session_id) → обходит _callbacks_request_lock
 `ACPTransportService` переопределяет этот метод с lock-free реализацией. Базовый класс `TransportService` содержит fallback через `request_with_callbacks` для совместимости с другими реализациями транспорта.
 
 На стороне сервера `session/cancel` отменяет активный `asyncio.Task` с LLM-запросом через `AgentOrchestrator.cancel_prompt()`, что немедленно прерывает HTTP-запрос к модели (`CancelledError`).
+
+## MCP интеграция
+
+CodeLab поддерживает Model Context Protocol (MCP) для подключения внешних инструментов:
+
+```mermaid
+graph LR
+    subgraph MCP["MCP Layer"]
+        MM[MCPManager]
+        MC[MCPClient]
+        MT[MCPToolAdapter]
+    end
+    
+    subgraph Tools["ToolRegistry"]
+        TR[SimpleToolRegistry]
+    end
+    
+    MM --> MC
+    MC --> MT
+    MT --> TR
+```
+
+**Компоненты:**
+- `MCPManager` — управление несколькими MCP-серверами на сессию
+- `MCPClient` — клиент для одного MCP-сервера с state machine
+- `MCPToolAdapter` — адаптация MCP инструментов к ACP ToolDefinition
+- `StdioTransport` — запуск MCP-серверов через stdio subprocess
+
+**Использование:**
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
+    }
+  }
+}
+```
+
+**Именование:** MCP инструменты получают namespace `mcp:server_id:tool_name`.
+
+## Content Types
+
+CodeLab поддерживает все типы контента ACP:
+
+| Тип | Описание | MIME типы |
+|-----|----------|-----------|
+| `text` | Текстовые сообщения | `text/plain` |
+| `diff` | Дифф изменений | `text/x-diff` |
+| `image` | Изображения | `image/png`, `image/jpeg`, `image/gif`, `image/webp` |
+| `audio` | Аудиоданные | `audio/wav`, `audio/mpeg` |
+| `embedded` | Встроенные ресурсы | Ссылки на ресурсы |
+| `resource_link` | Ссылки на ресурсы | URI |
+
+**Pipeline обработки:**
+```
+ToolExecutor → ContentExtractor → ContentValidator → ContentFormatter → LLM
+```
+
+- `ContentExtractor` — извлечение content из tool results
+- `ContentValidator` — валидация согласно ACP спецификации
+- `ContentFormatter` — форматирование в LLM-специфичные форматы (OpenAI/Anthropic)
 
 ## Разработка
 

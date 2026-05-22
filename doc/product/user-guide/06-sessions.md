@@ -211,20 +211,19 @@ rm ~/.codelab/data/sessions/SESSION_ID.json
 
 ## Экспорт/Импорт
 
-### Экспорт сессии
+Сессии хранятся в `~/.codelab/data/sessions/` в формате JSON. Для резервного копирования:
 
 ```bash
-# В JSON
-codelab session export SESSION_ID > session.json
+# Резервное копирование
+cp -r ~/.codelab/data/sessions/ /backup/sessions/
 
-# В Markdown (история чата)
-codelab session export SESSION_ID --format md > chat.md
+# Восстановление
+cp -r /backup/sessions/* ~/.codelab/data/sessions/
 ```
 
-### Импорт сессии
-
+Для просмотра содержимого сессии:
 ```bash
-codelab session import session.json
+cat ~/.codelab/data/sessions/SESSION_ID.json | python -m json.tool
 ```
 
 ## Поиск по сессиям

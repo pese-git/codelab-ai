@@ -110,9 +110,11 @@ graph LR
 
 | Операция | Описание |
 |----------|----------|
-| `execute_command` | Запуск команды |
-| `wait_for_exit` | Ожидание завершения |
-| `release` | Освобождение терминала |
+| `terminal/create` | Создание терминала и выполнение команды |
+| `terminal/output` | Получение текущего вывода |
+| `terminal/wait_for_exit` | Ожидание завершения процесса |
+| `terminal/kill` | Принудительное завершение процесса |
+| `terminal/release` | Освобождение ресурсов терминала |
 
 ### Выполнение команд
 
@@ -120,7 +122,7 @@ graph LR
 
 ```json
 {
-  "tool": "execute_command",
+  "tool": "terminal/create",
   "params": {
     "command": "python",
     "args": ["-m", "pytest", "tests/"],
@@ -140,7 +142,7 @@ graph LR
 **Отображение в UI:**
 
 ```
-🖥️ execute_command: python -m pytest tests/
+🖥️ terminal/create: python -m pytest tests/
    Working directory: /project
    ─────────────────────────
    ===== test session starts =====
@@ -151,14 +153,55 @@ graph LR
    ===== 42 passed in 1.23s =====
 ```
 
+### Получение вывода (terminal/output)
+
+Для получения текущего вывода терминала:
+
+```json
+{
+  "tool": "terminal/output",
+  "params": {
+    "terminal_id": "term-123"
+  }
+}
+```
+
+**Ответ:**
+```json
+{
+  "output": "Building...\nDone!",
+  "truncated": false,
+  "exitStatus": {"exitCode": 0, "signal": null}
+}
+```
+
 ### Ожидание завершения
 
 ```json
 {
-  "tool": "wait_for_exit",
+  "tool": "terminal/wait_for_exit",
+  "params": {
+    "terminal_id": "term-123"
+  }
+}
+```
+
+**Ответ (только exitCode и signal):**
+```json
+{
+  "exitCode": 0,
+  "signal": null
+}
+```
+
+### Принудительное завершение (terminal/kill)
+
+```json
+{
+  "tool": "terminal/kill",
   "params": {
     "terminal_id": "term-123",
-    "timeout": 30
+    "signal": "SIGTERM"
   }
 }
 ```
@@ -167,12 +210,23 @@ graph LR
 
 ```json
 {
-  "tool": "release",
+  "tool": "terminal/release",
   "params": {
     "terminal_id": "term-123"
   }
 }
 ```
+
+### Terminal Output Flow
+
+По спецификации ACP `terminal/wait_for_exit` возвращает только `exitCode` и `signal` — без output. Для получения output используется отдельный метод `terminal/output`:
+
+1. `terminal/output(terminal_id)` → output + is_complete + exit_code
+2. Если `is_complete=True`: возвращаем результат
+3. Если `is_complete=False`:
+   - `terminal/wait_for_exit(terminal_id)` → exit_code + signal
+   - `terminal/output(terminal_id)` → финальный output
+   - Возвращаем output + exit_code + signal
 
 ## Tool Panel
 
