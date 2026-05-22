@@ -109,8 +109,8 @@
 
 ## 16. Module Exports
 
-- [ ] 16.1 Обновить `server/llm/__init__.py` — экспорты всех новых модулей
-- [ ] 16.2 Обновить `server/llm/providers/__init__.py` — экспорты всех провайдеров
+- [x] 16.1 Обновить `server/llm/__init__.py` — экспорты всех новых модулей
+- [x] 16.2 Обновить `server/llm/providers/__init__.py` — экспорты всех провайдеров
 
 ## 17. Integration Tests
 
