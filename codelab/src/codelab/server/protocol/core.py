@@ -35,7 +35,9 @@ from .state import (
 if TYPE_CHECKING:
     from ..agent.orchestrator import AgentOrchestrator
     from ..client_rpc.service import ClientRPCService
+    from ..llm.registry import LLMProviderRegistry
     from ..tools.base import ToolRegistry
+    from .handlers.config_option_builder import ConfigOptionBuilder
     from .handlers.global_policy_manager import GlobalPolicyManager
     from .handlers.prompt_orchestrator import PromptOrchestrator
 
@@ -85,6 +87,8 @@ class ACPProtocol:
         global_policy_manager: GlobalPolicyManager | None = None,
         middleware: list[MiddlewareFn] | None = None,
         send_callback: Callable[[ACPMessage], Awaitable[None]] | None = None,
+        llm_registry: LLMProviderRegistry | None = None,
+        config_option_builder: ConfigOptionBuilder | None = None,
     ) -> None:
         """Инициализирует протокол и хранилище сессий.
 
@@ -99,6 +103,8 @@ class ACPProtocol:
             global_policy_manager: Менеджер глобальных политик разрешений (опционально).
             middleware: Список middleware функций для сквозной логики (опционально).
             send_callback: Callback для отправки сообщений транспортом (опционально).
+            llm_registry: Реестр LLM провайдеров для dynamic config options (опционально).
+            config_option_builder: Билдер config options из Registry (опционально).
 
         Пример использования:
             protocol = ACPProtocol()
@@ -175,37 +181,13 @@ class ACPProtocol:
         # Callback для отправки сообщений транспортом (используется фоновыми задачами)
         self._send_callback: Callable[[ACPMessage], Awaitable[None]] | None = send_callback
 
-    _config_specs: dict[str, dict[str, Any]] = {
-        "mode": {
-            "name": "Session Mode",
-            "category": "mode",
-            "default": "ask",
-            "options": [
-                {
-                    "value": "ask",
-                    "name": "Ask",
-                    "description": "Request permission before sensitive actions",
-                },
-                {
-                    "value": "code",
-                    "name": "Code",
-                    "description": "Execute actions without per-step approval",
-                },
-            ],
-        },
-        "model": {
-            "name": "Model",
-            "category": "model",
-            "default": "baseline",
-            "options": [
-                {
-                    "value": "baseline",
-                    "name": "Baseline",
-                    "description": "Balanced speed and quality",
-                }
-            ],
-        },
-    }
+        # LLM Registry и ConfigOptionBuilder для dynamic config options
+        self._llm_registry = llm_registry
+        self._config_option_builder = config_option_builder
+
+        # Config specs — строятся динамически из Registry если доступен
+        self._config_specs: dict[str, dict[str, Any]] = self._build_config_specs()
+
     _supported_protocol_versions = (1,)
     _supported_stop_reasons = {
         "end_turn",
@@ -228,6 +210,55 @@ class ACPProtocol:
     }
     # Размер страницы для `session/list`; cursor указывает смещение в этом срезе.
     _session_list_page_size = 50
+
+    # Default config specs (используются если Registry не доступен)
+    _default_config_specs: dict[str, dict[str, Any]] = {
+        "mode": {
+            "name": "Session Mode",
+            "category": "mode",
+            "default": "ask",
+            "options": [
+                {
+                    "value": "ask",
+                    "name": "Ask",
+                    "description": "Request permission before sensitive actions",
+                },
+                {
+                    "value": "code",
+                    "name": "Code",
+                    "description": "Execute actions without per-step approval",
+                },
+            ],
+        },
+        "model": {
+            "name": "Model",
+            "category": "model",
+            "default": "openai/gpt-4o",
+            "options": [
+                {
+                    "value": "openai/gpt-4o",
+                    "name": "GPT-4o",
+                    "description": "Balanced speed and quality",
+                }
+            ],
+        },
+    }
+
+    def _build_config_specs(self) -> dict[str, dict[str, Any]]:
+        """Построить config specs из Registry или использовать defaults.
+
+        Returns:
+            Dict config_id -> spec
+        """
+        if self._config_option_builder:
+            additional_specs = {
+                "mode": self._default_config_specs["mode"],
+            }
+            return self._config_option_builder.build_config_specs(
+                default_model="openai/gpt-4o",
+                additional_specs=additional_specs,
+            )
+        return dict(self._default_config_specs)
 
     async def handle(self, message: ACPMessage) -> ProtocolOutcome:
         """Маршрутизирует входящее сообщение по методу через реестр обработчиков.

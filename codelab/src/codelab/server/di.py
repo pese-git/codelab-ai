@@ -28,6 +28,8 @@ from .agent.state import OrchestratorConfig
 from .config import AppConfig
 from .llm import LLMProvider, MockLLMProvider, OpenAIProvider
 from .llm.base import LLMConfig
+from .llm.registry import LLMProviderRegistry
+from .protocol.handlers.config_option_builder import ConfigOptionBuilder
 from .protocol.core import ACPProtocol
 from .protocol.handlers.client_rpc_handler import ClientRPCHandler
 from .protocol.handlers.global_policy_manager import GlobalPolicyManager
@@ -290,6 +292,29 @@ class PromptOrchestratorProvider(Provider):
         )
 
 
+class RegistryProvider(Provider):
+    """Провайдер LLM Registry и ConfigOptionBuilder (APP scope)."""
+
+    @provide(scope=Scope.APP)
+    def get_llm_registry(self) -> LLMProviderRegistry:
+        """Создаёт реестр провайдеров."""
+        registry = LLMProviderRegistry()
+
+        # Зарегистрировать все доступные провайдеры
+        registry.register("openai", lambda: OpenAIProvider())
+        registry.register("mock", lambda: MockLLMProvider())
+
+        return registry
+
+    @provide(scope=Scope.APP)
+    def get_config_option_builder(
+        self,
+        registry: LLMProviderRegistry,
+    ) -> ConfigOptionBuilder:
+        """Создаёт билдер config options."""
+        return ConfigOptionBuilder(registry)
+
+
 class RequestProvider(Provider):
     """Провайдер REQUEST-scoped зависимостей (на WebSocket соединение)."""
 
@@ -303,6 +328,8 @@ class RequestProvider(Provider):
         tool_registry: ToolRegistryProtocol,
         prompt_orchestrator: PromptOrchestrator,
         holder: ClientRPCServiceHolder,
+        registry: LLMProviderRegistry,
+        config_option_builder: ConfigOptionBuilder,
     ) -> ACPProtocol:
         """Создаёт ACPProtocol для текущего соединения."""
         # ClientRPCService создаётся вручную в handle_ws_request (требует runtime callback)
@@ -317,6 +344,8 @@ class RequestProvider(Provider):
             client_rpc_service=client_rpc_service,
             tool_registry=tool_registry,
             prompt_orchestrator=prompt_orchestrator,
+            llm_registry=registry,
+            config_option_builder=config_option_builder,
         )
 
 
@@ -343,6 +372,7 @@ def make_container(
         SlashCommandsProvider(),
         StorageProvider(),
         LLMProvider_(),
+        RegistryProvider(),
         ToolsProvider(),
         AgentProvider(),
         PipelineProvider(),

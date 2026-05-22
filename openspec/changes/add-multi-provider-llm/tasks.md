@@ -84,11 +84,11 @@
 
 ## 12. ConfigOptions и Model Switching
 
-- [ ] 12.1 Создать `server/protocol/handlers/config_option_builder.py` — ConfigOptionBuilder.build_model_config_option()
-- [ ] 12.2 Обновить `server/protocol/handlers/session.py` — генерация configOptions из Registry
-- [ ] 12.3 Обновить `server/protocol/handlers/config.py` — handle_set_config_option для configId="model"
-- [ ] 12.4 Тесты для configOption builder — model list generation, pricing description
-- [ ] 12.5 Тесты для model switching — set_config_option, notification, invalid value
+- [x] 12.1 Создать `server/protocol/handlers/config_option_builder.py` — ConfigOptionBuilder.build_model_config_option()
+- [x] 12.2 Обновить `server/protocol/handlers/session.py` — генерация configOptions из Registry
+- [x] 12.3 Обновить `server/protocol/handlers/config.py` — handle_set_config_option для configId="model"
+- [x] 12.4 Тесты для configOption builder — model list generation, pricing description
+- [x] 12.5 Тесты для model switching — set_config_option, notification, invalid value
 
 ## 13. Orchestrator Integration
 
