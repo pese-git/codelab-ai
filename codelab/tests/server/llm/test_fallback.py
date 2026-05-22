@@ -45,7 +45,8 @@ def _make_mock_provider(
 class TestSequentialFallback:
     """Тесты для SequentialFallback."""
 
-    def test_select_provider_order(self) -> None:
+    @pytest.mark.asyncio
+    async def test_select_provider_order(self) -> None:
         """Проверить порядок выбора провайдеров."""
         fallback = SequentialFallback(provider_order=["openai", "anthropic", "ollama"])
         candidates = [
@@ -55,14 +56,11 @@ class TestSequentialFallback:
         ]
         context = FallbackContext()
 
-        import asyncio
-
-        provider = asyncio.get_event_loop().run_until_complete(
-            fallback.select_provider(candidates, {}, context)
-        )
+        provider = await fallback.select_provider(candidates, {}, context)
         assert provider.name == "openai"
 
-    def test_select_provider_skips_failed(self) -> None:
+    @pytest.mark.asyncio
+    async def test_select_provider_skips_failed(self) -> None:
         """Проверить пропуск.failed провайдеров."""
         fallback = SequentialFallback(provider_order=["openai", "anthropic"])
         fallback._failed_providers.add("openai")
@@ -73,11 +71,7 @@ class TestSequentialFallback:
         ]
         context = FallbackContext()
 
-        import asyncio
-
-        provider = asyncio.get_event_loop().run_until_complete(
-            fallback.select_provider(candidates, {}, context)
-        )
+        provider = await fallback.select_provider(candidates, {}, context)
         assert provider.name == "anthropic"
 
     def test_on_success_resets_failed(self) -> None:
@@ -96,7 +90,8 @@ class TestSequentialFallback:
         fallback.on_failure("openai", error)
         assert "openai" in fallback._failed_providers
 
-    def test_all_providers_failed(self) -> None:
+    @pytest.mark.asyncio
+    async def test_all_providers_failed(self) -> None:
         """Проверить ошибку при всех.failed провайдерах."""
         fallback = SequentialFallback(provider_order=["openai", "anthropic"])
         fallback._failed_providers.add("openai")
@@ -108,12 +103,8 @@ class TestSequentialFallback:
         ]
         context = FallbackContext()
 
-        import asyncio
-
         with pytest.raises(AllProvidersFailed):
-            asyncio.get_event_loop().run_until_complete(
-                fallback.select_provider(candidates, {}, context)
-            )
+            await fallback.select_provider(candidates, {}, context)
 
 
 class TestCircuitBreaker:
