@@ -13,11 +13,15 @@ import asyncio
 import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import structlog
 from textual.app import App, ComposeResult
 
+from codelab.client.application.session_coordinator import SessionCoordinator
+from codelab.client.domain.services import TransportService
 from codelab.client.infrastructure.container_factory import create_client_container
+from codelab.client.infrastructure.services.acp_transport_service import ACPTransportService
 from codelab.client.messages import PermissionOption, PermissionToolCall
 from codelab.client.presentation.chat_view_model import ChatViewModel
 from codelab.client.presentation.file_viewer_view_model import FileViewerViewModel
@@ -59,6 +63,10 @@ class ACPClientApp(App[None]):
     State management осуществляется через ViewModels.
     """
 
+    # Отключаем стандартный выход по Ctrl+C — используем его для отмены prompt.
+    # Выход назначен на Ctrl+Q.
+    CTRL_C_CAN_QUIT = False
+
     BINDINGS = [
         ("ctrl+q", "quit", "Выход"),
         ("ctrl+n", "new_session", "Новая сессия"),
@@ -90,6 +98,9 @@ class ACPClientApp(App[None]):
         port: int,
         cwd: str | None = None,
         history_dir: str | None = None,
+        transport_mode: str = "websocket",
+        stdio_command: str | None = None,
+        stdio_args: list[str] | None = None,
     ) -> None:
         """Инициализирует приложение с Clean Architecture.
 
@@ -100,6 +111,9 @@ class ACPClientApp(App[None]):
             port: Порт сервера ACP
             cwd: Путь к проекту (если None, используется текущая рабочая директория)
             history_dir: Путь к директории локальной истории чата (опционально)
+            transport_mode: Режим транспорта ("websocket" или "stdio")
+            stdio_command: Команда для запуска агента (для stdio режима)
+            stdio_args: Аргументы команды (для stdio режима)
         """
         super().__init__()
         self._host = host
@@ -140,6 +154,9 @@ class ACPClientApp(App[None]):
                 cwd=cwd,
                 history_dir=history_dir,
                 logger=self._app_logger,
+                transport_mode=transport_mode,
+                stdio_command=stdio_command,
+                stdio_args=stdio_args,
             )
             self._app_logger.info("di_container_built_successfully", cwd=cwd)
         except Exception as e:
@@ -160,6 +177,9 @@ class ACPClientApp(App[None]):
             self._file_viewer_vm = self._container.get(FileViewerViewModel)
             self._permission_vm = self._container.get(PermissionViewModel)
             self._terminal_vm = self._container.get(TerminalViewModel)
+
+            self._coordinator = self._container.get(SessionCoordinator)
+            self._transport = self._container.get(TransportService)
 
             self._app_logger.info("all_view_models_resolved")
 
@@ -277,15 +297,9 @@ class ACPClientApp(App[None]):
         self._ui_vm.set_connection_status(ConnectionStatus.CONNECTING)
         self._ui_vm.set_loading(True, "connecting to server")
         try:
-            from codelab.client.application.session_coordinator import SessionCoordinator
-
-            # Получаем SessionCoordinator из DI контейнера
-            self._app_logger.debug("resolving_session_coordinator")
-            coordinator = self._container.get(SessionCoordinator)
-
             # Инициализируем подключение
             self._app_logger.info("initializing_server_connection")
-            server_info = await coordinator.initialize()
+            server_info = await self._coordinator.initialize()
 
             self._app_logger.info(
                 "server_connection_initialized",
@@ -304,12 +318,9 @@ class ACPClientApp(App[None]):
             # Это необходимо, чтобы при получении session/request_permission от сервера
             # TUI приложение показало модальное окно для выбора разрешения.
             try:
-                from codelab.client.infrastructure.services.acp_transport_service import (
-                    ACPTransportService,
+                cast(ACPTransportService, self._transport).set_permission_callback(
+                    self.show_permission_modal
                 )
-
-                transport = self._container.get(ACPTransportService)
-                transport.set_permission_callback(self.show_permission_modal)
                 self._app_logger.info("permission_callback_registered_in_transport")
             except Exception as e:
                 self._app_logger.warning(
@@ -401,6 +412,32 @@ class ACPClientApp(App[None]):
                 self._port,
                 cwd=self._cwd,
             ),
+            exclusive=False,
+        )
+
+    def action_cancel_prompt(self) -> None:
+        """Отменяет текущий LLM-запрос для активной сессии (Ctrl+C / Stop)."""
+        session_id = self._session_vm.selected_session_id.value
+        is_streaming = self._chat_vm.is_streaming.value
+        is_executing = self._chat_vm.cancel_prompt_cmd.is_executing.value
+        self._app_logger.info(
+            "action_cancel_prompt_called",
+            session_id=session_id,
+            is_streaming=is_streaming,
+            is_executing=is_executing,
+        )
+        if not session_id:
+            self._app_logger.warning("cancel_prompt_no_active_session")
+            return
+        if not is_streaming:
+            self._app_logger.debug("cancel_prompt_skipped_not_streaming")
+            return
+        if is_executing:
+            self._app_logger.debug("cancel_prompt_skipped_already_executing")
+            return
+        self._app_logger.info("cancel_prompt_dispatching", session_id=session_id)
+        self.run_worker(
+            self._chat_vm.cancel_prompt_cmd.execute(session_id),
             exclusive=False,
         )
 
@@ -557,6 +594,11 @@ class ACPClientApp(App[None]):
         self._app_logger.info("quick_actions_theme_toggle_requested")
         self.action_toggle_theme()
 
+    def on_prompt_input_cancelled(self, event: PromptInput.Cancelled) -> None:
+        """Обработка нажатия кнопки Stop в PromptInput."""
+        self._app_logger.info("prompt_input_cancelled_received")
+        self.action_cancel_prompt()
+
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Обработать отправку промпта пользователем.
 
@@ -612,10 +654,7 @@ class ACPClientApp(App[None]):
 
         async with self._session_history_load_lock:
             try:
-                from codelab.client.application.session_coordinator import SessionCoordinator
-
-                coordinator = self._container.get(SessionCoordinator)
-                loaded = await coordinator.load_session(
+                loaded = await self._coordinator.load_session(
                     session_id,
                     self._host,
                     self._port,
@@ -802,12 +841,7 @@ class ACPClientApp(App[None]):
 
         # Закрываем WebSocket соединение
         try:
-            from codelab.client.infrastructure.services.acp_transport_service import (
-                ACPTransportService,
-            )
-
-            transport_service = self._container.get(ACPTransportService)
-            await transport_service.disconnect()
+            await self._transport.disconnect()
             self._app_logger.info("websocket_disconnected")
         except Exception as e:
             self._app_logger.error("websocket_disconnect_failed", error=str(e))
@@ -828,6 +862,9 @@ def run_tui_app(
     port: int | None = None,
     cwd: str | None = None,
     history_dir: str | None = None,
+    transport_mode: str = "websocket",
+    stdio_command: str | None = None,
+    stdio_args: list[str] | None = None,
 ) -> None:
     """Запускает TUI приложение с параметрами подключения и рабочей директории.
 
@@ -836,7 +873,18 @@ def run_tui_app(
         port: Порт сервера ACP (если None, используется значение по умолчанию)
         cwd: Путь к проекту (если None, используется текущая рабочая директория)
         history_dir: Путь к директории локальной истории чата (опционально)
+        transport_mode: Режим транспорта ("websocket" или "stdio")
+        stdio_command: Команда для запуска агента (для stdio режима)
+        stdio_args: Аргументы команды (для stdio режима)
     """
     resolved_host, resolved_port = resolve_tui_connection(host=host, port=port)
-    app = ACPClientApp(host=resolved_host, port=resolved_port, cwd=cwd, history_dir=history_dir)
+    app = ACPClientApp(
+        host=resolved_host,
+        port=resolved_port,
+        cwd=cwd,
+        history_dir=history_dir,
+        transport_mode=transport_mode,
+        stdio_command=stdio_command,
+        stdio_args=stdio_args,
+    )
     app.run()

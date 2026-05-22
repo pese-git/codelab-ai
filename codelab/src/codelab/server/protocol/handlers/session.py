@@ -387,6 +387,7 @@ async def session_list(
                     "cwd": session.cwd,
                     "title": session.title,
                     "updatedAt": session.updated_at,
+                    "_meta": {},
                 }
             )
         if next_cursor is None:

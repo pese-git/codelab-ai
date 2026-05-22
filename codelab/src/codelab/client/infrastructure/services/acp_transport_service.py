@@ -1,6 +1,6 @@
 """ACPTransportService - инфраструктурная реализация низкоуровневой коммуникации.
 
-Инкапсулирует WebSocket транспорт и предоставляет interface TransportService
+Инкапсулирует транспорт (WebSocket или stdio) и предоставляет interface TransportService
 для остальной системы. Обрабатывает:
 - Подключение/отключение
 - Отправку сообщений
@@ -8,7 +8,7 @@
 - Обработку асинхронных уведомлений
 
 Архитектура:
-- Background Receive Loop: единственный вызов receive() на WebSocket
+- Background Receive Loop: единственный вызов receive() на транспорт
 - Message Router: маршрутизация по типам сообщений
 - Routing Queues: распределение по очередям для конкурентных запросов
 """
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
@@ -30,43 +31,56 @@ from codelab.client.infrastructure.services.background_receive_loop import (
 )
 from codelab.client.infrastructure.services.message_router import MessageRouter
 from codelab.client.infrastructure.services.routing_queues import RoutingQueues
-from codelab.client.infrastructure.transport import WebSocketTransport
+from codelab.client.infrastructure.transport import Transport, WebSocketTransport
 from codelab.client.messages import ACPMessage, RequestPermissionRequest
 
 if TYPE_CHECKING:
     from codelab.client.application.permission_handler import PermissionHandler
 
 
+async def _call_callback(
+    callback: Callable[..., Any] | None,
+    *args: Any,
+) -> Any:
+    """Вызвать callback, поддерживая sync и async функции.
+
+    В stdio режиме callbacks НЕ должны блокировать event loop.
+    Если callback — coroutine function, он будет awaited.
+    """
+    if callback is None:
+        return None
+    if inspect.iscoroutinefunction(callback):
+        return await callback(*args)
+    return callback(*args)
+
+
 class ACPTransportService(TransportService):
     """Реализация низкоуровневой коммуникации с ACP сервером.
 
-    Оборачивает WebSocket транспорт и предоставляет чистый interface
+    Оборачивает транспорт (WebSocket или stdio) и предоставляет чистый interface
     для отправки/получения сообщений. Используется Application слоем
     через Use Cases.
 
     Поддерживает async context manager для правильного управления жизненным циклом:
-        async with ACPTransportService(host, port) as service:
+        async with ACPTransportService(transport) as service:
             await service.connect()
             await service.send(message)
     """
 
     def __init__(
         self,
-        host: str,
-        port: int,
+        transport: Transport,
         parser: MessageParser | None = None,
         permission_handler: PermissionHandler | None = None,
     ) -> None:
         """Инициализирует сервис.
 
         Аргументы:
-            host: Адрес ACP сервера
-            port: Порт ACP сервера
-            parser: MessageParser для парсинга ответов (опционально)
-            permission_handler: PermissionHandler для обработки permission requests (опционально)
+            transport: Реализация транспорта (WebSocket или stdio).
+            parser: MessageParser для парсинга ответов (опционально).
+            permission_handler: PermissionHandler для обработки permission requests (опционально).
         """
-        self.host = host
-        self.port = port
+        self._transport = transport
         self.parser = parser or MessageParser()
         self._permission_handler = permission_handler
         # Callback для отображения permission modal в UI
@@ -80,8 +94,6 @@ class ACPTransportService(TransportService):
             ]
             | None
         ) = None
-        # Инициализируем транспорт для соединения
-        self._transport: WebSocketTransport | None = None
         # Сохраняем server capabilities после инициализации
         self._server_capabilities: dict[str, Any] | None = None
 
@@ -128,28 +140,18 @@ class ACPTransportService(TransportService):
     async def connect(self) -> None:
         """Устанавливает соединение с сервером и запускает background receive loop.
 
-        Создает WebSocket транспорт (если его еще нет) и открывает соединение.
-        Инициализирует routing infrastructure и запускает background loop для
-        единственного вызова receive() на WebSocket.
+        Открывает соединение через переданный транспорт.
+        Инициализирует routing infrastructure и запускает background loop.
 
         Raises:
             RuntimeError: При ошибке подключения
         """
         if self.is_connected():
-            self._logger.debug("already_connected", host=self.host, port=self.port)
+            self._logger.debug("already_connected")
             return
 
         try:
-            # Создаем транспорт ТОЛЬКО если его еще нет
-            # Это позволяет переиспользовать транспорт при переподключении
-            # и избежать утечек ресурсов
-            if self._transport is None:
-                self._logger.debug("creating_new_transport", host=self.host, port=self.port)
-                self._transport = WebSocketTransport(host=self.host, port=self.port)
-
             # Входим в context manager для открытия соединения
-            # Вызов __aenter__() устанавливает _ws и _http_session
-            # При переподключении это переиспользует существующий объект
             await self._transport.__aenter__()
 
             # Инициализируем routing infrastructure
@@ -161,23 +163,21 @@ class ACPTransportService(TransportService):
                 self._queues,
             )
 
-            # Запускаем background loop - единственный вызов receive() на WebSocket
+            # Запускаем background loop
             await self._background_loop.start()
 
             self._logger.info(
                 "connected_to_server",
-                host=self.host,
-                port=self.port,
+                transport_type=type(self._transport).__name__,
                 background_loop_running=self._background_loop.is_running(),
             )
         except Exception as e:
             # При ошибке очищаем ресурсы
-            self._transport = None
             self._background_loop = None
             self._queues = None
             self._router = None
-            self._logger.error("connection_failed", host=self.host, port=self.port, error=str(e))
-            msg = f"Failed to connect to {self.host}:{self.port}: {e}"
+            self._logger.error("connection_failed", error=str(e))
+            msg = f"Failed to connect: {e}"
             raise RuntimeError(msg) from e
 
     async def disconnect(self) -> None:
@@ -186,15 +186,15 @@ class ACPTransportService(TransportService):
         Graceful shutdown:
         1. Останавливает background receive loop
         2. Очищает routing infrastructure
-        3. Закрывает WebSocket транспорт
+        3. Закрывает транспорт
         4. Освобождает все ресурсы
         """
         if not self.is_connected():
-            self._logger.debug("not_connected", host=self.host, port=self.port)
+            self._logger.debug("not_connected")
             return
 
         try:
-            self._logger.debug("closing_connection", host=self.host, port=self.port)
+            self._logger.debug("closing_connection")
 
             # Сначала останавливаем background loop - это главное
             # Иначе он будет пытаться читать из закрытого транспорта
@@ -212,12 +212,11 @@ class ACPTransportService(TransportService):
             if self._transport is not None:
                 await self._transport.__aexit__(None, None, None)
 
-            self._logger.info("connection_closed", host=self.host, port=self.port)
+            self._logger.info("connection_closed")
         except Exception as e:
-            self._logger.warning("disconnect_error", error=str(e), host=self.host, port=self.port)
+            self._logger.warning("disconnect_error", error=str(e))
         finally:
             # Окончательная очистка ресурсов
-            self._transport = None
             self._background_loop = None
             self._queues = None
             self._router = None
@@ -410,26 +409,18 @@ class ACPTransportService(TransportService):
     def is_connected(self) -> bool:
         """Проверяет наличие активного соединения.
 
-        Проверяет:
-        1. Существует ли ссылка на транспорт
-        2. Открыто ли WebSocket соединение (не закрыто и имеет валидный _ws объект)
-
         Возвращает:
             True если соединение активно и готово к использованию
         """
         if self._transport is None:
             return False
 
-        # Проверяем реальное состояние WebSocket
         connected = self._transport.is_connected()
 
-        # Логируем состояние для отладки
-        if not connected and self._transport is not None:
+        if not connected:
             self._logger.debug(
-                "websocket_connection_lost",
-                host=self.host,
-                port=self.port,
-                has_transport=self._transport is not None,
+                "transport_connection_lost",
+                transport_type=type(self._transport).__name__,
             )
 
         return connected
@@ -487,18 +478,41 @@ class ACPTransportService(TransportService):
         """
         return self._server_capabilities is not None
 
+    async def cancel_prompt(self, session_id: str) -> None:
+        """Send session/cancel bypassing the callback lock.
+
+        Uses the per-request response queue directly so the cancel is sent
+        immediately, even while session/prompt holds _callbacks_request_lock.
+        """
+        if not self.is_connected() or self._queues is None:
+            return
+
+        request = ACPMessage.request(
+            method="session/cancel",
+            params={"sessionId": session_id},
+        )
+        request_id = request.id
+        response_queue = await self._queues.get_or_create_response_queue(request_id)
+        await self.send(request.to_dict())
+        try:
+            await asyncio.wait_for(response_queue.get(), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
+        finally:
+            await self._queues.cleanup_response_queue(request_id)
+
     async def request_with_callbacks(
         self,
         method: str,
         params: dict[str, Any] | None = None,
         on_update: Callable[[dict[str, Any]], None] | None = None,
-        on_fs_read: Callable[[str], str] | None = None,
-            on_fs_write: Callable[[str, str], bool] | None = None,
-        on_terminal_create: Callable[[str], str] | None = None,
-        on_terminal_output: Callable[[str], dict[str, Any]] | None = None,
-        on_terminal_wait: Callable[[str], int | tuple[int | None, str | None]] | None = None,
-        on_terminal_release: Callable[[str], None] | None = None,
-        on_terminal_kill: Callable[[str], bool] | None = None,
+        on_fs_read: Callable[[str], Any] | None = None,
+        on_fs_write: Callable[[str, str], Any] | None = None,
+        on_terminal_create: Callable[[str], Any] | None = None,
+        on_terminal_output: Callable[[str], Any] | None = None,
+        on_terminal_wait: Callable[[str], Any] | None = None,
+        on_terminal_release: Callable[[str], Any] | None = None,
+        on_terminal_kill: Callable[[str], Any] | None = None,
     ) -> dict[str, Any]:
         """Выполняет request с обработкой callbacks используя routing queues.
 
@@ -863,13 +877,13 @@ class ACPTransportService(TransportService):
         request_id: str | int,
         notification_data: dict[str, Any],
         on_update: Callable[[dict[str, Any]], None] | None,
-        on_fs_read: Callable[[str], str] | None,
-        on_fs_write: Callable[[str, str], bool] | None,
-        on_terminal_create: Callable[[str], str] | None,
-        on_terminal_output: Callable[[str], dict[str, Any]] | None,
-        on_terminal_wait: Callable[[str], int | tuple[int | None, str | None]] | None,
-        on_terminal_release: Callable[[str], None] | None,
-        on_terminal_kill: Callable[[str], bool] | None,
+        on_fs_read: Callable[[str], Any] | None,
+        on_fs_write: Callable[[str, str], Any] | None,
+        on_terminal_create: Callable[[str], Any] | None,
+        on_terminal_output: Callable[[str], Any] | None,
+        on_terminal_wait: Callable[[str], Any] | None,
+        on_terminal_release: Callable[[str], Any] | None,
+        on_terminal_kill: Callable[[str], Any] | None,
     ) -> None:
         """Обрабатывает `session/update` и incoming RPC (`fs/*`, `terminal/*`)."""
         notification = ACPMessage.from_dict(notification_data)
@@ -914,7 +928,9 @@ class ACPTransportService(TransportService):
             )
             try:
                 content = (
-                    on_fs_read(path) if on_fs_read is not None and isinstance(path, str) else ""
+                    await _call_callback(on_fs_read, path)
+                    if on_fs_read is not None and isinstance(path, str)
+                    else ""
                 )
                 self._logger.info(
                     "fs_read_rpc_callback_done",
@@ -961,7 +977,7 @@ class ACPTransportService(TransportService):
             )
             try:
                 success = (
-                    on_fs_write(path, text)
+                    await _call_callback(on_fs_write, path, text)
                     if on_fs_write is not None and isinstance(path, str) and isinstance(text, str)
                     else False
                 )
@@ -975,9 +991,9 @@ class ACPTransportService(TransportService):
                     "tool_lifecycle_response_sending",
                     rpc_id=notification.id,
                     rpc_method=rpc_method,
-                    result_keys=["success"],
                 )
-                response_data = {"success": success}
+                # ACP spec: empty response means success
+                response_data = {}
                 await self.send(ACPMessage.response(notification.id, response_data).to_dict())
                 self._logger.debug(
                     "tool_lifecycle_response_sent",
@@ -1011,7 +1027,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_create is not None,
             )
             terminal_id = (
-                on_terminal_create(command)
+                await _call_callback(on_terminal_create, command)
                 if on_terminal_create is not None and isinstance(command, str)
                 else None
             )
@@ -1056,7 +1072,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_output is not None,
             )
             output_data: dict[str, Any] | None = (
-                on_terminal_output(terminal_id)
+                await _call_callback(on_terminal_output, terminal_id)
                 if on_terminal_output is not None and isinstance(terminal_id, str)
                 else None
             )
@@ -1107,7 +1123,7 @@ class ACPTransportService(TransportService):
             exit_code: int | None = None
             output: str | None = None
             if on_terminal_wait is not None and isinstance(terminal_id, str):
-                wait_result = on_terminal_wait(terminal_id)
+                wait_result = await _call_callback(on_terminal_wait, terminal_id)
                 if isinstance(wait_result, tuple):
                     candidate_exit_code, candidate_output = wait_result
                     exit_code = (
@@ -1153,7 +1169,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_release is not None,
             )
             if on_terminal_release is not None and isinstance(terminal_id, str):
-                on_terminal_release(terminal_id)
+                await _call_callback(on_terminal_release, terminal_id)
             self._logger.debug(
                 "tool_lifecycle_callback_done",
                 rpc_id=notification.id,
@@ -1183,7 +1199,7 @@ class ACPTransportService(TransportService):
                 has_callback=on_terminal_kill is not None,
             )
             killed = (
-                on_terminal_kill(terminal_id)
+                await _call_callback(on_terminal_kill, terminal_id)
                 if on_terminal_kill is not None and isinstance(terminal_id, str)
                 else False
             )
@@ -1246,3 +1262,31 @@ class ACPTransportService(TransportService):
         self._logger.debug("close_called")
         # Синхронное закрытие - просто отмечаем что ресурсы больше не используются
         # Асинхронное закрытие соединения должно происходить через disconnect()
+
+
+def create_websocket_transport_service(
+    host: str,
+    port: int,
+    parser: MessageParser | None = None,
+    permission_handler: PermissionHandler | None = None,
+) -> ACPTransportService:
+    """Factory функция для создания ACPTransportService с WebSocket транспортом.
+
+    Обеспечивает обратную совместимость для кода, который создавал
+    ACPTransportService напрямую с host/port.
+
+    Args:
+        host: Адрес ACP сервера.
+        port: Порт ACP сервера.
+        parser: MessageParser для парсинга ответов.
+        permission_handler: PermissionHandler для обработки permission requests.
+
+    Returns:
+        Настроенный ACPTransportService с WebSocket транспортом.
+    """
+    transport = WebSocketTransport(host=host, port=port)
+    return ACPTransportService(
+        transport=transport,
+        parser=parser,
+        permission_handler=permission_handler,
+    )

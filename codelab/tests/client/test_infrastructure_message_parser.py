@@ -21,13 +21,13 @@ class TestMessageParserJsonParsing:
     def test_parse_json_request(self) -> None:
         """Проверяет парсинг JSON-запроса."""
         parser = MessageParser()
-        json_str = '{"jsonrpc": "2.0", "id": "1", "method": "ping", "params": {}}'
+        json_str = '{"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {"protocolVersion": 1}}'
         message = parser.parse_json(json_str)
 
         assert message.jsonrpc == "2.0"
         assert message.id == "1"
-        assert message.method == "ping"
-        assert message.params == {}
+        assert message.method == "initialize"
+        assert "protocolVersion" in message.params
 
     def test_parse_json_response_with_result(self) -> None:
         """Проверяет парсинг JSON-ответа с result."""
@@ -78,10 +78,10 @@ class TestMessageParserDictParsing:
     def test_parse_dict_request(self) -> None:
         """Проверяет парсинг dict-запроса."""
         parser = MessageParser()
-        payload = {"jsonrpc": "2.0", "id": "1", "method": "ping", "params": {}}
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {"protocolVersion": 1}}
         message = parser.parse_dict(payload)
 
-        assert message.method == "ping"
+        assert message.method == "initialize"
         assert message.id == "1"
 
     def test_parse_dict_response(self) -> None:
@@ -100,7 +100,7 @@ class TestMessageParserClassification:
     def test_classify_request(self) -> None:
         """Проверяет классификацию запроса."""
         parser = MessageParser()
-        message = ACPMessage.request("ping", {})
+        message = ACPMessage.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
         assert parser.classify_message(message) == "request"
 
     def test_classify_notification(self) -> None:
@@ -108,7 +108,7 @@ class TestMessageParserClassification:
         parser = MessageParser()
         # Уведомление имеет method но нет id
         message = ACPMessage(
-            method="ping",
+            method="session/update",
             params={},
             jsonrpc="2.0",
         )

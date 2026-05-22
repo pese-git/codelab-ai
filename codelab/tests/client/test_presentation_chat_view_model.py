@@ -411,64 +411,73 @@ def test_streaming_flag_resets_after_background_session_completion(
 
 
 # Тесты для callbacks файловой системы и терминала
-def test_handle_fs_read_success(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
+@pytest.mark.asyncio
+async def test_handle_fs_read_success(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
     """Тест успешного чтения файла через callback."""
     chat_view_model.set_active_session("test-session")
 
-    content = chat_view_model._handle_fs_read("test.txt")
+    content = await chat_view_model._handle_fs_read("test.txt")
 
     assert content == "test content"
     mock_fs_executor.read_text_file_sync.assert_called_once_with("test.txt")
 
 
-def test_handle_fs_read_no_active_session(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
+@pytest.mark.asyncio
+async def test_handle_fs_read_no_active_session(
+    chat_view_model: ChatViewModel,
+    mock_fs_executor,
+) -> None:
     """Тест чтения файла без активной сессии."""
     chat_view_model.set_active_session(None)
 
-    content = chat_view_model._handle_fs_read("test.txt")
+    content = await chat_view_model._handle_fs_read("test.txt")
 
     assert content == ""
     mock_fs_executor.read_text_file_sync.assert_not_called()
 
 
-def test_handle_fs_read_error(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
+@pytest.mark.asyncio
+async def test_handle_fs_read_error(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
     """Тест обработки ошибки при чтении файла."""
     chat_view_model.set_active_session("test-session")
     mock_fs_executor.read_text_file_sync.side_effect = Exception("Read error")
 
-    content = chat_view_model._handle_fs_read("test.txt")
+    content = await chat_view_model._handle_fs_read("test.txt")
 
     assert content == ""
 
 
-def test_handle_fs_write_success(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
+@pytest.mark.asyncio
+async def test_handle_fs_write_success(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
     """Тест успешной записи файла через callback."""
     chat_view_model.set_active_session("test-session")
 
-    success = chat_view_model._handle_fs_write("test.txt", "content")
+    success = await chat_view_model._handle_fs_write("test.txt", "content")
 
     assert success is True
     mock_fs_executor.write_text_file_sync.assert_called_once_with("test.txt", "content")
 
 
-def test_handle_fs_write_no_active_session(
+@pytest.mark.asyncio
+async def test_handle_fs_write_no_active_session(
     chat_view_model: ChatViewModel, mock_fs_executor
 ) -> None:
     """Тест записи файла без активной сессии."""
     chat_view_model.set_active_session(None)
 
-    success = chat_view_model._handle_fs_write("test.txt", "content")
+    success = await chat_view_model._handle_fs_write("test.txt", "content")
 
     assert success is False
     mock_fs_executor.write_text_file_sync.assert_not_called()
 
 
-def test_handle_fs_write_error(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
+@pytest.mark.asyncio
+async def test_handle_fs_write_error(chat_view_model: ChatViewModel, mock_fs_executor) -> None:
     """Тест обработки ошибки при записи файла."""
     chat_view_model.set_active_session("test-session")
     mock_fs_executor.write_text_file_sync.side_effect = Exception("Write error")
 
-    success = chat_view_model._handle_fs_write("test.txt", "content")
+    success = await chat_view_model._handle_fs_write("test.txt", "content")
 
     assert success is False
 

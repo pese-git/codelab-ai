@@ -113,6 +113,17 @@ class TransportService(ABC):
         """
         ...
 
+    async def cancel_prompt(self, session_id: str) -> None:
+        """Cancel current prompt without blocking the callback lock.
+
+        Default falls back to request_with_callbacks for compatibility.
+        Concrete transports should override this with a lock-free implementation.
+        """
+        await self.request_with_callbacks(
+            method="session/cancel",
+            params={"sessionId": session_id},
+        )
+
     @abstractmethod
     async def request_with_callbacks(
         self,

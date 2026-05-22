@@ -9,6 +9,7 @@
     >>> ui_vm = container.get(UIViewModel)
 """
 
+import structlog.stdlib
 from dishka import Provider, Scope, provide
 
 from codelab.client.application.session_coordinator import SessionCoordinator
@@ -56,64 +57,64 @@ class ViewModelProvider(Provider):
     def get_ui_vm(
         self,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> UIViewModel:
         """Создаёт UIViewModel для глобального UI состояния."""
-        return UIViewModel(event_bus=event_bus, logger=config.logger)
+        return UIViewModel(event_bus=event_bus, logger=logger)
 
     @provide(scope=Scope.APP)
     def get_plan_vm(
         self,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> PlanViewModel:
         """Создаёт PlanViewModel для управления планом."""
-        return PlanViewModel(event_bus=event_bus, logger=config.logger)
+        return PlanViewModel(event_bus=event_bus, logger=logger)
 
     @provide(scope=Scope.APP)
     def get_terminal_vm(
         self,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> TerminalViewModel:
         """Создаёт TerminalViewModel для управления терминалом."""
-        return TerminalViewModel(event_bus=event_bus, logger=config.logger)
+        return TerminalViewModel(event_bus=event_bus, logger=logger)
 
     @provide(scope=Scope.APP)
     def get_filesystem_vm(
         self,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> FileSystemViewModel:
         """Создаёт FileSystemViewModel для управления файловой системой."""
-        return FileSystemViewModel(event_bus=event_bus, logger=config.logger)
+        return FileSystemViewModel(event_bus=event_bus, logger=logger)
 
     @provide(scope=Scope.APP)
     def get_file_viewer_vm(
         self,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> FileViewerViewModel:
         """Создаёт FileViewerViewModel для просмотра файлов."""
-        return FileViewerViewModel(event_bus=event_bus, logger=config.logger)
+        return FileViewerViewModel(event_bus=event_bus, logger=logger)
 
     @provide(scope=Scope.APP)
     def get_permission_vm(
         self,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> PermissionViewModel:
         """Создаёт PermissionViewModel для управления разрешениями."""
-        return PermissionViewModel(event_bus=event_bus, logger=config.logger)
+        return PermissionViewModel(event_bus=event_bus, logger=logger)
 
     @provide(scope=Scope.APP)
     def get_terminal_log_vm(
         self,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> TerminalLogViewModel:
         """Создаёт TerminalLogViewModel для просмотра логов терминала."""
-        return TerminalLogViewModel(event_bus=event_bus, logger=config.logger)
+        return TerminalLogViewModel(event_bus=event_bus, logger=logger)
 
     # =========================================================================
     # ViewModels с зависимостью от SessionCoordinator
@@ -124,13 +125,13 @@ class ViewModelProvider(Provider):
         self,
         coordinator: SessionCoordinator,
         event_bus: EventBus,
-        config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
     ) -> SessionViewModel:
         """Создаёт SessionViewModel для управления сессиями."""
         return SessionViewModel(
             coordinator=coordinator,
             event_bus=event_bus,
-            logger=config.logger,
+            logger=logger,
         )
 
     @provide(scope=Scope.APP)
@@ -139,6 +140,7 @@ class ViewModelProvider(Provider):
         coordinator: SessionCoordinator,
         event_bus: EventBus,
         config: ClientConfig,
+        logger: structlog.stdlib.BoundLogger,
         plan_vm: PlanViewModel,
         fs_executor: FileSystemExecutor,
         terminal_executor: TerminalExecutor,
@@ -151,7 +153,7 @@ class ViewModelProvider(Provider):
         return ChatViewModel(
             coordinator=coordinator,
             event_bus=event_bus,
-            logger=config.logger,
+            logger=logger,
             history_dir=config.history_dir,
             fs_executor=fs_executor,
             terminal_executor=terminal_executor,

@@ -122,7 +122,7 @@ class TestFileSystemHandlerWriteFile:
 
         result = await handler.handle_write_text_file(params)
 
-        assert result == {"success": True}
+        assert result == {}
         executor_mock.write_text_file.assert_called_once_with(
             "output.txt", "New content"
         )
@@ -176,5 +176,5 @@ class TestFileSystemHandlerWriteFile:
 
         result = await handler.handle_write_text_file(params)
 
-        assert result == {"success": True}
+        assert result == {}
         executor_mock.write_text_file.assert_called_once_with("empty.txt", "")

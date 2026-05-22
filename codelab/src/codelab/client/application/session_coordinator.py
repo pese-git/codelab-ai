@@ -170,11 +170,9 @@ class SessionCoordinator:
     async def cancel_prompt(self, session_id: str) -> None:
         """Отменяет текущий prompt на сервере для указанной сессии."""
 
-        self._logger.info("cancelling_prompt")
-        await self.transport.request_with_callbacks(
-            method="session/cancel",
-            params={"sessionId": session_id},
-        )
+        self._logger.info("cancelling_prompt", session_id=session_id)
+        await self.transport.cancel_prompt(session_id)
+        self._logger.info("cancelling_prompt_done", session_id=session_id)
 
     async def request_permission(
         self,

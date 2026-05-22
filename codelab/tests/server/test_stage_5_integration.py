@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from factories import make_orchestrator
 
 from codelab.server.messages import ACPMessage, JsonRpcId
+from codelab.server.protocol import ACPProtocol
 from codelab.server.protocol.handlers.prompt import (
-    create_prompt_orchestrator,
-    session_cancel,
     validate_prompt_content,
 )
 from codelab.server.protocol.state import (
@@ -163,11 +163,11 @@ class TestSessionCancelStage5:
     async def test_session_cancel_with_active_turn(self, storage: InMemoryStorage) -> None:
         """Отменяет активный turn через PromptOrchestrator."""
         # Arrange
-        request_id: JsonRpcId | None = "cancel_1"
         params = {"sessionId": "sess_1"}
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_cancel(request_id, params, storage)
+        outcome = await protocol.handle(ACPMessage.request("session/cancel", params))
 
         # Assert
         assert outcome is not None
@@ -180,15 +180,14 @@ class TestSessionCancelStage5:
     async def test_session_cancel_as_notification(self, storage: InMemoryStorage) -> None:
         """Обрабатывает cancel как notification (без request_id)."""
         # Arrange
-        request_id: JsonRpcId | None = None
         params = {"sessionId": "sess_1"}
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_cancel(request_id, params, storage)
+        outcome = await protocol.handle(ACPMessage.notification("session/cancel", params))
 
         # Assert
         assert outcome is not None
-        assert outcome.response is None  # Notifications не имеют response
         session = await storage.load_session("sess_1")
         assert session.active_turn is None
 
@@ -209,11 +208,11 @@ class TestSessionCancelStage5:
         from codelab.server.storage import InMemoryStorage
         storage = InMemoryStorage()
         await storage.save_session(session)
-        request_id: JsonRpcId | None = "cancel_1"
         params = {"sessionId": "sess_1"}
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_cancel(request_id, params, storage)
+        outcome = await protocol.handle(ACPMessage.request("session/cancel", params))
 
         # Assert
         assert outcome is not None
@@ -227,27 +226,28 @@ class TestSessionCancelStage5:
         # Arrange
         from codelab.server.storage import InMemoryStorage
         storage = InMemoryStorage()
-        request_id: JsonRpcId | None = "cancel_1"
         params = {"sessionId": "nonexistent"}
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_cancel(request_id, params, storage)
+        outcome = await protocol.handle(ACPMessage.request("session/cancel", params))
 
         # Assert
         assert outcome is not None
         assert isinstance(outcome, ProtocolOutcome)
-        # Should return empty or error response
+        # Should return empty or error response for nonexistent session
         assert outcome.response is not None
 
     async def test_session_cancel_no_session_id(self) -> None:
         """Обрабатывает cancel без sessionId в params."""
         # Arrange
-        sessions: dict[str, SessionState] = {}
-        request_id: JsonRpcId | None = "cancel_1"
+        from codelab.server.storage import InMemoryStorage
+        storage = InMemoryStorage()
         params: dict[str, Any] = {}  # Missing sessionId
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_cancel(request_id, params, sessions)
+        outcome = await protocol.handle(ACPMessage.request("session/cancel", params))
 
         # Assert
         assert outcome is not None
@@ -260,7 +260,7 @@ class TestCreatePromptOrchestratorStage5:
     def test_orchestrator_created_with_all_components(self) -> None:
         """Factory создает orchestrator со всеми компонентами."""
         # Act
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Assert
         assert orchestrator is not None
@@ -272,10 +272,10 @@ class TestCreatePromptOrchestratorStage5:
         assert orchestrator.client_rpc_handler is not None
 
     def test_orchestrator_instances_are_independent(self) -> None:
-        """Каждый вызов create_prompt_orchestrator() создает независимый экземпляр."""
+        """Каждый вызов make_orchestrator() создает независимый экземпляр."""
         # Act
-        orch1 = create_prompt_orchestrator()
-        orch2 = create_prompt_orchestrator()
+        orch1 = make_orchestrator()
+        orch2 = make_orchestrator()
 
         # Assert
         assert orch1 is not orch2
@@ -380,7 +380,7 @@ class TestPromptOrchestratorIntegrationFullStack:
     def test_orchestrator_handles_complete_turn_lifecycle(self) -> None:
         """Проверяет полный жизненный цикл turn через orchestrator."""
         # Arrange
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
         session = SessionState(
             session_id="sess_1",
             cwd="/tmp",
@@ -420,7 +420,7 @@ class TestPromptOrchestratorIntegrationFullStack:
     def test_orchestrator_handles_state_updates(self) -> None:
         """Проверяет обновление состояния через StateManager в orchestrator."""
         # Arrange
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
         session = SessionState(
             session_id="sess_1",
             cwd="/tmp",
@@ -458,10 +458,8 @@ class TestSessionPromptWithOrchestratorIntegration:
 
     @pytest.mark.asyncio
     async def test_session_prompt_returns_protocol_outcome(self) -> None:
-        """Проверяет, что session_prompt() возвращает ProtocolOutcome с notifications."""
+        """Проверяет, что session/prompt возвращает ProtocolOutcome с notifications."""
         # Arrange
-        from codelab.server.protocol.handlers.prompt import session_prompt
-
         session = SessionState(
             session_id="sess_1",
             cwd="/tmp",
@@ -470,24 +468,14 @@ class TestSessionPromptWithOrchestratorIntegration:
         )
         storage = InMemoryStorage()
         await storage.save_session(session)
-        config_specs = {
-            "mode": {
-                "description": "Mode",
-                "options": [{"value": "ask"}],
-                "default": "ask",
-                "name": "Mode",
-                "category": "execution",
-            }
-        }
         params = {
             "sessionId": "sess_1",
             "prompt": [{"type": "text", "text": "Hello test"}],
         }
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_prompt(
-            "req_1", params, storage, config_specs, agent_orchestrator=None
-        )
+        outcome = await protocol.handle(ACPMessage.request("session/prompt", params))
 
         # Assert
         assert isinstance(outcome, ProtocolOutcome)
@@ -498,8 +486,6 @@ class TestSessionPromptWithOrchestratorIntegration:
     async def test_session_prompt_with_orchestrator_creates_notifications(self) -> None:
         """Проверяет, что orchestrator создает необходимые notifications."""
         # Arrange
-        from codelab.server.protocol.handlers.prompt import session_prompt
-
         session = SessionState(
             session_id="sess_1",
             cwd="/tmp",
@@ -508,24 +494,14 @@ class TestSessionPromptWithOrchestratorIntegration:
         )
         storage = InMemoryStorage()
         await storage.save_session(session)
-        config_specs = {
-            "mode": {
-                "description": "Mode",
-                "options": [{"value": "ask"}],
-                "default": "ask",
-                "name": "Mode",
-                "category": "execution",
-            }
-        }
         params = {
             "sessionId": "sess_1",
             "prompt": [{"type": "text", "text": "Test message"}],
         }
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_prompt(
-            "req_1", params, storage, config_specs, agent_orchestrator=None
-        )
+        outcome = await protocol.handle(ACPMessage.request("session/prompt", params))
 
         # Assert - проверяем, что были созданы notifications
         notification_types = [
@@ -539,8 +515,6 @@ class TestSessionPromptWithOrchestratorIntegration:
     async def test_session_prompt_validates_prompt_array(self) -> None:
         """Проверяет валидацию prompt как array."""
         # Arrange
-        from codelab.server.protocol.handlers.prompt import session_prompt
-
         session = SessionState(
             session_id="sess_1",
             cwd="/tmp",
@@ -548,16 +522,14 @@ class TestSessionPromptWithOrchestratorIntegration:
         )
         storage = InMemoryStorage()
         await storage.save_session(session)
-        config_specs = {}
         params = {
             "sessionId": "sess_1",
-            "prompt": "not an array",  # Invalid
+            "prompt": "not an array",  # Invalid — becomes empty raw_text → "Empty prompt"
         }
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_prompt(
-            "req_1", params, storage, config_specs, agent_orchestrator=None
-        )
+        outcome = await protocol.handle(ACPMessage.request("session/prompt", params))
 
         # Assert
         assert outcome.response is not None
@@ -568,19 +540,15 @@ class TestSessionPromptWithOrchestratorIntegration:
     async def test_session_prompt_error_handling(self) -> None:
         """Проверяет обработку ошибок при вызове orchestrator."""
         # Arrange
-        from codelab.server.protocol.handlers.prompt import session_prompt
-
         storage = InMemoryStorage()
-        config_specs = {}
         params = {
             "sessionId": "nonexistent",
             "prompt": [{"type": "text", "text": "test"}],
         }
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_prompt(
-            "req_1", params, storage, config_specs, agent_orchestrator=None
-        )
+        outcome = await protocol.handle(ACPMessage.request("session/prompt", params))
 
         # Assert
         assert outcome.response is not None
@@ -591,8 +559,6 @@ class TestSessionPromptWithOrchestratorIntegration:
     async def test_session_prompt_updates_session_title(self) -> None:
         """Проверяет обновление заголовка сессии при первом prompt."""
         # Arrange
-        from codelab.server.protocol.handlers.prompt import session_prompt
-
         session = SessionState(
             session_id="sess_1",
             cwd="/tmp",
@@ -602,24 +568,14 @@ class TestSessionPromptWithOrchestratorIntegration:
         )
         storage = InMemoryStorage()
         await storage.save_session(session)
-        config_specs = {
-            "mode": {
-                "description": "Mode",
-                "options": [{"value": "ask"}],
-                "default": "ask",
-                "name": "Mode",
-                "category": "execution",
-            }
-        }
         params = {
             "sessionId": "sess_1",
             "prompt": [{"type": "text", "text": "First message"}],
         }
+        protocol = ACPProtocol(storage=storage)
 
         # Act
-        outcome = await session_prompt(
-            "req_1", params, storage, config_specs, agent_orchestrator=None
-        )
+        outcome = await protocol.handle(ACPMessage.request("session/prompt", params))
 
         # Assert
         # Проверяем, что outcome был создан

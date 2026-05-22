@@ -8,6 +8,7 @@ import structlog
 
 from ...client_rpc.service import ClientRPCService
 from ...messages import ACPMessage, JsonRpcId
+from ...rpc_holder import ClientRPCServiceHolder
 from ...storage import SessionStorage
 from ...tools.base import ToolRegistry
 from ..state import LLMLoopResult, ProtocolOutcome, SessionState
@@ -15,20 +16,11 @@ from .client_rpc_handler import ClientRPCHandler
 from .permission_manager import PermissionManager
 from .pipeline import (
     LLMLoopStage,
-    PlanBuildingStage,
     PromptContext,
     PromptPipeline,
-    SlashCommandStage,
-    TurnLifecycleStage,
-    ValidationStage,
 )
 from .plan_builder import PlanBuilder
-from .slash_commands import CommandRegistry, SlashCommandRouter
-from .slash_commands.builtin import (
-    HelpCommandHandler,
-    ModeCommandHandler,
-    StatusCommandHandler,
-)
+from .slash_commands import CommandRegistry
 from .state_manager import StateManager
 from .tool_call_handler import ToolCallHandler
 from .turn_lifecycle_manager import TurnLifecycleManager
@@ -60,7 +52,11 @@ class PromptOrchestrator:
         permission_manager: PermissionManager,
         client_rpc_handler: ClientRPCHandler,
         tool_registry: ToolRegistry,
-        client_rpc_service: ClientRPCService | None = None,
+        llm_loop_stage: LLMLoopStage,
+        command_registry: CommandRegistry,
+        pipeline: PromptPipeline,
+        client_rpc_service_holder: ClientRPCServiceHolder | None = None,
+        client_rpc_service: ClientRPCService | None = None,  # backward compatibility
         global_policy_manager: GlobalPolicyManager | None = None,
     ):
         self.state_manager = state_manager
@@ -69,59 +65,59 @@ class PromptOrchestrator:
         self.tool_call_handler = tool_call_handler
         self.permission_manager = permission_manager
         self.client_rpc_handler = client_rpc_handler
-        self.client_rpc_service = client_rpc_service
+        self.tool_registry = tool_registry
+        self.global_policy_manager = global_policy_manager
+        self._tools_registered = False
 
-        # Регистрация встроенных инструментов
-        if client_rpc_service is not None:
+        # Поддерживаем оба способа передачи сервиса
+        if client_rpc_service_holder is not None:
+            self.client_rpc_service_holder = client_rpc_service_holder
+        elif client_rpc_service is not None:
+            # backward compatibility: создаём holder с уже установленным сервисом
+            self.client_rpc_service_holder = ClientRPCServiceHolder()
+            self.client_rpc_service_holder.service = client_rpc_service
+        else:
+            self.client_rpc_service_holder = None
+
+        # Регистрация plan tool сразу
+        from ...tools.definitions import PlanToolDefinitions
+        from ...tools.executors.plan_executor import PlanToolExecutor
+
+        PlanToolDefinitions.register_all(tool_registry, PlanToolExecutor())
+
+        self._llm_loop_stage = llm_loop_stage
+        self._command_registry = command_registry
+        self._pipeline = pipeline
+
+    @property
+    def client_rpc_service(self) -> ClientRPCService | None:
+        """Возвращает ClientRPCService из holder."""
+        if self.client_rpc_service_holder is not None:
+            return self.client_rpc_service_holder.service
+        return None
+
+    def _ensure_tools_registered(self) -> None:
+        """Лениво регистрирует tool executors при первом использовании."""
+        if self._tools_registered:
+            return
+
+        if self.client_rpc_service is not None:
             from ...tools.definitions import (
                 FileSystemToolDefinitions,
-                PlanToolDefinitions,
                 TerminalToolDefinitions,
             )
             from ...tools.executors.filesystem_executor import FileSystemToolExecutor
-            from ...tools.executors.plan_executor import PlanToolExecutor
             from ...tools.executors.terminal_executor import TerminalToolExecutor
             from ...tools.integrations.client_rpc_bridge import ClientRPCBridge
             from ...tools.integrations.permission_checker import PermissionChecker
 
-            bridge = ClientRPCBridge(client_rpc_service)
-            checker = PermissionChecker(permission_manager)
-            FileSystemToolDefinitions.register_all(tool_registry, FileSystemToolExecutor(bridge, checker))
-            TerminalToolDefinitions.register_all(tool_registry, TerminalToolExecutor(bridge, checker))
-            PlanToolDefinitions.register_all(tool_registry, PlanToolExecutor())
-            logger.debug("PromptOrchestrator initialized with tool executors", tools_registered=len(tool_registry.get_available_tools("")))
-        else:
-            from ...tools.definitions import PlanToolDefinitions
-            from ...tools.executors.plan_executor import PlanToolExecutor
+            bridge = ClientRPCBridge(self.client_rpc_service)
+            checker = PermissionChecker(self.permission_manager)
+            FileSystemToolDefinitions.register_all(self.tool_registry, FileSystemToolExecutor(bridge, checker))
+            TerminalToolDefinitions.register_all(self.tool_registry, TerminalToolExecutor(bridge, checker))
+            logger.debug("PromptOrchestrator registered tool executors", tools_registered=len(self.tool_registry.get_available_tools("")))
 
-            PlanToolDefinitions.register_all(tool_registry, PlanToolExecutor())
-            logger.debug("PromptOrchestrator initialized with plan tool only (client_rpc_service is None)")
-
-        # Slash commands
-        self._command_registry = CommandRegistry()
-        self._slash_router = SlashCommandRouter(self._command_registry)
-        self._command_registry.register(StatusCommandHandler())
-        self._command_registry.register(ModeCommandHandler())
-        self._command_registry.register(HelpCommandHandler(self._command_registry))
-
-        # LLMLoopStage хранится отдельно для делегирования из execute_pending_tool
-        self._llm_loop_stage = LLMLoopStage(
-            tool_registry=tool_registry,
-            tool_call_handler=tool_call_handler,
-            permission_manager=permission_manager,
-            state_manager=state_manager,
-            plan_builder=plan_builder,
-            global_policy_manager=global_policy_manager,
-        )
-
-        self._pipeline = PromptPipeline(stages=[
-            ValidationStage(state_manager),
-            SlashCommandStage(self._slash_router),
-            PlanBuildingStage(plan_builder),
-            TurnLifecycleStage(turn_lifecycle_manager, action="open"),
-            self._llm_loop_stage,
-            TurnLifecycleStage(turn_lifecycle_manager, action="close"),
-        ])
+        self._tools_registered = True
 
     @property
     def command_registry(self) -> CommandRegistry:
@@ -155,6 +151,9 @@ class PromptOrchestrator:
         Returns:
             ProtocolOutcome с notifications и response
         """
+        # Лениво регистрируем tool executors если service стал доступен
+        self._ensure_tools_registered()
+
         session_id = session.session_id
         prompt = params.get("prompt", [])
 
@@ -187,16 +186,32 @@ class PromptOrchestrator:
             if session.active_turn is not None:
                 self.turn_lifecycle_manager.finalize_turn(session, "end_turn")
                 self.turn_lifecycle_manager.clear_active_turn(session)
-            return ProtocolOutcome(response=result.error_response, notifications=result.notifications)
+            # Не отправляем notifications при ошибке валидации
+            return ProtocolOutcome(response=result.error_response, notifications=[])
 
         # Добавить session info независимо от того, завершён turn или отложен
         summary = self.state_manager.get_session_summary(session)
         result.notifications.append(_build_session_info_notification(session_id, summary))
+
+        from .session import _serialize_available_commands
+
+        result.notifications.append(
+            ACPMessage.notification(
+                "session/update",
+                {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "available_commands_update",
+                        "availableCommands": _serialize_available_commands(session.available_commands),
+                    },
+                },
+            )
+        )
         self.state_manager.add_event(
             session,
             {
                 "type": "session_update",
-                "update": {"sessionUpdate": "session_info", "title": summary.get("title"), "updated_at": summary.get("updated_at")},
+                "update": {"sessionUpdate": "session_info_update", "title": summary.get("title"), "updatedAt": summary.get("updated_at")},
             },
         )
 
@@ -273,6 +288,14 @@ class PromptOrchestrator:
                 logger.debug("cancelled pending RPC requests", session_id=session_id, cancelled_count=cancelled_rpc_count)
 
         self.turn_lifecycle_manager.finalize_turn(session, "cancelled")
+
+        # Сохраняем prompt response до очистки active_turn
+        if session.active_turn is not None and session.active_turn.prompt_request_id is not None:
+            session.pending_prompt_response = {
+                "request_id": session.active_turn.prompt_request_id,
+                "stop_reason": "cancelled",
+            }
+
         self.turn_lifecycle_manager.clear_active_turn(session)
 
         logger.debug("cancel request handled", session_id=session_id, notifications_count=len(notifications))
@@ -384,9 +407,9 @@ def _build_session_info_notification(session_id: str, summary: dict[str, Any]) -
         {
             "sessionId": session_id,
             "update": {
-                "sessionUpdate": "session_info",
+                "sessionUpdate": "session_info_update",
                 "title": summary.get("title"),
-                "updated_at": summary.get("updated_at"),
+                "updatedAt": summary.get("updated_at"),
             },
         },
     )

@@ -7,8 +7,8 @@ import json
 from typing import Any
 
 import pytest
+from factories import make_orchestrator
 
-from codelab.server.protocol.handlers.prompt import create_prompt_orchestrator
 from codelab.server.protocol.handlers.session import session_load
 from codelab.server.protocol.session_factory import SessionFactory
 
@@ -43,7 +43,7 @@ class TestEndToEndWithStorage:
             runtime_capabilities=None,
         )
 
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Act - Добавляем сообщение и проверяем формат события
         user_prompt = [{"type": "text", "text": "Hello!"}]
@@ -84,7 +84,7 @@ class TestEndToEndWithStorage:
             runtime_capabilities=None,
         )
 
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Act
         agent_text = "I can help you!"
@@ -125,7 +125,7 @@ class TestEndToEndWithStorage:
             runtime_capabilities=None,
         )
 
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Act - Добавляем события
         user_prompt = [{"type": "text", "text": "Test message"}]
@@ -171,7 +171,7 @@ class TestEndToEndWithStorage:
         storage = InMemoryStorage()
         await storage.save_session(session)
 
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Act - Заполняем session с правильным форматом
         user_prompt = [{"type": "text", "text": "Question"}]

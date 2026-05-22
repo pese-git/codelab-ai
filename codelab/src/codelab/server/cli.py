@@ -1,9 +1,10 @@
 """CLI-точка входа ACP-сервера.
 
-Модуль читает аргументы запуска и поднимает WS транспорт.
+Модуль читает аргументы запуска и поднимает WS или stdio транспорт.
 
 Пример использования:
     codelab serve --host 127.0.0.1 --port 8080
+    codelab serve --stdio
     codelab serve --log-level DEBUG
     codelab serve --log-level INFO --log-json
     codelab serve --log-level DEBUG --log-file default
@@ -104,6 +105,11 @@ def run_server() -> None:
     parser = argparse.ArgumentParser(prog="codelab serve")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8765, type=int)
+    parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Запустить stdio транспорт вместо WebSocket (чтение stdin, запись stdout)",
+    )
     parser.add_argument(
         "--require-auth",
         action="store_true",
@@ -255,7 +261,21 @@ def run_server() -> None:
         session_cache_size=config.storage.session_cache_size,
     )
 
-    # Создаём и запускаем сервер
+    # В stdio режиме — запускаем stdio сервер
+    if args.stdio:
+        logger.info("starting stdio server")
+        _run_stdio_server(
+            storage=storage,
+            config=config,
+            require_auth=args.require_auth,
+            auth_api_key=auth_api_key,
+            log_level=args.log_level,
+            log_json=args.log_json,
+            log_file=args.log_file,
+        )
+        return
+
+    # WebSocket режим
     logger.debug(
         "initializing http server",
         host=args.host,
@@ -269,6 +289,7 @@ def run_server() -> None:
         auth_api_key=auth_api_key,
         storage=storage,
         config=config,
+        enable_web=True,
     )
     logger.debug("http server initialized, preparing to start")
 
@@ -280,4 +301,55 @@ def run_server() -> None:
         logger.info("server interrupted by user")
     except Exception as e:
         logger.error("server error", error=str(e), exc_info=True)
+        raise
+
+
+def _run_stdio_server(
+    storage: SessionStorage,
+    config: AppConfig,
+    *,
+    require_auth: bool,
+    auth_api_key: str | None,
+    log_level: str,
+    log_json: bool,
+    log_file: str | None,
+) -> None:
+    """Запускает ACP-сервер в stdio режиме.
+
+    Args:
+        storage: Хранилище сессий.
+        config: Глобальная конфигурация приложения.
+        require_auth: Требовать аутентификацию.
+        auth_api_key: API ключ для аутентификации.
+        log_level: Уровень логирования.
+        log_json: Использовать JSON формат для логов.
+        log_file: Путь к файлу логов.
+    """
+    from codelab.server.transport.stdio_runner import run_stdio_server
+
+    logger = setup_logging(
+        level=log_level,
+        json_format=log_json,
+        log_file=log_file or None,
+    )
+
+    logger.info(
+        "stdio server starting",
+        llm_provider=config.llm.provider,
+        storage_type=type(storage).__name__,
+    )
+
+    try:
+        asyncio.run(
+            run_stdio_server(
+                storage=storage,
+                config=config,
+                require_auth=require_auth,
+                auth_api_key=auth_api_key,
+            )
+        )
+    except KeyboardInterrupt:
+        logger.info("stdio server interrupted by user")
+    except Exception as e:
+        logger.error("stdio server error", error=str(e), exc_info=True)
         raise

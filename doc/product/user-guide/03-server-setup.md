@@ -268,3 +268,4 @@ cat ~/.codelab/logs/codelab.log | tail -50
 
 - [Конфигурация](04-configuration.md) — детальная настройка
 - [Разрешения](05-permissions.md) — политики безопасности
+- [Интеграция с Zed IDE](10-zed-ide-integration.md) — настройка в Zed IDE

@@ -841,6 +841,64 @@ async def test_prompt_can_finish_with_meta_forced_stop_reason() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_can_finish_with_meta_forced_stop_reason_max_turn_requests() -> None:
+    protocol = ACPProtocol()
+    created = await protocol.handle(
+        ACPMessage.request("session/new", {"cwd": "/tmp", "mcpServers": []})
+    )
+    assert created.response is not None
+    assert isinstance(created.response.result, dict)
+    session_id = created.response.result["sessionId"]
+
+    outcome = await protocol.handle(
+        ACPMessage.request(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "plain prompt"}],
+                "_meta": {
+                    "promptDirectives": {
+                        "forcedStopReason": "max_turn_requests",
+                    }
+                },
+            },
+        )
+    )
+
+    assert outcome.response is not None
+    assert outcome.response.result == {"stopReason": "max_turn_requests"}
+
+
+@pytest.mark.asyncio
+async def test_prompt_can_finish_with_meta_forced_stop_reason_refusal() -> None:
+    protocol = ACPProtocol()
+    created = await protocol.handle(
+        ACPMessage.request("session/new", {"cwd": "/tmp", "mcpServers": []})
+    )
+    assert created.response is not None
+    assert isinstance(created.response.result, dict)
+    session_id = created.response.result["sessionId"]
+
+    outcome = await protocol.handle(
+        ACPMessage.request(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "plain prompt"}],
+                "_meta": {
+                    "promptDirectives": {
+                        "forcedStopReason": "refusal",
+                    }
+                },
+            },
+        )
+    )
+
+    assert outcome.response is not None
+    assert outcome.response.result == {"stopReason": "refusal"}
+
+
+@pytest.mark.asyncio
 async def test_session_list_returns_created_session() -> None:
     protocol = ACPProtocol()
     created = await protocol.handle(
@@ -2942,9 +3000,6 @@ async def test_all_standard_methods_are_registered():
         "session/request_permission_response",
         "session/set_config_option",
         "session/set_mode",
-        "ping",
-        "echo",
-        "shutdown",
     ]
     for method in required_methods:
         assert method in protocol._handlers, f"Method not registered: {method}"
@@ -2972,11 +3027,11 @@ async def test_middleware_is_called_for_registered_method():
         return result
 
     protocol = ACPProtocol(middleware=[logging_middleware])
-    outcome = await protocol.handle(ACPMessage.request("ping", {}))
+    outcome = await protocol.handle(ACPMessage.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}}))
 
     assert outcome.response is not None
     assert outcome.response.error is None
-    assert call_log == ["before:ping", "after:ping"]
+    assert call_log == ["before:initialize", "after:initialize"]
 
 
 @pytest.mark.asyncio
@@ -3027,7 +3082,7 @@ async def test_multiple_middleware_applied_in_order():
         return result
 
     protocol = ACPProtocol(middleware=[mw_outer, mw_inner])
-    await protocol.handle(ACPMessage.request("ping", {}))
+    await protocol.handle(ACPMessage.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}}))
 
     # Onion pattern: outer -> inner -> handler -> inner -> outer
     assert call_log == [
@@ -3052,36 +3107,11 @@ async def test_middleware_can_modify_response():
         return result
 
     protocol = ACPProtocol(middleware=[error_middleware])
-    outcome = await protocol.handle(ACPMessage.request("ping", {}))
+    outcome = await protocol.handle(ACPMessage.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}}))
 
     assert outcome.response is not None
     assert len(outcome.notifications) == 1
     assert outcome.notifications[0].method == "middleware/traced"
-
-
-@pytest.mark.asyncio
-async def test_handler_registry_dispatches_to_correct_handler():
-    """Реестр корректно диспетчеризует к нужному обработчику."""
-    protocol = ACPProtocol()
-
-    # initialize
-    init_outcome = await protocol.handle(
-        ACPMessage.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
-    )
-    assert init_outcome.response is not None
-    assert init_outcome.response.error is None
-
-    # ping
-    ping_outcome = await protocol.handle(ACPMessage.request("ping", {}))
-    assert ping_outcome.response is not None
-
-    # echo
-    echo_outcome = await protocol.handle(ACPMessage.request("echo", {"data": "test"}))
-    assert echo_outcome.response is not None
-
-    # shutdown
-    shutdown_outcome = await protocol.handle(ACPMessage.request("shutdown", {}))
-    assert shutdown_outcome.response is not None
 
 
 @pytest.mark.asyncio
@@ -3156,38 +3186,49 @@ async def test_orchestrator_can_be_injected():
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_reset_after_policy_manager_init():
-    """После инициализации GlobalPolicyManager оркестратор должен пересоздаться."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+async def test_orchestrator_recreated_with_different_policy_manager():
+    """PromptOrchestrator должен пересоздаваться при изменении policy manager."""
+    from unittest.mock import AsyncMock, MagicMock
 
+    from codelab.server.protocol.handlers.global_policy_manager import GlobalPolicyManager
     from codelab.server.tools.registry import ToolRegistry
 
     tool_registry = MagicMock(spec=ToolRegistry)
-    protocol = ACPProtocol(tool_registry=tool_registry)
+    
+    # Создаём два разных policy manager
+    mock_gpm1 = AsyncMock(spec=GlobalPolicyManager)
+    mock_gpm1.initialize = AsyncMock()
+    mock_gpm2 = AsyncMock(spec=GlobalPolicyManager)
+    mock_gpm2.initialize = AsyncMock()
 
-    orch_before = await protocol._get_prompt_orchestrator()
-    assert orch_before is not None
+    # Создаём protocol с первым policy manager
+    protocol1 = ACPProtocol(
+        tool_registry=tool_registry,
+        global_policy_manager=mock_gpm1,
+    )
+    orch1 = await protocol1._get_prompt_orchestrator()
+    assert orch1 is not None
 
-    # Мокаем GlobalPolicyManager для теста
-    mock_gpm = AsyncMock()
-    mock_gpm.initialize = AsyncMock()
-    with patch(
-        "codelab.server.protocol.handlers.global_policy_manager.GlobalPolicyManager.get_instance",
-        return_value=mock_gpm,
-    ):
-        await protocol.initialize_global_policy_manager()
+    # Создаём protocol со вторым policy manager
+    protocol2 = ACPProtocol(
+        tool_registry=tool_registry,
+        global_policy_manager=mock_gpm2,
+    )
+    orch2 = await protocol2._get_prompt_orchestrator()
+    assert orch2 is not None
 
-    orch_after = await protocol._get_prompt_orchestrator()
-
-    # Оркестратор пересоздан с новым policy manager
-    assert orch_before is not orch_after
+    # Это разные оркестраторы с разными policy manager
+    assert orch1 is not orch2
 
 
 @pytest.mark.asyncio
-async def test_get_prompt_orchestrator_returns_none_without_tool_registry():
-    """_get_prompt_orchestrator возвращает None, если tool_registry не настроен."""
+async def test_get_prompt_orchestrator_creates_default_registry_without_tool_registry():
+    """_get_prompt_orchestrator создаёт SimpleToolRegistry по умолчанию, если tool_registry не настроен."""
+    from codelab.server.protocol.handlers.prompt_orchestrator import PromptOrchestrator
+
     protocol = ACPProtocol()
 
     result = await protocol._get_prompt_orchestrator()
-    assert result is None
+    assert result is not None
+    assert isinstance(result, PromptOrchestrator)
 

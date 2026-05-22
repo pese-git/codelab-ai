@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -18,7 +19,6 @@ from ..storage import SessionStorage
 from .handlers import (
     auth,
     config,
-    legacy,
     permissions,
     prompt,
     session,
@@ -82,7 +82,9 @@ class ACPProtocol:
         client_rpc_service: ClientRPCService | None = None,
         tool_registry: ToolRegistry | None = None,
         prompt_orchestrator: PromptOrchestrator | None = None,
+        global_policy_manager: GlobalPolicyManager | None = None,
         middleware: list[MiddlewareFn] | None = None,
+        send_callback: Callable[[ACPMessage], Awaitable[None]] | None = None,
     ) -> None:
         """Инициализирует протокол и хранилище сессий.
 
@@ -94,7 +96,9 @@ class ACPProtocol:
             client_rpc_service: Сервис ClientRPC для выполнения инструментов (опционально).
             tool_registry: Реестр инструментов для регистрации и выполнения tools (опционально).
             prompt_orchestrator: Оркестратор prompt-turn (опционально, создаётся лениво).
+            global_policy_manager: Менеджер глобальных политик разрешений (опционально).
             middleware: Список middleware функций для сквозной логики (опционально).
+            send_callback: Callback для отправки сообщений транспортом (опционально).
 
         Пример использования:
             protocol = ACPProtocol()
@@ -126,7 +130,7 @@ class ACPProtocol:
         self._prompt_orchestrator: PromptOrchestrator | None = prompt_orchestrator
 
         # GlobalPolicyManager для fallback chain в permission checks
-        self._global_policy_manager: GlobalPolicyManager | None = None
+        self._global_policy_manager = global_policy_manager
 
         # Последние capabilities, согласованные через initialize.
         # Для in-memory demo-сервера это достаточно; по мере роста можно
@@ -163,13 +167,13 @@ class ACPProtocol:
             "session/request_permission_response": self._handle_permission_response_method,
             "session/set_config_option": self._handle_set_config_option,
             "session/set_mode": self._handle_set_mode,
-            "ping": self._handle_ping,
-            "echo": self._handle_echo,
-            "shutdown": self._handle_shutdown,
         }
 
         # Middleware для сквозной логики (логирование, метрики, auth-check)
         self._middleware: list[MiddlewareFn] = middleware or []
+
+        # Callback для отправки сообщений транспортом (используется фоновыми задачами)
+        self._send_callback: Callable[[ACPMessage], Awaitable[None]] | None = send_callback
 
     _config_specs: dict[str, dict[str, Any]] = {
         "mode": {
@@ -271,6 +275,105 @@ class ACPProtocol:
             wrapped = wrapped_with_middleware
 
         return await wrapped(message)
+
+    async def handle_and_process(
+        self, message: ACPMessage
+    ) -> ProtocolOutcome:
+        """Обрабатывает сообщение и запускает фоновые задачи если нужно.
+
+        Расширяет handle() логикой постобработки outcome:
+        - Если outcome содержит pending_tool_execution, запускает фоновую задачу
+        - Транспорт получает чистый outcome и только отправляет его
+
+        Это основной entry point для транспорта — вместо прямого вызова handle().
+
+        Args:
+            message: Входящее ACPMessage.
+
+        Returns:
+            ProtocolOutcome для отправки транспортом.
+        """
+        outcome = await self.handle(message)
+
+        if outcome.pending_tool_execution is not None:
+            pending = outcome.pending_tool_execution
+            logger.info(
+                "scheduling pending tool execution in background",
+                session_id=pending.session_id,
+                tool_call_id=pending.tool_call_id,
+            )
+            asyncio.create_task(
+                self._execute_tool_in_background(
+                    session_id=pending.session_id,
+                    tool_call_id=pending.tool_call_id,
+                )
+            )
+
+        return outcome
+
+    async def _execute_tool_in_background(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+    ) -> None:
+        """Фоновая задача для выполнения tool после permission approval.
+
+        Выполняет инструмент через LLMLoopStage, отправляет notifications
+        и завершает turn. Вызывается из handle_and_process().
+        """
+        try:
+            llm_result: LLMLoopResult = await self.execute_pending_tool(
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+            )
+
+            # Отправляем все accumulated notifications
+            for notification in llm_result.notifications:
+                await self._send_message(notification)
+
+            # Если LLM loop снова ожидает permission — просто выходим
+            if llm_result.pending_permission:
+                logger.debug(
+                    "llm loop deferred for permission",
+                    session_id=session_id,
+                )
+                return
+
+            # Завершаем turn и отправляем финальный response
+            stop_reason = llm_result.stop_reason or "end_turn"
+            turn_completion = await self.complete_active_turn(
+                session_id, stop_reason=stop_reason
+            )
+            if turn_completion is not None:
+                await self._send_message(turn_completion)
+                logger.debug(
+                    "turn completion sent after llm loop",
+                    session_id=session_id,
+                    stop_reason=stop_reason,
+                )
+        except Exception as exc:
+            logger.error(
+                "background tool execution failed",
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+                error=str(exc),
+                exc_info=True,
+            )
+
+    async def _send_message(self, message: ACPMessage) -> None:
+        """Отправляет сообщение через transport callback.
+
+        Используется для отправки notifications и turn completion
+        из фоновых задач (например, _execute_tool_in_background).
+        """
+        if self._send_callback is not None:
+            await self._send_callback(message)
+        else:
+            logger.warning(
+                "no send callback configured, message not sent",
+                method=message.method,
+            )
 
     async def complete_active_turn(
         self, session_id: str, *, stop_reason: str = "end_turn"
@@ -434,10 +537,11 @@ class ACPProtocol:
                 if session_state.active_turn is None:
                     continue
 
-                await prompt.session_cancel(
+                orchestrator = await self._get_prompt_orchestrator()
+                orchestrator.handle_cancel(
                     request_id=None,
                     params={"sessionId": session_state.session_id},
-                    storage=self._storage,
+                    session=session_state,
                 )
                 cancelled_count += 1
 
@@ -452,53 +556,93 @@ class ACPProtocol:
 
         return cancelled_count
 
-    async def _get_prompt_orchestrator(self) -> PromptOrchestrator | None:
-        """Получить или создать PromptOrchestrator.
+    async def _get_prompt_orchestrator(self) -> PromptOrchestrator:
+        """Получить PromptOrchestrator.
 
         Если передан явно в конструктор — использует его.
         Если нет — создаёт лениво при первом обращении.
+        Если tool_registry не настроен, создаёт SimpleToolRegistry по умолчанию.
 
         Returns:
-            PromptOrchestrator или None, если tool_registry не настроен.
+            PromptOrchestrator (всегда не None).
         """
         if self._prompt_orchestrator is not None:
             return self._prompt_orchestrator
 
-        if self._tool_registry is None:
-            return None
+        from ..tools.registry import SimpleToolRegistry
+        from .handlers.client_rpc_handler import ClientRPCHandler
 
-        self._prompt_orchestrator = prompt.create_prompt_orchestrator(
+        if self._tool_registry is None:
+            self._tool_registry = SimpleToolRegistry()
+        from .handlers.permission_manager import PermissionManager
+        from .handlers.pipeline import (
+            PlanBuildingStage,
+            PromptPipeline,
+            SlashCommandStage,
+            TurnLifecycleStage,
+            ValidationStage,
+        )
+        from .handlers.pipeline.stages import LLMLoopStage
+        from .handlers.pipeline.stages.directives import DirectivesStage
+        from .handlers.plan_builder import PlanBuilder
+        from .handlers.prompt_orchestrator import PromptOrchestrator
+        from .handlers.slash_commands import CommandRegistry, SlashCommandRouter
+        from .handlers.slash_commands.builtin import (
+            HelpCommandHandler,
+            ModeCommandHandler,
+            StatusCommandHandler,
+        )
+        from .handlers.state_manager import StateManager
+        from .handlers.tool_call_handler import ToolCallHandler
+        from .handlers.turn_lifecycle_manager import TurnLifecycleManager
+
+        state_manager = StateManager()
+        plan_builder = PlanBuilder()
+        turn_lifecycle_manager = TurnLifecycleManager()
+        tool_call_handler = ToolCallHandler()
+        permission_manager = PermissionManager()
+        client_rpc_handler = ClientRPCHandler()
+
+        llm_loop_stage = LLMLoopStage(
             tool_registry=self._tool_registry,
-            client_rpc_service=self._client_rpc_service,
+            tool_call_handler=tool_call_handler,
+            permission_manager=permission_manager,
+            state_manager=state_manager,
+            plan_builder=plan_builder,
             global_policy_manager=self._global_policy_manager,
         )
+
+        command_registry = CommandRegistry()
+        slash_router = SlashCommandRouter(command_registry)
+        command_registry.register(StatusCommandHandler())
+        command_registry.register(ModeCommandHandler())
+        command_registry.register(HelpCommandHandler(command_registry))
+
+        pipeline = PromptPipeline(stages=[
+            ValidationStage(state_manager),
+            SlashCommandStage(slash_router),
+            PlanBuildingStage(plan_builder),
+            TurnLifecycleStage(turn_lifecycle_manager, action="open"),
+            DirectivesStage(self._tool_registry, permission_manager),
+            llm_loop_stage,
+            TurnLifecycleStage(turn_lifecycle_manager, action="close"),
+        ])
+
+        self._prompt_orchestrator = PromptOrchestrator(
+            state_manager=state_manager,
+            plan_builder=plan_builder,
+            turn_lifecycle_manager=turn_lifecycle_manager,
+            tool_call_handler=tool_call_handler,
+            permission_manager=permission_manager,
+            client_rpc_handler=client_rpc_handler,
+            tool_registry=self._tool_registry,
+            llm_loop_stage=llm_loop_stage,
+            client_rpc_service=self._client_rpc_service,
+            global_policy_manager=self._global_policy_manager,
+            command_registry=command_registry,
+            pipeline=pipeline,
+        )
         return self._prompt_orchestrator
-
-    async def initialize_global_policy_manager(self) -> None:
-        """Инициализировать GlobalPolicyManager для fallback на global policies.
-
-        Graceful degradation: если инициализация не удалась, продолжаем без global policies.
-
-        Пример использования:
-            await protocol.initialize_global_policy_manager()
-        """
-        try:
-            from .handlers.global_policy_manager import GlobalPolicyManager
-
-            self._global_policy_manager = await GlobalPolicyManager.get_instance()
-            await self._global_policy_manager.initialize()
-
-            # Сбросить кэш, чтобы оркестратор пересоздался с новым policy manager
-            self._prompt_orchestrator = None
-
-            logger.info("GlobalPolicyManager initialized successfully")
-        except Exception as e:
-            logger.warning(
-                "Failed to initialize GlobalPolicyManager, continuing without global policies",
-                error=str(e),
-                exc_info=True,
-            )
-            self._global_policy_manager = None
 
     # -----------------------------------------------------------------------
     # Обработчики методов протокола (реестр _handlers)
@@ -625,24 +769,115 @@ class ACPProtocol:
     async def _handle_session_prompt(self, message: ACPMessage) -> ProtocolOutcome:
         """Обрабатывает метод session/prompt."""
         params = message.params or {}
-        return await prompt.session_prompt(
-            message.id,
-            params,
-            self._storage,
-            self._config_specs,
-            agent_orchestrator=self._agent_orchestrator,
-            tool_registry=self._tool_registry,
-            client_rpc_service=self._client_rpc_service,
-            global_manager=self._global_policy_manager,
+
+        orchestrator = await self._get_prompt_orchestrator()
+        session_id = params.get("sessionId")
+        if not isinstance(session_id, str):
+            return ProtocolOutcome(
+                response=ACPMessage.error_response(
+                    message.id,
+                    code=-32602,
+                    message="Invalid params: sessionId is required",
+                )
+            )
+
+        session = await self._storage.load_session(session_id)
+        if session is None:
+            return ProtocolOutcome(
+                response=ACPMessage.error_response(
+                    message.id,
+                    code=-32001,
+                    message=f"Session not found: {session_id}",
+                )
+            )
+
+        # Очищаем stale active_turn от предыдущего незавершённого turn.
+        # Если turn был deferred (ожидает permission/client RPC), а соединение
+        # разорвалось или сервер перезапустился — active_turn остаётся в storage
+        # и блокирует новые запросы. Новый turn создаст свой active_turn.
+        session.active_turn = None
+
+        outcome = await orchestrator.handle_prompt(
+            request_id=message.id,
+            params=params,
+            session=session,
+            storage=self._storage,
+            agent_orchestrator=self._agent_orchestrator,  # type: ignore[arg-type]
         )
+
+        # Сохраняем сессию (критично для permission flow)
+        try:
+            await self._storage.save_session(session)
+        except Exception as e:
+            logger.error(
+                "failed_to_save_session_after_prompt",
+                session_id=session_id,
+                error=str(e),
+            )
+
+        return outcome
 
     async def _handle_session_cancel(self, message: ACPMessage) -> ProtocolOutcome:
         """Обрабатывает метод session/cancel."""
         params = message.params or {}
-        return await prompt.session_cancel(
-            message.id,
-            params,
-            self._storage,
+
+        orchestrator = await self._get_prompt_orchestrator()
+        session_id = params.get("sessionId")
+        logger.info("session_cancel_received", session_id=session_id, request_id=message.id)
+        if not isinstance(session_id, str):
+            logger.warning("session_cancel_missing_session_id", params=params)
+            return ProtocolOutcome(response=None, notifications=[])
+
+        session = await self._storage.load_session(session_id)
+        if session is None:
+            return ProtocolOutcome(
+                response=ACPMessage.response(message.id, None),
+                notifications=[],
+            )
+
+        outcome = orchestrator.handle_cancel(
+            request_id=message.id,
+            params=params,
+            session=session,
+        )
+        logger.info(
+            "session_cancel_handled",
+            session_id=session_id,
+            notifications_count=len(outcome.notifications),
+            followup_count=len(outcome.followup_responses),
+        )
+
+        # Прервать активный LLM-запрос для этой сессии.
+        # handle_cancel помечает флаг и закрывает turn, но asyncio.Task с LLM
+        # продолжает работать до ответа модели — нужно явно его отменить.
+        if self._agent_orchestrator is not None:
+            await self._agent_orchestrator.cancel_prompt(session_id)
+            logger.info("agent_llm_task_cancelled", session_id=session_id)
+
+        await self._storage.save_session(session)
+
+        # Если cancel завершил deferred turn, отправляем followup response на prompt request
+        followup: list[ACPMessage] = list(outcome.followup_responses)
+        pending = session.pending_prompt_response
+        if pending is not None:
+            followup.append(
+                ACPMessage.response(
+                    pending["request_id"],
+                    {"stopReason": pending["stop_reason"]},
+                )
+            )
+            session.pending_prompt_response = None
+            await self._storage.save_session(session)
+
+        # Для notification (id=None) не отправляем response
+        cancel_response = outcome.response or (
+            ACPMessage.response(message.id, None) if message.id is not None else None
+        )
+
+        return ProtocolOutcome(
+            response=cancel_response,
+            notifications=outcome.notifications,
+            followup_responses=followup,
         )
 
     async def _handle_permission_response_method(self, message: ACPMessage) -> ProtocolOutcome:
@@ -676,19 +911,6 @@ class ACPProtocol:
             self._storage,
             self._config_specs,
         )
-
-    async def _handle_ping(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обрабатывает метод ping."""
-        return ProtocolOutcome(response=legacy.ping(message.id))
-
-    async def _handle_echo(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обрабатывает метод echo."""
-        params = message.params or {}
-        return ProtocolOutcome(response=legacy.echo(message.id, params))
-
-    async def _handle_shutdown(self, message: ACPMessage) -> ProtocolOutcome:
-        """Обрабатывает метод shutdown."""
-        return ProtocolOutcome(response=legacy.shutdown(message.id))
 
     # -----------------------------------------------------------------------
     # Вспомогательные методы

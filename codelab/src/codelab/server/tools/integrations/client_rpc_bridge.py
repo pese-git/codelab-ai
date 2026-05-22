@@ -237,7 +237,7 @@ class ClientRPCBridge:
             terminal_id: ID терминала.
             
         Returns:
-            Словарь с exit_code и output при успехе, None при ошибке.
+            Словарь с exit_code и signal при успехе, None при ошибке.
             
         Логирует все ошибки перед возвращением None.
         """
@@ -250,7 +250,7 @@ class ClientRPCBridge:
                 },
             )
             
-            output, exit_code = await self._service.wait_for_exit(
+            exit_code, signal = await self._service.wait_for_exit(
                 session_id=session.session_id,
                 terminal_id=terminal_id,
             )
@@ -261,12 +261,13 @@ class ClientRPCBridge:
                     "session_id": session.session_id,
                     "terminal_id": terminal_id,
                     "exit_code": exit_code,
+                    "signal": signal,
                 },
             )
             
             return {
                 "exit_code": exit_code,
-                "output": output,
+                "signal": signal,
             }
             
         except ClientCapabilityMissingError as e:
@@ -279,6 +280,76 @@ class ClientRPCBridge:
         except (ClientRPCTimeoutError, ClientRPCResponseError, ClientRPCError) as e:
             logger.error(
                 "Ошибка при ожидании завершения терминала",
+                extra={
+                    "session_id": session.session_id,
+                    "terminal_id": terminal_id,
+                    "error": str(e),
+                },
+            )
+            return None
+
+    async def terminal_output(
+        self,
+        session: SessionState,
+        terminal_id: str,
+    ) -> dict[str, Any] | None:
+        """Получить текущий output терминала через ClientRPC.
+        
+        Args:
+            session: Состояние сессии для логирования и контекста.
+            terminal_id: ID терминала.
+            
+        Returns:
+            Словарь {output, truncated, exit_code, signal, is_complete} или None при ошибке.
+            is_complete вычисляется из наличия exit_status.
+            
+        Логирует все ошибки перед возвращением None.
+        """
+        try:
+            logger.debug(
+                "Получение output терминала через ClientRPC",
+                extra={
+                    "session_id": session.session_id,
+                    "terminal_id": terminal_id,
+                },
+            )
+            
+            output, truncated, exit_code, signal = await self._service.terminal_output(
+                session_id=session.session_id,
+                terminal_id=terminal_id,
+            )
+            
+            is_complete = exit_code is not None or signal is not None
+            
+            logger.debug(
+                "Output терминала получен",
+                extra={
+                    "session_id": session.session_id,
+                    "terminal_id": terminal_id,
+                    "output_size": len(output),
+                    "truncated": truncated,
+                    "is_complete": is_complete,
+                },
+            )
+            
+            return {
+                "output": output,
+                "truncated": truncated,
+                "is_complete": is_complete,
+                "exit_code": exit_code,
+                "signal": signal,
+            }
+            
+        except ClientCapabilityMissingError as e:
+            logger.error(
+                "Capability terminal отсутствует на клиенте",
+                extra={"session_id": session.session_id, "error": str(e)},
+            )
+            return None
+            
+        except (ClientRPCTimeoutError, ClientRPCResponseError, ClientRPCError) as e:
+            logger.error(
+                "Ошибка при получении output терминала",
                 extra={
                     "session_id": session.session_id,
                     "terminal_id": terminal_id,

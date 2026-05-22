@@ -8,9 +8,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codelab.client.infrastructure.services.acp_transport_service import ACPTransportService
+from codelab.client.infrastructure.services.acp_transport_service import (
+    ACPTransportService,
+)
 from codelab.client.infrastructure.services.routing_queues import RoutingQueues
 from codelab.client.infrastructure.transport import WebSocketTransport
+
+
+def _create_service_for_test() -> ACPTransportService:
+    """Создаёт ACPTransportService для тестов с mock транспортом."""
+    transport = AsyncMock(spec=WebSocketTransport)
+    transport.is_connected.return_value = True
+    return ACPTransportService(transport=transport)
 
 
 class TestACPTransportServiceRequestWithCallbacks:
@@ -19,9 +28,7 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_permission_request_routing_via_handler(self) -> None:
         """Permission requests маршрутизируются через PermissionHandler."""
-        # Этот тест проверяет что параметр on_permission был удален
-        # и permission requests обрабатываются только через PermissionHandler
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         
         # Проверяем что request_with_callbacks не принимает on_permission параметр
         # Если попытаться передать on_permission, будет TypeError
@@ -39,12 +46,11 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_fs_read_request_with_id_is_handled(self) -> None:
         """Клиент отвечает на fs/read_text_file и завершает исходный запрос."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         queues = RoutingQueues()
         service._queues = queues  # noqa: SLF001 - test setup
 
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
+        transport = service._transport  # noqa: SLF001 - test setup
         sent_messages: list[dict[str, object]] = []
 
         async def send_str_side_effect(raw_payload: str) -> None:
@@ -78,8 +84,7 @@ class TestACPTransportServiceRequestWithCallbacks:
 
             asyncio.create_task(produce_server_messages())
 
-        transport.send_str = AsyncMock(side_effect=send_str_side_effect)
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport.send_str = AsyncMock(side_effect=send_str_side_effect)  # type: ignore[union-attr]
 
         response = await service.request_with_callbacks(
             method="session/prompt",
@@ -99,12 +104,11 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_unknown_server_rpc_with_id_gets_fallback_response(self) -> None:
         """На неизвестный server->client RPC отправляется пустой response."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         queues = RoutingQueues()
         service._queues = queues  # noqa: SLF001 - test setup
 
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
+        transport = service._transport  # noqa: SLF001 - test setup
         sent_messages: list[dict[str, object]] = []
 
         async def send_str_side_effect(raw_payload: str) -> None:
@@ -138,8 +142,7 @@ class TestACPTransportServiceRequestWithCallbacks:
 
             asyncio.create_task(produce_server_messages())
 
-        transport.send_str = AsyncMock(side_effect=send_str_side_effect)
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport.send_str = AsyncMock(side_effect=send_str_side_effect)  # type: ignore[union-attr]
 
         response = await service.request_with_callbacks(
             method="session/prompt",
@@ -158,11 +161,9 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_handle_client_rpc_logs_tool_lifecycle_trace(self) -> None:
         """Логируется полный trace lifecycle для fs/read_text_file."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
-        service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001 - test target
+        transport = service._transport  # noqa: SLF001 - test setup
 
         await service._handle_notification_or_client_rpc(  # noqa: SLF001 - test target
             method="session/prompt",
@@ -197,13 +198,12 @@ class TestACPTransportServiceRequestWithCallbacks:
     @pytest.mark.asyncio
     async def test_request_with_callbacks_logs_notification_failure(self) -> None:
         """Ошибка client-rpc callback логируется, а запрос завершается ответом."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
         queues = RoutingQueues()
         service._queues = queues  # noqa: SLF001 - test setup
 
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
+        transport = service._transport  # noqa: SLF001 - test setup
 
         async def send_str_side_effect(raw_payload: str) -> None:
             payload = json.loads(raw_payload)
@@ -235,8 +235,7 @@ class TestACPTransportServiceRequestWithCallbacks:
 
             asyncio.create_task(produce_server_messages())
 
-        transport.send_str = AsyncMock(side_effect=send_str_side_effect)
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport.send_str = AsyncMock(side_effect=send_str_side_effect)  # type: ignore[union-attr]
 
         response = await service.request_with_callbacks(
             method="session/prompt",
@@ -258,11 +257,9 @@ class TestFsWriteTextFile:
     @pytest.mark.asyncio
     async def test_fs_write_request_returns_success_true(self) -> None:
         """Клиент возвращает {success: true} при успешной записи."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport = service._transport  # noqa: SLF001 - test setup
 
         written_files: list[tuple[str, str]] = []
 
@@ -292,17 +289,15 @@ class TestFsWriteTextFile:
         transport.send_str.assert_awaited_once()
         sent_payload = json.loads(transport.send_str.call_args[0][0])
         assert sent_payload["id"] == "rpc-write-1"
-        assert sent_payload["result"] == {"success": True}
+        assert sent_payload["result"] == {}
         assert written_files == [("/tmp/test.md", "# Hello")]
 
     @pytest.mark.asyncio
-    async def test_fs_write_request_returns_success_false_on_callback_failure(self) -> None:
-        """Клиент возвращает {success: false} если callback вернул False."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+    async def test_fs_write_request_returns_empty_response_on_callback_failure(self) -> None:
+        """Клиент возвращает {} (ACP spec) даже если callback вернул False."""
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport = service._transport  # noqa: SLF001 - test setup
 
         def mock_write_failing(path: str, content: str) -> bool:
             return False
@@ -329,16 +324,15 @@ class TestFsWriteTextFile:
         transport.send_str.assert_awaited_once()
         sent_payload = json.loads(transport.send_str.call_args[0][0])
         assert sent_payload["id"] == "rpc-write-2"
-        assert sent_payload["result"] == {"success": False}
+        # ACP spec: response is always {} (failure would be an error response)
+        assert sent_payload["result"] == {}
 
     @pytest.mark.asyncio
     async def test_fs_write_request_error_sends_error_response(self) -> None:
         """При исключении в callback клиент отправляет error response."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001 - test setup
-        transport = AsyncMock(spec=WebSocketTransport)
-        transport.is_connected.return_value = True
-        service._transport = transport  # noqa: SLF001 - test setup
+        transport = service._transport  # noqa: SLF001 - test setup
 
         def mock_write_error(path: str, content: str) -> bool:
             raise OSError("Disk full")
@@ -375,7 +369,7 @@ class TestPermissionCallback:
 
     def test_set_permission_callback_stores_callback(self) -> None:
         """Метод set_permission_callback должен сохранять callback."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
 
         # Создаем mock callback
         callback = MagicMock()
@@ -388,7 +382,7 @@ class TestPermissionCallback:
 
     def test_set_permission_callback_logs_info_message(self) -> None:
         """Установка callback должна логировать INFO сообщение."""
-        service = ACPTransportService(host="127.0.0.1", port=8765)
+        service = _create_service_for_test()
         service._logger = MagicMock()  # noqa: SLF001
 
         # Создаем mock callback с именем
@@ -411,13 +405,9 @@ class TestPermissionCallback:
         self,
     ) -> None:
         """Установленный callback должен быть передан в handler.handle_request."""
-        # Создаем mock для PermissionHandler
         permission_handler = AsyncMock()
-        service = ACPTransportService(
-            host="127.0.0.1",
-            port=8765,
-            permission_handler=permission_handler,
-        )
+        service = _create_service_for_test()
+        service._permission_handler = permission_handler  # noqa: SLF001 - test setup
 
         # Устанавливаем mock callback
         callback = MagicMock()
@@ -467,13 +457,9 @@ class TestPermissionCallback:
         self,
     ) -> None:
         """Если callback не установлен, handler должен получить None."""
-        # Создаем mock для PermissionHandler
         permission_handler = AsyncMock()
-        service = ACPTransportService(
-            host="127.0.0.1",
-            port=8765,
-            permission_handler=permission_handler,
-        )
+        service = _create_service_for_test()
+        service._permission_handler = permission_handler  # noqa: SLF001 - test setup
 
         # НЕ устанавливаем callback - оставляем None
 
@@ -515,3 +501,147 @@ class TestPermissionCallback:
         permission_handler.handle_request.assert_called_once()
         call_kwargs = permission_handler.handle_request.call_args[1]
         assert call_kwargs["callback"] is None
+
+
+class TestAsyncCallbacks:
+    """Тесты async callbacks для предотвращения deadlock в stdio режиме."""
+
+    @pytest.mark.asyncio
+    async def test_async_fs_read_callback(self) -> None:
+        """Async fs/read callback не блокирует event loop."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        async def async_read(path: str) -> str:
+            await asyncio.sleep(0.01)  # Имитация async I/O
+            return f"async content from {path}"
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "fs/read_text_file",
+                "params": {"path": "/tmp/async.txt"},
+            },
+            on_update=None,
+            on_fs_read=async_read,
+            on_fs_write=None,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        assert response["result"]["content"] == "async content from /tmp/async.txt"
+
+    @pytest.mark.asyncio
+    async def test_async_fs_write_callback(self) -> None:
+        """Async fs/write callback не блокирует event loop."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        async def async_write(path: str, content: str) -> bool:
+            await asyncio.sleep(0.01)  # Имитация async I/O
+            return True
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "fs/write_text_file",
+                "params": {"path": "/tmp/async.txt", "content": "async content"},
+            },
+            on_update=None,
+            on_fs_read=None,
+            on_fs_write=async_write,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        # ACP spec: empty response means success
+        assert response["result"] == {}
+
+    @pytest.mark.asyncio
+    async def test_async_terminal_create_callback(self) -> None:
+        """Async terminal/create callback не блокирует event loop."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        async def async_terminal_create(command: str) -> str:
+            await asyncio.sleep(0.01)  # Имитация async terminal creation
+            return "terminal-123"
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "terminal/create",
+                "params": {"command": "ls", "args": ["-la"]},
+            },
+            on_update=None,
+            on_fs_read=None,
+            on_fs_write=None,
+            on_terminal_create=async_terminal_create,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        assert response["result"]["terminalId"] == "terminal-123"
+
+    @pytest.mark.asyncio
+    async def test_sync_callback_still_works(self) -> None:
+        """Sync callbacks продолжают работать как раньше."""
+        service = _create_service_for_test()
+        service._logger = MagicMock()  # noqa: SLF001
+        transport = service._transport  # noqa: SLF001
+
+        def sync_read(path: str) -> str:
+            return f"sync content from {path}"
+
+        await service._handle_notification_or_client_rpc(  # noqa: SLF001
+            method="session/prompt",
+            request_id="req-1",
+            notification_data={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "method": "fs/read_text_file",
+                "params": {"path": "/tmp/sync.txt"},
+            },
+            on_update=None,
+            on_fs_read=sync_read,
+            on_fs_write=None,
+            on_terminal_create=None,
+            on_terminal_output=None,
+            on_terminal_wait=None,
+            on_terminal_release=None,
+            on_terminal_kill=None,
+        )
+
+        transport.send_str.assert_awaited_once()
+        call_args = transport.send_str.call_args[0][0]
+        response = json.loads(call_args)
+        assert response["result"]["content"] == "sync content from /tmp/sync.txt"

@@ -1,4 +1,11 @@
-"""Базовый интерфейс для LLM-агентов."""
+"""Базовый интерфейс для LLM-агентов.
+
+Архитектурный контракт:
+  - LLMAgent отвечает за ОДИН вызов LLM. Цикл tool-calling — в LLMLoopStage.
+  - start_turn: начало нового turn — добавляет user message и вызывает LLM.
+  - continue_turn: продолжение после tool_results — НЕ добавляет user message.
+  - Управление историей (session.history) — ответственность AgentOrchestrator.
+"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -13,48 +20,114 @@ if TYPE_CHECKING:
 
 @dataclass
 class AgentContext:
-    """Контекст выполнения агента для одного prompt turn."""
+    """Контекст для start_turn — начало нового turn пользователя.
+
+    Отличие от ContinuationContext: здесь есть prompt пользователя, который
+    агент должен добавить как user message перед вызовом LLM.
+    """
 
     session_id: str
-    session: "SessionState"  # Состояние сессии для выполнения инструментов
-    prompt: list[dict[str, Any]]  # Содержимое prompt от пользователя
-    conversation_history: list[LLMMessage]  # История сообщений для LLM
-    available_tools: list[ToolDefinition]  # Инструменты для этого turn
-    config: dict[str, Any]  # SessionState.config_values
+    session: "SessionState"
+    # Prompt пользователя в виде блоков контента
+    prompt: list[dict[str, Any]]
+    # История сообщений до текущего промпта (user message ещё не добавлен)
+    conversation_history: list[LLMMessage]
+    # Инструменты, уже отфильтрованные по capabilities клиента
+    available_tools: list[ToolDefinition]
+    config: dict[str, Any]
+
+
+@dataclass
+class ContinuationContext:
+    """Контекст для continue_turn — продолжение после получения tool_results.
+
+    История уже содержит:
+      [..., assistant(tool_calls), tool(result_1), tool(result_2), ...]
+    Агент НЕ должен добавлять user message — LLM получает историю как есть
+    и генерирует следующий ответ (assistant text или новые tool_calls).
+    """
+
+    session_id: str
+    session: "SessionState"
+    # Полная история включая только что добавленные tool_results
+    history: list[LLMMessage]
+    # Инструменты, уже отфильтрованные по capabilities клиента
+    available_tools: list[ToolDefinition]
+    config: dict[str, Any]
 
 
 @dataclass
 class AgentResponse:
-    """Ответ агента после обработки prompt.
-    
+    """Ответ агента после одного вызова LLM.
+
     Attributes:
-        text: Текстовый ответ агента
-        tool_calls: Список вызовов инструментов
-        stop_reason: Причина остановки ("end_turn", "tool_use", "max_tokens", "error")
-        metadata: Дополнительные метаданные
-        plan: План выполнения задач (опционально). Список словарей с полями:
-            - content: Описание задачи
-            - priority: "low" | "medium" | "high"
-            - status: "pending" | "in_progress" | "completed" | "cancelled"
-            - description: Детальное описание (опционально)
+        text: Текстовый ответ агента (может быть пустым при наличии tool_calls).
+        tool_calls: Список вызовов инструментов, запрошенных LLM.
+        stop_reason: Причина завершения ("end_turn", "tool_use", "max_tokens").
+        metadata: Дополнительные метаданные (зарезервировано).
+        plan: Список шагов плана, если LLM использовал update_plan.
+            Каждый элемент: {content, priority, status, description?}
     """
 
     text: str
     tool_calls: list[LLMToolCall]
-    stop_reason: str  # "end_turn", "tool_use", "max_tokens", "error"
+    stop_reason: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    plan: list[dict[str, str]] | None = None  # План выполнения задач
+    plan: list[dict[str, str]] | None = None
 
 
 class LLMAgent(ABC):
-    """Базовый интерфейс для LLM-агентов.
+    """Абстрактный агент — выполняет один вызов LLM.
 
-    Агент отвечает за:
-    - Обработку prompt turns
-    - Управление историей сообщений
-    - Интеграцию с LLM провайдером
-    - Координацию выполнения инструментов
+    Ответственности:
+      - Сформировать список messages из контекста.
+      - Вызвать LLM провайдер ровно один раз.
+      - Вернуть AgentResponse с текстом и/или tool_calls.
+      - Поддерживать отмену активного запроса через cancel_prompt().
+
+    НЕ является ответственностью агента:
+      - Управление циклом tool-calling (это LLMLoopStage).
+      - Хранение истории сессии (это SessionState в AgentOrchestrator).
+      - Выполнение инструментов (это LLMLoopStage + ToolRegistry).
     """
+
+    @abstractmethod
+    async def start_turn(self, context: AgentContext) -> AgentResponse:
+        """Начало нового turn пользователя.
+
+        Добавляет user message из context.prompt к conversation_history
+        и выполняет один вызов LLM.
+
+        Args:
+            context: Контекст с промптом и историей до него.
+
+        Returns:
+            AgentResponse с текстом и/или tool_calls от LLM.
+        """
+
+    @abstractmethod
+    async def continue_turn(self, context: ContinuationContext) -> AgentResponse:
+        """Продолжение turn после получения результатов tool_calls.
+
+        НЕ добавляет user message — history уже содержит tool_results.
+        Выполняет один вызов LLM для получения следующего ответа.
+
+        Args:
+            context: Контекст с полной историей включая tool_results.
+
+        Returns:
+            AgentResponse с текстом (или новыми tool_calls) от LLM.
+        """
+
+    @abstractmethod
+    async def cancel_prompt(self, session_id: str) -> None:
+        """Отменить текущий in-flight LLM запрос для сессии.
+
+        Прерывает HTTP запрос к LLM API через asyncio cancellation.
+
+        Args:
+            session_id: ID сессии для поиска активного запроса.
+        """
 
     @abstractmethod
     async def initialize(
@@ -63,35 +136,20 @@ class LLMAgent(ABC):
         tool_registry: ToolRegistry,
         config: dict[str, Any],
     ) -> None:
-        """Инициализация агента."""
-        pass
+        """Обновить зависимости агента после инициализации DI контейнера.
 
-    @abstractmethod
-    async def process_prompt(self, context: AgentContext) -> AgentResponse:
-        """Обработать prompt и вернуть ответ."""
-        pass
-
-    @abstractmethod
-    async def cancel_prompt(self, session_id: str) -> None:
-        """Отменить текущую обработку prompt."""
-        pass
-
-    @abstractmethod
-    def add_to_history(
-        self,
-        session_id: str,
-        role: str,
-        content: str,
-    ) -> None:
-        """Добавить сообщение в историю сессии."""
-        pass
-
-    @abstractmethod
-    def get_session_history(self, session_id: str) -> list[LLMMessage]:
-        """Получить историю сообщений для сессии."""
-        pass
+        Args:
+            llm_provider: Новый LLM провайдер.
+            tool_registry: Реестр инструментов (зарезервировано).
+            config: Дополнительная конфигурация.
+        """
 
     @abstractmethod
     async def end_session(self, session_id: str) -> None:
-        """Завершить сессию и освободить ресурсы."""
-        pass
+        """Завершить сессию и освободить ресурсы.
+
+        Отменяет активный запрос если он есть.
+
+        Args:
+            session_id: ID сессии.
+        """

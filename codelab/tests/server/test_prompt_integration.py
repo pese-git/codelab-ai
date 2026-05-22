@@ -7,10 +7,8 @@
 from typing import Any
 
 import pytest
+from factories import make_orchestrator
 
-from codelab.server.protocol.handlers.prompt import (
-    create_prompt_orchestrator,
-)
 from codelab.server.protocol.handlers.prompt_orchestrator import PromptOrchestrator
 from codelab.server.protocol.state import (
     ActiveTurnState,
@@ -25,7 +23,7 @@ class TestPromptOrchestratorFactory:
     def test_create_prompt_orchestrator_success(self):
         """Создание PromptOrchestrator успешно инициализирует все компоненты."""
         # Act
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Assert
         assert orchestrator is not None
@@ -40,8 +38,8 @@ class TestPromptOrchestratorFactory:
     def test_create_prompt_orchestrator_idempotent(self):
         """Каждый вызов создает новый независимый экземпляр."""
         # Act
-        orchestrator1 = create_prompt_orchestrator()
-        orchestrator2 = create_prompt_orchestrator()
+        orchestrator1 = make_orchestrator()
+        orchestrator2 = make_orchestrator()
 
         # Assert
         assert orchestrator1 is not orchestrator2
@@ -97,7 +95,7 @@ class TestSessionPromptWithOrchestrator:
     @pytest.fixture
     def orchestrator(self) -> PromptOrchestrator:
         """Создает PromptOrchestrator для тестирования."""
-        return create_prompt_orchestrator()
+        return make_orchestrator()
 
     @pytest.fixture
     def session(self) -> SessionState:
@@ -144,7 +142,7 @@ class TestSessionPromptComponentIntegration:
     @pytest.fixture
     def orchestrator(self) -> PromptOrchestrator:
         """Создает PromptOrchestrator."""
-        return create_prompt_orchestrator()
+        return make_orchestrator()
 
     @pytest.fixture
     def session(self) -> SessionState:
@@ -292,7 +290,7 @@ class TestPromptIntegrationWithAllComponents:
         self,
     ) -> tuple[PromptOrchestrator, SessionState, dict[str, SessionState]]:
         """Подготавливает PromptOrchestrator, сессию и словарь сессий."""
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
         session = SessionState(
             session_id="sess_1",
             cwd="/tmp",
