@@ -496,7 +496,7 @@ class ACPTransportService(TransportService):
         await self.send(request.to_dict())
         try:
             await asyncio.wait_for(response_queue.get(), timeout=5.0)
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             pass
         finally:
             await self._queues.cleanup_response_queue(request_id)
