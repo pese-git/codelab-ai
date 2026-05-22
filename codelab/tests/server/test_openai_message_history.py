@@ -3,7 +3,7 @@
 import pytest
 
 from codelab.server.llm.base import LLMMessage, LLMToolCall
-from codelab.server.llm.openai_provider import OpenAIProvider
+from codelab.server.llm.providers.openai import OpenAIProvider
 
 
 class TestOpenAIMessageHistory:
