@@ -13,6 +13,7 @@ import structlog
 
 from codelab.server.llm.base import LLMConfig, LLMProvider
 from codelab.server.llm.errors import ModelNotFoundError, ProviderNotFoundError
+from codelab.server.llm.events import ProviderFailed, ProviderInitialized, event_bus
 from codelab.server.llm.models import ModelInfo, ProviderInfo
 
 logger = structlog.get_logger()
@@ -128,9 +129,30 @@ class LLMProviderRegistry:
             ProviderNotFoundError: Если провайдер не зарегистрирован
         """
         provider = await self.get_provider(provider_id)
-        await provider.initialize(config)
-        logger.info("provider initialized", provider_id=provider_id, model=config.model)
-        return provider
+        try:
+            await provider.initialize(config)
+            logger.info("provider initialized", provider_id=provider_id, model=config.model)
+
+            # Emit event
+            await event_bus.publish(
+                ProviderInitialized(
+                    provider_id=provider_id,
+                    model=config.model,
+                    base_url=config.base_url,
+                )
+            )
+
+            return provider
+        except Exception as e:
+            # Emit failure event
+            await event_bus.publish(
+                ProviderFailed(
+                    provider_id=provider_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+            )
+            raise
 
     def list_all_models(self) -> list[ModelInfo]:
         """Получить список всех доступных моделей.

@@ -103,9 +103,9 @@
 
 ## 15. Provider Event Bus Integration
 
-- [ ] 15.1 Интегрировать ProviderEventBus в provider initialization flow
-- [ ] 15.2 Интегрировать ProviderEventBus в request/response flow
-- [ ] 15.3 Тесты для event bus — event emission, logging
+- [x] 15.1 Интегрировать ProviderEventBus в provider initialization flow
+- [x] 15.2 Интегрировать ProviderEventBus в request/response flow
+- [x] 15.3 Тесты для event bus — event emission, logging
 
 ## 16. Module Exports
 
