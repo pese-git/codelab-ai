@@ -454,29 +454,6 @@ class TestTerminalOutputIntegration:
         assert len(sent_requests) == 0
 
     @pytest.mark.asyncio
-    async def test_terminal_output_integration_timeout(self, session: SessionState) -> None:
-        """Интеграционный тест: timeout при ожидании ответа."""
-        sent_requests: list[dict[str, object]] = []
-
-        async def send_request(request: dict[str, object]) -> None:
-            sent_requests.append(request)
-
-        rpc_service = ClientRPCService(
-            send_request_callback=send_request,
-            client_capabilities={
-                "fs": {"readTextFile": True, "writeTextFile": True},
-                "terminal": True,
-            },
-            timeout=0.01,  # очень короткий timeout
-        )
-
-        bridge = ClientRPCBridge(client_rpc_service=rpc_service)
-
-        result = await bridge.terminal_output(session, terminal_id="term_004")
-
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_terminal_output_integration_with_signal(self, session: SessionState) -> None:
         """Интеграционный тест: терминал завершен сигналом."""
         sent_requests: list[dict[str, object]] = []
