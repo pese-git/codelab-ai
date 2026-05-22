@@ -127,12 +127,12 @@
 
 ## 19. TOML Configuration System
 
-- [ ] 19.1 Создать загрузчик TOML: `codelab.toml` → `LLMConfig` через `tomllib`
-- [ ] 19.2 Реализовать merge logic: `~/.codelab/auth.toml` → `codelab.toml` → `codelab.local.toml` → `.env` → CLI
-- [ ] 19.3 Добавить поддержку per-model конфигурации (`ModelConfig` с `context_window`, `max_output_tokens`, `cost_*`)
-- [ ] 19.4 Добавить CLI аргумент `--config` для custom пути к TOML-файлу
-- [ ] 19.5 Тесты для TOML loader — парсинг, merge, per-model config, missing files
-- [ ] 19.6 Добавить `codelab.toml.example` в репозиторий как шаблон
+- [x] 19.1 Создать загрузчик TOML: `codelab.toml` → `LLMConfig` через `tomllib`
+- [x] 19.2 Реализовать merge logic: `~/.codelab/auth.toml` → `codelab.toml` → `codelab.local.toml` → `.env` → CLI
+- [x] 19.3 Добавить поддержку per-model конфигурации (`ModelConfig` с `context_window`, `max_output_tokens`, `cost_*`)
+- [x] 19.4 Добавить CLI аргумент `--config` для custom пути к TOML-файлу
+- [x] 19.5 Тесты для TOML loader — парсинг, merge, per-model config, missing files
+- [x] 19.6 Добавить `codelab.toml.example` в репозиторий как шаблон
 
 ## 21. Cleanup
 

@@ -198,6 +198,11 @@ def run_server() -> None:
         default=None,
         help="Порядок провайдеров в fallback цепочке (через запятую)",
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Путь к custom TOML файлу конфигурации. Переопределяет codelab.toml",
+    )
     args = parser.parse_args()
     logger.debug("command line arguments parsed")
 

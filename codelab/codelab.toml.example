@@ -1,0 +1,129 @@
+# CodeLab Configuration Template
+#
+# Скопируйте этот файл в codelab.toml и настройте под ваш проект.
+# Приоритет конфигурации (от lowest к highest):
+# 1. ~/.codelab/auth.toml — глобальные API keys
+# 2. codelab.toml — этот файл (проект)
+# 3. codelab.local.toml — project-local overrides (в .gitignore)
+# 4. Custom path через --config CLI аргумент
+
+[llm]
+# Активный провайдер: openai, anthropic, openrouter, zen, go, ollama, lmstudio, mock
+provider = "openai"
+
+# Модель в формате "provider/model"
+model = "openai/gpt-4o"
+
+# Параметры генерации
+temperature = 0.7
+max_tokens = 8192
+
+# ============================================================================
+# Конфигурация провайдеров
+# ============================================================================
+
+[llm.providers.openai]
+# API ключ можно указать напрямую или через переменную окружения
+api_key = "${OPENAI_API_KEY}"
+base_url = "https://api.openai.com/v1"
+default_model = "gpt-4o"
+
+# Per-model конфигурация
+[llm.providers.openai.models.gpt-4o]
+context_window = 128000
+max_output_tokens = 16384
+# cost_per_input_token = 0.0000025
+# cost_per_output_token = 0.00001
+
+[llm.providers.openai.models.o3]
+context_window = 200000
+max_output_tokens = 100000
+
+[llm.providers.openai.models.o4-mini]
+context_window = 200000
+max_output_tokens = 100000
+
+# ----------------------------------------------------------------------------
+
+[llm.providers.anthropic]
+api_key = "${ANTHROPIC_API_KEY}"
+base_url = "https://api.anthropic.com"
+default_model = "claude-sonnet-4"
+
+[llm.providers.anthropic.models.claude-sonnet-4]
+context_window = 200000
+max_output_tokens = 64000
+
+[llm.providers.anthropic.models.claude-opus-4]
+context_window = 200000
+max_output_tokens = 32000
+
+# ----------------------------------------------------------------------------
+
+[llm.providers.openrouter]
+api_key = "${OPENROUTER_API_KEY}"
+base_url = "https://openrouter.ai/api/v1"
+default_model = "mistral-large"
+
+[llm.providers.openrouter.models.mistral-large]
+context_window = 128000
+max_output_tokens = 64000
+
+[llm.providers.openrouter.models.llama-3.1-70b]
+context_window = 128000
+max_output_tokens = 8192
+
+# ----------------------------------------------------------------------------
+
+[llm.providers.zen]
+api_key = "${ZEN_API_KEY}"
+base_url = "https://zen.opencode.ai/v1"
+default_model = "zen-sonnet"
+
+# ----------------------------------------------------------------------------
+
+[llm.providers.go]
+api_key = "${GO_API_KEY}"
+base_url = "https://go.opencode.ai/v1"
+default_model = "go-fast"
+
+# ----------------------------------------------------------------------------
+
+[llm.providers.ollama]
+# Ollama обычно не требует API key
+base_url = "http://localhost:11434/v1"
+default_model = "llama3.1:70b"
+
+[llm.providers.ollama.models.llama3.1-70b]
+context_window = 128000
+max_output_tokens = 8192
+
+[llm.providers.ollama.models.mistral]
+context_window = 32000
+max_output_tokens = 8192
+
+# ----------------------------------------------------------------------------
+
+[llm.providers.lmstudio]
+base_url = "http://localhost:1234/v1"
+default_model = "local-model"
+
+# ============================================================================
+# Fallback система
+# ============================================================================
+
+[llm.fallback]
+# Включить fallback при ошибках провайдера
+enabled = false
+
+# Стратегия: sequential (MVP), cost, latency, smart (future)
+strategy = "sequential"
+
+# Порядок провайдеров для fallback
+order = ["openai", "openrouter", "ollama"]
+
+# Максимальное количество попыток
+max_attempts = 3
+
+# Типы ошибок для retry: rate_limit, timeout, internal_error, service_unavailable
+retry_on = ["rate_limit", "timeout"]
