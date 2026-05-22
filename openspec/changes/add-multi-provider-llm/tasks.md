@@ -114,10 +114,10 @@
 
 ## 17. Integration Tests
 
-- [ ] 17.1 E2E тест: full flow — initialize → session/new → configOptions → set_config_option(model) → prompt
-- [ ] 17.2 E2E тест: fallback chain — primary fails → fallback succeeds
-- [ ] 17.3 E2E тест: model switching mid-session
-- [ ] 17.4 Интеграционный тест: Registry → Resolver → Provider → Response
+- [x] 17.1 E2E тест: full flow — initialize → session/new → configOptions → set_config_option(model) → prompt
+- [x] 17.2 E2E тест: fallback chain — primary fails → fallback succeeds
+- [x] 17.3 E2E тест: model switching mid-session
+- [x] 17.4 Интеграционный тест: Registry → Resolver → Provider → Response
 
 ## 18. Documentation
 
