@@ -145,12 +145,40 @@ cp .env.example .env
 
 | Переменная | Описание | По умолчанию |
 |------------|----------|--------------|
-| `CODELAB_LLM_PROVIDER` | Провайдер LLM (openai, mock) | `mock` |
+| `CODELAB_LLM_PROVIDER` | Активный провайдер LLM | `mock` |
+| `CODELAB_LLM_MODEL` | Модель в формате `"provider/model"` | `mock/mock-model` |
+| `CODELAB_LLM_PROVIDERS` | Список провайдеров через запятую | `openai,mock` |
 | `OPENAI_API_KEY` | API ключ OpenAI | - |
-| `CODELAB_LLM_MODEL` | Модель LLM | `gpt-4o` |
+| `ANTHROPIC_API_KEY` | API ключ Anthropic | - |
+| `CODELAB_FALLBACK_ENABLED` | Включить fallback | `false` |
+| `CODELAB_FALLBACK_STRATEGY` | Стратегия fallback | `sequential` |
+| `CODELAB_FALLBACK_ORDER` | Порядок провайдеров через запятую | - |
 | `CODELAB_PORT` | Порт сервера | `8765` |
 | `CODELAB_HOST` | Хост сервера | `127.0.0.1` |
 | `CODELAB_LOG_LEVEL` | Уровень логирования | `INFO` |
+
+### Поддерживаемые LLM провайдеры
+
+| Провайдер | ID | Модели по умолчанию | Base URL |
+|-----------|----|---------------------|----------|
+| OpenAI | `openai` | `gpt-4o`, `o3`, `o4-mini` | `https://api.openai.com/v1` |
+| Anthropic | `anthropic` | `claude-sonnet-4`, `claude-opus-4` | `https://api.anthropic.com` |
+| OpenRouter | `openrouter` | `mistral-large`, `llama-3.1` | `https://openrouter.ai/api/v1` |
+| Zen | `zen` | `zen-sonnet` | `https://zen.opencode.ai/v1` |
+| Go | `go` | `go-fast` | `https://go.opencode.ai/v1` |
+| Ollama | `ollama` | `llama3.1:70b`, `mistral` | `http://localhost:11434/v1` |
+| LMStudio | `lmstudio` | local models | `http://localhost:1234/v1` |
+| Mock | `mock` | `mock-model` | N/A |
+
+### Fallback система
+
+При ошибках основного провайдера можно настроить fallback цепочку:
+
+```bash
+codelab serve --fallback-enabled --fallback-strategy sequential --fallback-order openai,openrouter,ollama
+```
+
+Fallback перебирает провайдеры по порядку при retryable ошибках (rate_limit, timeout, internal_error).
 
 ## Архитектура сервера
 

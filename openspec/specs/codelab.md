@@ -929,24 +929,133 @@ flowchart TD
 
 ## 20. LLM Провайдеры
 
-### 20.1 Архитектура
+### 20.1 Мульти-провайдер архитектура
+
+Система поддерживает 7+ провайдеров через Registry паттерн:
 
 ```python
+# Базовые интерфейсы
 class LLMProvider(ABC):
-    async def initialize(config: dict) -> None
-    async def generate(messages: list[LLMMessage]) -> str
+    @property
+    def name(self) -> str: ...
+    @property
+    def capabilities(self) -> LLMCapabilities: ...
+    async def initialize(config: LLMConfig) -> None: ...
+    async def create_completion(request: CompletionRequest) -> CompletionResponse: ...
+    async def stream_completion(request: CompletionRequest) -> AsyncGenerator[CompletionResponse, None]: ...
 
-class OpenAIProvider(LLMProvider):
-    # Поддержка: gpt-4o, gpt-4-turbo, gpt-3.5-turbo
-    # Каналы: sync API (openai library) / async
-    # Конфигурация: api_key, model, temperature, max_tokens, base_url
+# Registry — централизованная регистрация провайдеров
+class LLMProviderRegistry:
+    def register(provider_id: str, factory: ProviderFactory, info: ProviderInfo) -> None: ...
+    async def get_provider(provider_id: str) -> LLMProvider: ...
+    async def create_provider(provider_id: str, config: LLMConfig) -> LLMProvider: ...
+    def list_all_models() -> list[ModelInfo]: ...
 
-class MockLLMProvider(LLMProvider):
-    # Возвращает предопределённые ответы
-    # Для разработки и тестирования
+# Resolver — резолвит "provider/model" в конкретный провайдер
+class ModelResolver:
+    async def resolve(model_ref: str | ModelRef, config: LLMConfig) -> tuple[LLMProvider, str]: ...
 ```
 
-### 20.2 Формат сообщений
+### 20.2 Поддерживаемые провайдеры
+
+| Провайдер | Базовый класс | Base URL | Модели по умолчанию |
+|-----------|--------------|----------|---------------------|
+| OpenAI | OpenAICompatibleProvider | https://api.openai.com/v1 | gpt-4o, o3, o4-mini |
+| Anthropic | AnthropicProvider (Messages API) | https://api.anthropic.com | claude-sonnet-4, claude-opus-4 |
+| OpenRouter | OpenAICompatibleProvider | https://openrouter.ai/api/v1 | mistral-large, llama-3.1 |
+| Zen | OpenAICompatibleProvider | https://zen.opencode.ai/v1 | zen-sonnet |
+| Go | OpenAICompatibleProvider | https://go.opencode.ai/v1 | go-fast |
+| Ollama | OpenAICompatibleProvider | http://localhost:11434/v1 | llama3.1:70b, mistral |
+| LMStudio | OpenAICompatibleProvider | http://localhost:1234/v1 | local models |
+| Mock | MockLLMProvider | N/A | mock-model |
+
+### 20.3 OpenAICompatibleProvider
+
+Базовый класс для всех OpenAI-совместимых провайдеров:
+
+```python
+class OpenAICompatibleProvider(LLMProvider):
+    def __init__(self, base_url: str | None = None, default_model: str = "gpt-4o"): ...
+    # Конвертация CompletionRequest → OpenAI SDK формат
+    # Конвертация OpenAI response → CompletionResponse
+    # Поддержка streaming и tool calls
+```
+
+Наследники отличаются только `base_url` и `default_model`.
+
+### 20.4 AnthropicProvider
+
+Отдельная реализация через Anthropic Messages API:
+- `max_tokens` обязателен в запросе
+- Tool format: `input_schema` вместо `parameters`
+- Поддержка prompt caching (`cache_control`)
+- Extended thinking (Claude 3.7+)
+
+### 20.5 Fallback система
+
+```python
+class FallbackStrategy(ABC):
+    async def select_provider(candidates, request, context) -> LLMProvider: ...
+    def on_success(provider_id: str) -> None: ...
+    def on_failure(provider_id: str, error: ProviderError) -> None: ...
+
+class SequentialFallback(FallbackStrategy):
+    # Перебирает провайдеры по порядку
+    # CircuitBreaker extension point
+
+class FallbackOrchestrator:
+    async def execute_completion(providers, request, context) -> CompletionResponse: ...
+```
+
+Конфигурация:
+```yaml
+fallback:
+  enabled: false
+  strategy: "sequential"
+  order: ["openai", "openrouter", "ollama"]
+  max_attempts: 3
+  retry_on: ["rate_limit", "timeout", "internal_error"]
+```
+
+### 20.6 Model Discovery и Telemetry (Extension Points)
+
+```python
+class ModelDiscovery(ABC):
+    async def discover_models(provider_id: str) -> list[ModelInfo]: ...
+
+class StaticDiscovery(ModelDiscovery):
+    # Static list моделей (MVP)
+
+class TelemetrySink(ABC):
+    async def record_request(provider, model, latency_ms, success) -> None: ...
+    async def record_cost(provider, model, cost_usd) -> None: ...
+
+class NoOpTelemetry(TelemetrySink):
+    # Silent pass-through (MVP)
+```
+
+### 20.7 ProviderEventBus
+
+Event bus для provider lifecycle событий:
+- `ProviderInitialized` — провайдер успешно инициализирован
+- `ProviderFailed` — ошибка инициализации
+- `ModelsUpdated` — список моделей обновлён
+- `FallbackTriggered` — активирован fallback
+
+### 20.8 Формат моделей
+
+Формат: `"provider/model"` (например, `"openai/gpt-4o"`, `"anthropic/claude-sonnet-4"`)
+
+Переключение модели mid-session через `session/set_config_option`:
+```json
+{
+  "sessionId": "session-123",
+  "configId": "model",
+  "value": "anthropic/claude-sonnet-4"
+}
+```
+
+### 20.9 Формат сообщений
 
 ```yaml
 LLMMessage:
@@ -960,6 +1069,39 @@ LLMToolCall:
   id: str
   name: str
   arguments: dict
+
+CompletionRequest:
+  model: str
+  messages: list[LLMMessage]
+  tools: list[dict] | None
+  temperature: float = 0.7
+  max_tokens: int = 8192
+  stop: list[str] | None
+  stream: bool = False
+  extra: dict = {}
+
+CompletionResponse:
+  text: str
+  tool_calls: list[LLMToolCall]
+  stop_reason: StopReason  # end_turn, tool_use, max_tokens, stop_sequence, error, cancelled, refusal
+  model: str | None
+  usage: dict
+  extra: dict
+
+ModelInfo:
+  id: str                    # "gpt-4o"
+  provider_id: str           # "openai"
+  name: str | None
+  description: str | None
+  context_window: int | None
+  max_output_tokens: int | None
+  supports_tools: bool = True
+  supports_streaming: bool = True
+  cost_per_input_token: float | None
+  cost_per_output_token: float | None
+
+  @property
+  def full_id(self) -> str:  # "openai/gpt-4o"
 ```
 
 ## 21. Agent — внутреннее устройство LLM агента

@@ -2,6 +2,7 @@
 
 **Дата:** 2026-05-21
 **Метод:** Ручная верификация кода vs спецификация `doc/Agent Client Protocol/`
+**Обновлено:** 2026-05-22 — Multi-Provider LLM: 7 провайдеров, Registry, Resolver, Fallback, Model Discovery, Telemetry, ProviderEventBus, Integration Tests (8 тестов)
 **Обновлено:** 2026-05-22 — добавлены E2E тесты stdio transport (8 тестов), тесты ClientRPCBridge.terminal_output (29 тестов), тесты Tool Call advanced features (56 тестов), тесты extensibility (25 тестов)
 **Обновлено:** 2026-05-22 — устранён гэп #12 (RPC response models aligned with ACP spec), WriteTextFileResponse/TerminalKillResponse/TerminalReleaseResponse
 **Обновлено:** 2026-05-22 — устранён гэп #10 (session/list pagination edge cases), +22 теста
@@ -605,7 +606,7 @@ sequenceDiagram
 | Slash Commands | 2 | 35 | ✅ Полное |
 | HTTP Server | 2 | 18 | ✅ Полное |
 | Agent | 3 | 56 | ✅ Полное |
-| LLM Provider | 1 | 6 | ⚠️ Базовое |
+| LLM Provider | 8 | 68 | ✅ Полное (Multi-Provider) |
 | MCP Module | 1 | 27 | ✅ Полное |
 | Content | 3 | 68 | ✅ Полное |
 | Pipeline | 2 | 63 | ✅ Полное |
@@ -641,6 +642,70 @@ sequenceDiagram
 - MCP HTTP/SSE transports
 - ToolMapping round-trip edge cases с неизвестными префиксами
 - `authenticate` — расширенное покрытие (сейчас 4 теста)
+- TOML Configuration System (в разработке)
+
+---
+
+## Multi-Provider LLM Architecture (2026-05-22)
+
+### Реализованные компоненты
+
+| Компонент | Файл | Статус |
+|-----------|------|--------|
+| Models | `llm/models.py` | ✅ CompletionRequest, CompletionResponse, ModelInfo, ProviderInfo, StopReason |
+| Errors | `llm/errors.py` | ✅ ProviderError, ProviderNotFoundError, AllProvidersFailed, ProviderErrorType |
+| Base Interface | `llm/base.py` | ✅ LLMProvider ABC с initialize(config), name, capabilities |
+| Registry | `llm/registry.py` | ✅ LLMProviderRegistry с register(), create_provider(), list_all_models() |
+| Resolver | `llm/resolver.py` | ✅ ModelResolver с resolve(), resolve_from_session() |
+| Fallback Base | `llm/fallback/base.py` | ✅ FallbackStrategy ABC, FallbackContext |
+| Sequential Fallback | `llm/fallback/sequential.py` | ✅ SequentialFallback с CircuitBreaker support |
+| Circuit Breaker | `llm/fallback/circuit_breaker.py` | ✅ Extension point |
+| Fallback Config | `llm/fallback/config.py` | ✅ FallbackConfig dataclass |
+| Fallback Factory | `llm/fallback/factory.py` | ✅ FallbackStrategyFactory |
+| Fallback Orchestrator | `llm/fallback/orchestrator.py` | ✅ execute_completion(), execute_streaming() |
+| Discovery Base | `llm/discovery/base.py` | ✅ ModelDiscovery ABC |
+| Static Discovery | `llm/discovery/static.py` | ✅ StaticDiscovery |
+| Telemetry Base | `llm/telemetry/base.py` | ✅ TelemetrySink ABC |
+| NoOp Telemetry | `llm/telemetry/noop.py` | ✅ NoOpTelemetry |
+| Event Bus | `llm/events.py` | ✅ ProviderEventBus, ProviderInitialized, ProviderFailed, ModelsUpdated |
+| OpenAI Compatible | `llm/providers/openai_compatible.py` | ✅ Базовый класс для OpenAI-совместимых |
+| OpenAI | `llm/providers/openai.py` | ✅ Наследуется от OpenAICompatibleProvider |
+| Anthropic | `llm/providers/anthropic.py` | ✅ Messages API, отдельная реализация |
+| OpenRouter | `llm/providers/openrouter.py` | ✅ Наследуется от OpenAICompatibleProvider |
+| Zen | `llm/providers/zen.py` | ✅ Наследуется от OpenAICompatibleProvider |
+| Go | `llm/providers/go.py` | ✅ Наследуется от OpenAICompatibleProvider |
+| Ollama | `llm/providers/ollama.py` | ✅ Наследуется от OpenAICompatibleProvider |
+| LMStudio | `llm/providers/lmstudio.py` | ✅ Наследуется от OpenAICompatibleProvider |
+| Mock Provider | `llm/mock_provider.py` | ✅ Обновлён под новые модели |
+| Config Option Builder | `protocol/handlers/config_option_builder.py` | ✅ Генерация model config options |
+| Model Switching | `protocol/handlers/config.py` | ✅ set_config_option для configId="model" |
+| Orchestrator Integration | `agent/orchestrator.py` | ✅ ModelResolver вместо прямого provider |
+| Pipeline Integration | `protocol/handlers/pipeline/stages/llm_loop.py` | ✅ Resolver integration |
+| CLI Update | `server/cli.py` | ✅ --fallback-enabled, --fallback-strategy, --fallback-order |
+| DI Container | `server/di.py` | ✅ Registry-based factory |
+
+### Интеграционные тесты
+
+| Тест | Описание | Статус |
+|------|----------|--------|
+| Registry → Resolver → Provider → Response | Полная цепочка | ✅ |
+| Default Provider Resolution | Resolver без provider_id | ✅ |
+| Multiple Providers Resolution | Несколько провайдеров | ✅ |
+| Fallback Chain | Primary fails → fallback succeeds | ✅ |
+| E2E Full Flow | initialize → session/new → configOptions → prompt | ✅ |
+| E2E Initialize + Prompt | Mock provider integration | ✅ |
+| Model Switching Mid-Session | Переключение модели | ✅ |
+| Invalid Model Switch | Ошибка при invalid model | ✅ |
+
+### Статус
+
+- **Провайдеров:** 7 (OpenAI, Anthropic, OpenRouter, Zen, Go, Ollama, LMStudio) + Mock
+- **Fallback:** Sequential с CircuitBreaker extension point
+- **Model Discovery:** Static (MVP), Dynamic extension point
+- **Telemetry:** NoOp (MVP), Prometheus extension point
+- **Model Format:** `"provider/model"` (например, `"openai/gpt-4o"`)
+- **Model Switching:** Mid-session через `session/set_config_option`
+- **Тестов:** 68 (unit + integration)
 
 ---
 
@@ -664,7 +729,7 @@ sequenceDiagram
 
 ### P2 — Желательные
 
-1. **Добавить LLM провайдеры** — Anthropic, Gemini, Ollama
+~~1. **Добавить LLM провайдеры** — Anthropic, Gemini, Ollama~~ ✅ Решено (2026-05-22) — 7 провайдеров, Registry, Fallback, Model Discovery
 2. **Реализовать MCP HTTP transport**
 3. **Добавить MCP auto-reconnect**
 4. **Реализовать SQLite storage**
