@@ -224,3 +224,4 @@ uv run codelab serve --port 8766
 
 - [Быстрый старт](03-quickstart.md) — первый запуск и основы работы
 - [Первый проект](04-first-project.md) — практический пример
+- [Интеграция с Zed IDE](../user-guide/10-zed-ide-integration.md) — настройка в Zed IDE

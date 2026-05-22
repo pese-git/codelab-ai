@@ -65,7 +65,6 @@ uv run python -m pytest
     - `plan_builder.py` — построение планов агента
     - `state_manager.py` — управление состоянием
     - `turn_lifecycle_manager.py` — управление жизненным циклом turn
-    - `legacy.py` — ping, echo, shutdown
   - `content/` — типы контента (ACP Content Types):
     - `base.py` — базовые классы
     - `text.py`, `image.py`, `audio.py` — типы контента

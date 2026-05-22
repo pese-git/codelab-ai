@@ -1,14 +1,17 @@
 """Управление глобальными permission policies.
 
-Singleton для управления глобальными разрешениями инструментов.
+Создаётся через DI контейнер (не singleton).
 Предоставляет высокоуровневый API для работы с GlobalPolicyStorage
 и кэширование policies в памяти для улучшения производительности.
+
+Пример использования:
+    # Через DI контейнер
+    manager = container.get(GlobalPolicyManager)
+    await manager.initialize()
+    policy = await manager.get_global_policy("execute")
 """
 
 from __future__ import annotations
-
-import asyncio
-from pathlib import Path
 
 import structlog
 
@@ -18,73 +21,28 @@ logger = structlog.get_logger()
 
 
 class GlobalPolicyManager:
-    """Singleton для управления глобальными permission policies.
+    """Менеджер глобальных permission policies.
 
     Предоставляет высокоуровневый API для работы с GlobalPolicyStorage.
     Кэширует policies в памяти для performance.
 
-    Thread-safe операции через asyncio.Lock на уровне класса.
+    Создаётся через DI контейнер, не singleton.
 
     Спецификация допустимых decisions:
     - allow_always: автоматически разрешить все инструменты этого типа
     - reject_always: автоматически отклонить все инструменты этого типа
     """
 
-    _instance: GlobalPolicyManager | None = None
-    _lock: asyncio.Lock | None = None  # создаётся лениво в текущем event loop
-
     # Допустимые решения (синхронизировано с GlobalPolicyStorage)
     VALID_DECISIONS = ("allow_always", "reject_always")
 
-    @classmethod
-    def _get_lock(cls) -> asyncio.Lock:
-        """Получить или создать Lock в текущем event loop.
-
-        Ленивая инициализация гарантирует что Lock привязан
-        к активному event loop, а не к loop на момент импорта модуля.
-        """
-        if cls._lock is None:
-            cls._lock = asyncio.Lock()
-        return cls._lock
-
-    @classmethod
-    async def get_instance(
-        cls, storage_path: Path | None = None
-    ) -> GlobalPolicyManager:
-        """Получить singleton instance. Thread-safe.
-
-        При первом вызове создаёт экземпляр с GlobalPolicyStorage.
-        При последующих вызовах возвращает существующий экземпляр.
+    def __init__(self, storage: GlobalPolicyStorage | None = None) -> None:
+        """Конструктор.
 
         Args:
-            storage_path: Путь к JSON файлу с policies.
-                         Default: ~/.acp/global_permissions.json
-                         Игнорируется если экземпляр уже создан.
-
-        Returns:
-            GlobalPolicyManager: Singleton instance.
+            storage: GlobalPolicyStorage instance. Если None — создаётся default.
         """
-        if cls._instance is not None:
-            return cls._instance
-
-        async with cls._get_lock():
-            # Double-check pattern для thread-safety
-            if cls._instance is not None:
-                return cls._instance
-
-            storage = GlobalPolicyStorage(storage_path=storage_path)
-            cls._instance = cls(storage)
-            await cls._instance.initialize()
-            logger.debug("GlobalPolicyManager singleton created and initialized")
-            return cls._instance
-
-    def __init__(self, storage: GlobalPolicyStorage) -> None:
-        """Private constructor. Use get_instance().
-
-        Args:
-            storage: GlobalPolicyStorage instance для персистентного хранилища.
-        """
-        self._storage = storage
+        self._storage = storage or GlobalPolicyStorage()
         self._cache: dict[str, str] | None = None
 
     async def initialize(self) -> None:
@@ -196,15 +154,3 @@ class GlobalPolicyManager:
         """
         self._cache = await self._storage.load()
         logger.debug("Cache invalidated, reloaded from storage")
-
-    @classmethod
-    def reset_for_testing(cls) -> None:
-        """Сбросить singleton состояние. Использовать ТОЛЬКО в тестах.
-
-        Сбрасывает и instance и lock, чтобы в новом тесте
-        lock создался в новом event loop.
-        """
-        cls._instance = None
-        cls._lock = None
-        logger.debug("GlobalPolicyManager reset for testing")
-

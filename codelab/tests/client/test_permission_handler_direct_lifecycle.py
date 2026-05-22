@@ -48,12 +48,10 @@ class TestPermissionHandlerDirectLifecycle:
     @pytest.fixture
     def permission_handler(
         self,
-        mock_coordinator: Mock,
         mock_transport: Mock,
     ) -> PermissionHandler:
         """Создать настоящий PermissionHandler для тестирования."""
         handler = PermissionHandler(
-            coordinator=mock_coordinator,
             transport=mock_transport,
             logger=Mock(),
         )

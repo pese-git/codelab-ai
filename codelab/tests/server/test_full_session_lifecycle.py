@@ -10,8 +10,8 @@
 from typing import Any
 
 import pytest
+from factories import make_orchestrator
 
-from codelab.server.protocol.handlers.prompt import create_prompt_orchestrator
 from codelab.server.protocol.handlers.session import session_load
 from codelab.server.protocol.session_factory import SessionFactory
 
@@ -48,7 +48,7 @@ class TestFullSessionLifecycle:
         )
 
         # Act - Симулируем использование сессии (добавляем события вручную)
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Добавляем user message и сохраняем в events_history
         user_prompt = [{"type": "text", "text": "Hello, how are you?"}]
@@ -158,7 +158,7 @@ class TestFullSessionLifecycle:
             runtime_capabilities=None,
         )
 
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Act - Первый turn (пользователь)
         user_prompt_1 = [{"type": "text", "text": "What is Python?"}]
@@ -275,7 +275,7 @@ class TestFullSessionLifecycle:
             runtime_capabilities=None,
         )
 
-        orchestrator = create_prompt_orchestrator()
+        orchestrator = make_orchestrator()
 
         # Act - Добавляем события в строгом порядке
         events_sequence = [

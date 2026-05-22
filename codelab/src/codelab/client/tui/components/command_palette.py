@@ -490,11 +490,11 @@ class CommandPalette(ModalScreen[Command | None]):
         search_input = self.query_one("#command-search", Input)
         search_input.focus()
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    async def on_input_changed(self, event: Input.Changed) -> None:
         """Обрабатывает изменение поискового запроса."""
         query = event.value.strip().lower()
         self._filter_commands(query)
-        self._refresh_commands()
+        await self._refresh_commands()
 
     def _filter_commands(self, query: str) -> None:
         """Фильтрует команды по запросу (fuzzy search).
@@ -533,11 +533,20 @@ class CommandPalette(ModalScreen[Command | None]):
                 query_index += 1
         return query_index == len(query)
 
-    def _refresh_commands(self) -> None:
-        """Обновляет отображение списка команд."""
+    def _update_selection(self) -> None:
+        """Обновляет класс -selected без пересоздания виджетов."""
+        for i, cmd in enumerate(self._filtered_commands):
+            try:
+                item = self.query_one(f"#cmd-{cmd.id}", CommandItem)
+                item.set_class(i == self._selected_index, "-selected")
+            except Exception:
+                pass
+
+    async def _refresh_commands(self) -> None:
+        """Пересоздаёт список команд (используется после фильтрации)."""
         scroll = self.query_one(".commands-scroll", VerticalScroll)
-        scroll.remove_children()
-        scroll.mount(*list(self._render_commands()))
+        await scroll.remove_children()
+        await scroll.mount(*list(self._render_commands()))
 
     def action_close(self) -> None:
         """Закрывает палитру без выбора."""
@@ -547,13 +556,13 @@ class CommandPalette(ModalScreen[Command | None]):
         """Выбирает предыдущую команду."""
         if self._filtered_commands and self._selected_index > 0:
             self._selected_index -= 1
-            self._refresh_commands()
+            self._update_selection()
 
     def action_next(self) -> None:
         """Выбирает следующую команду."""
         if self._filtered_commands and self._selected_index < len(self._filtered_commands) - 1:
             self._selected_index += 1
-            self._refresh_commands()
+            self._update_selection()
 
     def action_select(self) -> None:
         """Выполняет выбранную команду."""

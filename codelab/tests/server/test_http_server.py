@@ -35,6 +35,21 @@ async def _start_test_server(
         require_auth=require_auth,
         auth_api_key=auth_api_key,
     )
+
+    # Инициализируем DI контейнер (как это делает run())
+    from codelab.server.di import make_container
+    from codelab.server.storage import InMemoryStorage
+
+    if server.storage is None:
+        server.storage = InMemoryStorage()
+
+    server._app_container = make_container(
+        config=server.config,
+        storage=server.storage,
+        require_auth=server.require_auth,
+        auth_api_key=server.auth_api_key,
+    )
+
     app = web.Application()
     app.router.add_get("/acp/ws", server.handle_ws_request)
 
@@ -492,7 +507,7 @@ async def test_ws_prompt_terminal_roundtrip_finishes_with_end_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ws_prompt_is_processed_in_background_and_does_not_block_ping(
+async def test_ws_prompt_is_processed_in_background_and_does_not_block_other_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Проверяет, что in-flight prompt не блокирует обработку других запросов."""
@@ -541,14 +556,14 @@ async def test_ws_prompt_is_processed_in_background_and_does_not_block_ping(
                 await ws.send_json(
                     {
                         "jsonrpc": "2.0",
-                        "id": "ping_1",
-                        "method": "ping",
+                        "id": "list_1",
+                        "method": "session/list",
                         "params": {},
                     }
                 )
 
                 first_response = await asyncio.wait_for(ws.receive_json(), timeout=0.2)
-                assert first_response.get("id") == "ping_1"
+                assert first_response.get("id") == "list_1"
 
                 second_response = await asyncio.wait_for(ws.receive_json(), timeout=1.0)
                 assert second_response.get("id") == "prompt_1"
@@ -569,6 +584,19 @@ async def test_oversized_message_rejected() -> None:
         websocket=WebSocketConfig(max_msg_size=1024, heartbeat_interval=30.0),
     )
     server = ACPHttpServer(host="127.0.0.1", port=port, config=config)
+
+    # Инициализируем DI контейнер
+    from codelab.server.di import make_container
+    from codelab.server.storage import InMemoryStorage
+
+    server.storage = InMemoryStorage()
+    server._app_container = make_container(
+        config=server.config,
+        storage=server.storage,
+        require_auth=server.require_auth,
+        auth_api_key=server.auth_api_key,
+    )
+
     app = web.Application()
     app.router.add_get("/acp/ws", server.handle_ws_request)
 
@@ -606,6 +634,19 @@ async def test_message_within_limit_accepted() -> None:
         websocket=WebSocketConfig(max_msg_size=4 * 1024 * 1024, heartbeat_interval=30.0),
     )
     server = ACPHttpServer(host="127.0.0.1", port=port, config=config)
+
+    # Инициализируем DI контейнер
+    from codelab.server.di import make_container
+    from codelab.server.storage import InMemoryStorage
+
+    server.storage = InMemoryStorage()
+    server._app_container = make_container(
+        config=server.config,
+        storage=server.storage,
+        require_auth=server.require_auth,
+        auth_api_key=server.auth_api_key,
+    )
+
     app = web.Application()
     app.router.add_get("/acp/ws", server.handle_ws_request)
 

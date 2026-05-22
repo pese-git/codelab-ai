@@ -89,7 +89,7 @@ acp-protocol/
 │   │   │   │   ├── pending_registry.py
 │   │   │   │   ├── handlers/       # Обработчики методов ACP
 │   │   │   │   │   ├── auth.py, session.py, prompt.py
-│   │   │   │   │   ├── config.py, permissions.py, legacy.py
+│   │   │   │   │   ├── config.py, permissions.py
 │   │   │   │   │   ├── prompt_orchestrator.py  # Главный оркестратор
 │   │   │   │   │   ├── turn_lifecycle_manager.py
 │   │   │   │   │   ├── state_manager.py

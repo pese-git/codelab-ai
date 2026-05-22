@@ -4,7 +4,7 @@
 DI-контейнера клиентского приложения.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +14,14 @@ class ClientConfig:
     """Конфигурация клиентского приложения.
 
     Attributes:
-        host: Адрес сервера ACP
-        port: Порт сервера ACP
+        host: Адрес сервера ACP (для WebSocket режима)
+        port: Порт сервера ACP (для WebSocket режима)
         cwd: Рабочая директория проекта
         history_dir: Директория локальной истории чата
         logger: Logger для структурированного логирования
+        transport_mode: Режим транспорта ("websocket" или "stdio")
+        stdio_command: Команда для запуска агента (для stdio режима)
+        stdio_args: Аргументы команды (для stdio режима)
     """
 
     host: str
@@ -26,3 +29,6 @@ class ClientConfig:
     cwd: Path
     history_dir: str | None = None
     logger: Any = None
+    transport_mode: str = "websocket"
+    stdio_command: str | None = None
+    stdio_args: list[str] = field(default_factory=list)

@@ -9,11 +9,14 @@ Tests verify:
 """
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from codelab.client.application.permission_handler import PermissionHandler
 from codelab.client.application.session_coordinator import SessionCoordinator
+from codelab.client.domain.repositories import SessionRepository
+from codelab.client.domain.services import TransportService
 from codelab.client.infrastructure.client_config import ClientConfig
 from codelab.client.infrastructure.container_factory import create_client_container
 from codelab.client.infrastructure.events.bus import EventBus
@@ -108,15 +111,13 @@ class TestServiceResolution:
         assert isinstance(event_bus, EventBus)
 
     def test_resolve_transport(self, container) -> None:
-        """Тест: ACPTransportService разрешается."""
-        transport = container.get(ACPTransportService)
+        """Тест: TransportService разрешается как ACPTransportService."""
+        transport = container.get(TransportService)
         assert isinstance(transport, ACPTransportService)
-        assert transport.host == "localhost"
-        assert transport.port == 8000
 
     def test_resolve_session_repo(self, container) -> None:
-        """Тест: InMemorySessionRepository разрешается."""
-        repo = container.get(InMemorySessionRepository)
+        """Тест: SessionRepository разрешается как InMemorySessionRepository."""
+        repo = container.get(SessionRepository)
         assert isinstance(repo, InMemorySessionRepository)
 
     def test_resolve_fs_executor(self, container) -> None:
@@ -163,10 +164,10 @@ class TestCyclicDependencyResolution:
 
     def test_transport_has_permission_handler(self, container) -> None:
         """Тест: Transport имеет PermissionHandler (цикл разрешён)."""
-        transport = container.get(ACPTransportService)
+        transport = container.get(TransportService)
         permission_handler = container.get(PermissionHandler)
 
-        assert transport._permission_handler is permission_handler
+        assert cast(ACPTransportService, transport)._permission_handler is permission_handler
 
 
 class TestViewModelResolution:
@@ -278,7 +279,6 @@ class TestClientProvider:
             permission_handler=None,
         )
         permission_handler = PermissionHandler(
-            coordinator=coordinator,
             transport=None,  # type: ignore
             logger=None,
         )

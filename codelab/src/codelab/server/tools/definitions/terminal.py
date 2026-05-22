@@ -32,7 +32,7 @@ class TerminalToolDefinitions:
             ToolDefinition для регистрации в реестре.
         """
         return ToolDefinition(
-            name="execute_command",
+            name="terminal/create",
             description=(
                 "Create a new terminal and execute a command. "
                 "Returns terminal ID for subsequent operations like wait_for_exit and release."
@@ -84,10 +84,11 @@ class TerminalToolDefinitions:
             ToolDefinition для регистрации в реестре.
         """
         return ToolDefinition(
-            name="wait_for_exit",
+            name="terminal/wait_for_exit",
             description=(
-                "Wait for a terminal to complete execution and retrieve the exit code and output. "
-                "Use after execute_command to get the result of a long-running command."
+                "Wait for a terminal to complete execution and retrieve the exit code. "
+                "The terminal output is retrieved automatically. "
+                "Use after terminal/create to get the result of a long-running command."
             ),
             parameters={
                 "type": "object",
@@ -117,7 +118,7 @@ class TerminalToolDefinitions:
             ToolDefinition для регистрации в реестре.
         """
         return ToolDefinition(
-            name="release_terminal",
+            name="terminal/release",
             description=(
                 "Release terminal resources and clean up. "
                 "Should be called after wait_for_exit to free up resources."

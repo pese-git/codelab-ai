@@ -146,6 +146,12 @@ Screen {
     margin-left: 1;
 }
 
+#stop-button {
+    width: 10;
+    height: 100%;
+    margin-left: 1;
+}
+
 /* --- Footer --- */
 #footer {
     height: 1;

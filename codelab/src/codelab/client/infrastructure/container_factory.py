@@ -30,10 +30,13 @@ def create_client_container(
     cwd: str | None = None,
     history_dir: str | None = None,
     logger: Any | None = None,
+    transport_mode: str = "websocket",
+    stdio_command: str | None = None,
+    stdio_args: list[str] | None = None,
 ) -> Container:
     """Создаёт и конфигурирует DI-контейнер для клиента.
 
-    Регистрирует все сервисы и ViewModels через декларативные
+    Регистрирует все зависимости через декларативные
     Provider'ы (ClientProvider + ViewModelProvider).
 
     Args:
@@ -42,6 +45,9 @@ def create_client_container(
         cwd: Абсолютный путь к рабочей директории проекта
         history_dir: Путь к директории локальной истории чата
         logger: Logger для структурированного логирования
+        transport_mode: Режим транспорта ("websocket" или "stdio")
+        stdio_command: Команда для запуска агента (для stdio режима)
+        stdio_args: Аргументы команды (для stdio режима)
 
     Returns:
         Готовый dishka Container
@@ -61,6 +67,7 @@ def create_client_container(
         host=host,
         port=port,
         cwd=cwd,
+        transport_mode=transport_mode,
     )
 
     try:
@@ -71,6 +78,9 @@ def create_client_container(
             cwd=Path(cwd),
             history_dir=history_dir,
             logger=logger,
+            transport_mode=transport_mode,
+            stdio_command=stdio_command,
+            stdio_args=stdio_args or [],
         )
 
         container = make_container(

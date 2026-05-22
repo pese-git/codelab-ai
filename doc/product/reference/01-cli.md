@@ -6,20 +6,22 @@ CodeLab предоставляет единую точку входа `codelab` 
 
 | Команда | Описание |
 |---------|----------|
-| `codelab` | Локальный режим: запускает сервер + TUI |
-| `codelab serve` | Режим сервера: только WebSocket API |
-| `codelab connect` | Режим клиента: подключение к серверу |
+| `codelab` | Локальный режим: запускает сервер + TUI через stdio |
+| `codelab serve` | Режим сервера: WebSocket API |
+| `codelab serve --stdio` | Режим сервера: stdio транспорт для внешних клиентов |
+| `codelab connect` | Режим клиента: подключение к серверу по WebSocket |
+| `codelab connect --stdio` | Режим клиента: запуск агента как subprocess через stdio |
 
 ## Локальный режим (по умолчанию)
 
-Запускает встроенный сервер и TUI клиент:
+Запускает сервер как subprocess и TUI клиент через stdio транспорт:
 
 ```bash
 codelab
 ```
 
-Сервер запускается в фоновом потоке на localhost, затем открывается TUI.
-При закрытии TUI сервер автоматически останавливается.
+Сервер запускается как изолированный subprocess, TUI подключается через stdio.
+При закрытии TUI процесс сервера автоматически завершается.
 
 ### Глобальные опции
 
@@ -29,7 +31,7 @@ codelab
 
 ## codelab serve
 
-Запускает только WebSocket сервер для удалённых клиентов.
+Запускает WebSocket сервер для удалённых клиентов.
 
 ```bash
 codelab serve [опции]
@@ -42,11 +44,12 @@ codelab serve [опции]
 | `--host` | `127.0.0.1` | Адрес для прослушивания |
 | `--port` | `8765` | Порт для прослушивания |
 | `--no-web` | - | Отключить Web UI на корневом пути `/` |
+| `--stdio` | - | Запустить stdio транспорт вместо WebSocket |
 
 ### Примеры
 
 ```bash
-# Запуск на стандартном порту
+# Запуск на стандартном порту (WebSocket)
 codelab serve
 
 # Запуск на порту 4096 с доступом из сети
@@ -54,6 +57,9 @@ codelab serve --port 4096 --host 0.0.0.0
 
 # Запуск только API без Web UI
 codelab serve --no-web
+
+# Запуск в stdio режиме (для IDE plugins)
+codelab serve --stdio
 
 # Запуск с подробным логированием
 codelab -v serve --port 8080
@@ -68,9 +74,11 @@ codelab -v serve --port 8080
 | `ws://{host}:{port}/acp/ws` | WebSocket API для ACP клиентов |
 | `http://{host}:{port}/` | Web UI (если не отключён `--no-web`) |
 
+В режиме `--stdio` endpoints не доступны — обмен через stdin/stdout.
+
 ## codelab connect
 
-Запускает TUI клиент и подключается к удалённому серверу.
+Запускает TUI клиент и подключается к серверу.
 
 ```bash
 codelab connect [опции]
@@ -83,11 +91,13 @@ codelab connect [опции]
 | `--host` | `127.0.0.1` | Адрес сервера |
 | `--port` | `8765` | Порт сервера |
 | `--cwd` | текущая директория | Рабочая директория проекта |
+| `--stdio` | - | Запустить агент как subprocess через stdio |
+| `--agent-command` | `codelab serve --stdio` | Команда для запуска агента (с --stdio) |
 
 ### Примеры
 
 ```bash
-# Подключение к локальному серверу
+# Подключение к локальному серверу (WebSocket)
 codelab connect
 
 # Подключение к удалённому серверу
@@ -95,6 +105,12 @@ codelab connect --host server.example.com --port 4096
 
 # Подключение с указанием рабочей директории
 codelab connect --cwd ~/projects/myapp
+
+# Запуск агента как subprocess (stdio транспорт)
+codelab connect --stdio --cwd ~/projects/myapp
+
+# Кастомная команда агента
+codelab connect --stdio --agent-command "codelab serve --stdio" --cwd ~/projects/myapp
 ```
 
 ## Приоритет конфигурации

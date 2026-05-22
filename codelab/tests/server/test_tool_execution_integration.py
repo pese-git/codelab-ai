@@ -1,10 +1,10 @@
-"""Интеграционный тест для выполнения tool calls с SessionState."""
+"""Интеграционные тесты: NaiveAgent + SessionState через start_turn/continue_turn."""
 
 import pytest
 
-from codelab.server.agent.base import AgentContext
+from codelab.server.agent.base import AgentContext, ContinuationContext
 from codelab.server.agent.naive import NaiveAgent
-from codelab.server.llm.base import LLMResponse, LLMToolCall
+from codelab.server.llm.base import LLMMessage, LLMToolCall
 from codelab.server.llm.mock_provider import MockLLMProvider
 from codelab.server.protocol.state import SessionState
 from codelab.server.tools.base import ToolDefinition
@@ -12,32 +12,26 @@ from codelab.server.tools.registry import SimpleToolRegistry
 
 
 def echo_tool(text: str) -> str:
-    """Echo инструмент для тестирования."""
     return f"Echo: {text}"
 
 
 @pytest.fixture
 def tool_registry() -> SimpleToolRegistry:
-    """Создать реестр с тестовым инструментом."""
     registry = SimpleToolRegistry()
-    
-    echo_def = ToolDefinition(
-        name="echo",
-        description="Возвращает переданный текст",
-        parameters={
-            "type": "object",
-            "properties": {"text": {"type": "string"}},
-        },
-        kind="other",
+    registry.register(
+        ToolDefinition(
+            name="echo",
+            description="Возвращает переданный текст",
+            parameters={"type": "object", "properties": {"text": {"type": "string"}}},
+            kind="other",
+        ),
+        echo_tool,
     )
-    registry.register(echo_def, echo_tool)
-    
     return registry
 
 
 @pytest.fixture
 def session_state() -> SessionState:
-    """Создать SessionState для интеграционного теста."""
     return SessionState(
         session_id="integration-test-session",
         cwd="/tmp",
@@ -47,139 +41,117 @@ def session_state() -> SessionState:
 
 
 @pytest.mark.asyncio
-async def test_tool_execution_with_session_state(
+async def test_start_turn_with_session_state(
     tool_registry: SimpleToolRegistry,
     session_state: SessionState,
 ) -> None:
-    """Интеграционный тест передачи SessionState в AgentContext.
-    
-    Проверяет что:
-    1. SessionState корректно передается в AgentContext
-    2. AgentContext передается в process_prompt
-    3. Агент делегирует tool calls в PromptOrchestrator (не выполняет их сам)
-    """
-    tool_call = LLMToolCall(
-        id="call_1",
-        name="echo",
-        arguments={"text": "Hello from integration test"},
+    """start_turn корректно передаёт SessionState в контекст и возвращает tool_calls."""
+    tool_call = LLMToolCall(id="call_1", name="echo", arguments={"text": "Hello"})
+    agent = NaiveAgent(
+        llm=MockLLMProvider(response="Буду echo", tool_calls=[tool_call]),
+        tools=tool_registry,
     )
 
-    llm = MockLLMProvider(
-        response="I'll echo the message",
-        tool_calls=[tool_call],
-    )
-    agent = NaiveAgent(llm=llm, tools=tool_registry)
-
-    # Создать context с SessionState
     context = AgentContext(
         session_id="integration-test-session",
-        session=session_state,  # Критически важно - SessionState передается
+        session=session_state,
         prompt=[{"type": "text", "text": "Echo something"}],
         conversation_history=[],
         available_tools=tool_registry.list_tools(),
         config={},
     )
 
-    # Проверить что context содержит session
+    # session передаётся в контекст
     assert context.session is session_state
-    assert context.session.session_id == "integration-test-session"
 
-    # Выполнить prompt с контекстом
-    response = await agent.process_prompt(context)
+    response = await agent.start_turn(context)
 
-    # Проверить результаты - агент делегирует tool calls в PromptOrchestrator
-    assert response is not None
-    assert response.text == "I'll echo the message"
+    assert response.text == "Буду echo"
     assert response.stop_reason == "tool_use"
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0].name == "echo"
-    assert response.metadata["iterations"] == 1
 
 
 @pytest.mark.asyncio
-async def test_multiple_tools_with_session_context(
+async def test_continue_turn_with_tool_result(
     tool_registry: SimpleToolRegistry,
     session_state: SessionState,
 ) -> None:
-    """Тест выполнения нескольких tool calls с SessionState в контексте."""
-    
-    tool_calls = [
-        LLMToolCall(
-            id="call_1",
-            name="echo",
-            arguments={"text": "First"},
+    """continue_turn получает историю с tool_result и возвращает финальный текст."""
+    # История после первого turn + выполнения tool
+    history = [
+        LLMMessage(role="user", content="Echo hello"),
+        LLMMessage(
+            role="assistant",
+            content="",
+            tool_calls=[LLMToolCall(id="c1", name="echo", arguments={"text": "hello"})],
         ),
-        LLMToolCall(
-            id="call_2",
-            name="echo",
-            arguments={"text": "Second"},
-        ),
+        LLMMessage(role="tool", content="Echo: hello", tool_call_id="c1"),
     ]
 
-    llm = MockLLMProvider(
-        response="Executed both tools",
-        tool_calls=tool_calls,
+    agent = NaiveAgent(
+        llm=MockLLMProvider(response="Готово, вот эхо"),
+        tools=tool_registry,
     )
 
-    agent = NaiveAgent(llm=llm, tools=tool_registry)
+    context = ContinuationContext(
+        session_id="integration-test-session",
+        session=session_state,
+        history=history,
+        available_tools=tool_registry.list_tools(),
+        config={},
+    )
+
+    response = await agent.continue_turn(context)
+
+    assert response.text == "Готово, вот эхо"
+    assert response.tool_calls == []
+    assert response.stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_multiple_tool_calls_in_start_turn(
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """start_turn возвращает несколько tool_calls — LLMLoopStage обработает их по очереди."""
+    tool_calls = [
+        LLMToolCall(id="c1", name="echo", arguments={"text": "First"}),
+        LLMToolCall(id="c2", name="echo", arguments={"text": "Second"}),
+    ]
+    agent = NaiveAgent(
+        llm=MockLLMProvider(response="", tool_calls=tool_calls),
+        tools=tool_registry,
+    )
 
     context = AgentContext(
         session_id="integration-test-session",
-        session=session_state,  # SessionState передается в context
+        session=session_state,
         prompt=[{"type": "text", "text": "Execute multiple tools"}],
         conversation_history=[],
         available_tools=tool_registry.list_tools(),
         config={},
     )
 
-    # Проверить что session передан корректно
-    assert context.session is session_state
-    
-    response = await agent.process_prompt(context)
+    response = await agent.start_turn(context)
 
-    # Оба tool call должны быть обработаны
-    assert response is not None
-    assert response.metadata["iterations"] >= 1
+    assert len(response.tool_calls) == 2
 
 
 @pytest.mark.asyncio
-async def test_session_state_persistence_across_tool_calls(
+async def test_session_state_not_mutated_by_agent(
     tool_registry: SimpleToolRegistry,
     session_state: SessionState,
 ) -> None:
-    """Тест что SessionState остается одинаковым во время выполнения tool calls."""
-    
+    """NaiveAgent не мутирует SessionState — это ответственность AgentOrchestrator."""
     original_session_id = session_state.session_id
     original_cwd = session_state.cwd
+    original_history_len = len(session_state.history)
 
-    # Провайдер, который выполняет tool call
-    class MultiCallProvider(MockLLMProvider):
-        def __init__(self):
-            super().__init__(response="Done")
-            self.call_count = 0
-
-        async def create_completion(self, messages, tools=None, **kwargs):
-            self.call_count += 1
-            if self.call_count == 1:
-                tool_call = LLMToolCall(
-                    id="call_1",
-                    name="echo",
-                    arguments={"text": "test"},
-                )
-                return LLMResponse(
-                    text="Calling tool",
-                    tool_calls=[tool_call],
-                    stop_reason="tool_use",
-                )
-            else:
-                return LLMResponse(
-                    text="Finished",
-                    tool_calls=[],
-                    stop_reason="end_turn",
-                )
-
-    llm = MultiCallProvider()
-    agent = NaiveAgent(llm=llm, tools=tool_registry)
+    agent = NaiveAgent(
+        llm=MockLLMProvider(response="ok"),
+        tools=tool_registry,
+    )
 
     context = AgentContext(
         session_id="integration-test-session",
@@ -190,9 +162,9 @@ async def test_session_state_persistence_across_tool_calls(
         config={},
     )
 
-    response = await agent.process_prompt(context)
+    await agent.start_turn(context)
 
-    # Проверить что SessionState остался неизменным
-    assert context.session.session_id == original_session_id
-    assert context.session.cwd == original_cwd
-    assert response is not None
+    # SessionState не должен быть изменён агентом
+    assert session_state.session_id == original_session_id
+    assert session_state.cwd == original_cwd
+    assert len(session_state.history) == original_history_len

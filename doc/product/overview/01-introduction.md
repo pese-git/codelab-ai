@@ -88,3 +88,4 @@ uv run codelab connect --port 8765
 - [Архитектура](02-architecture.md) — детальный обзор компонентов системы
 - [Сценарии использования](03-use-cases.md) — примеры применения CodeLab
 - [Установка](../getting-started/02-installation.md) — подробные инструкции по установке
+- [Интеграция с Zed IDE](../user-guide/10-zed-ide-integration.md) — настройка в Zed IDE

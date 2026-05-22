@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from codelab.server.tools.base import ToolDefinition
@@ -10,6 +11,25 @@ if TYPE_CHECKING:
     from codelab.server.protocol.state import SessionState
     from codelab.server.tools.base import ToolRegistry
     from codelab.server.tools.executors.filesystem_executor import FileSystemToolExecutor
+
+
+def _normalize_path(cwd: str, path: str) -> str:
+    """Нормализует путь относительно cwd.
+    
+    Если путь уже абсолютный — возвращает как есть.
+    Если относительный — присоединяет к cwd.
+    
+    Args:
+        cwd: Текущая рабочая директория сессии.
+        path: Путь к файлу (абсолютный или относительный).
+        
+    Returns:
+        Нормализованный абсолютный путь.
+    """
+    p = Path(path)
+    if p.is_absolute():
+        return path
+    return str(Path(cwd) / p)
 
 
 class FileSystemToolDefinitions:
@@ -31,7 +51,7 @@ class FileSystemToolDefinitions:
             ToolDefinition для регистрации в реестре.
         """
         return ToolDefinition(
-            name="read_text_file",
+            name="fs/read_text_file",
             description=(
                 "Read text file content from client filesystem. "
                 "Supports line numbers (1-based) and limits for partial reads."
@@ -73,7 +93,7 @@ class FileSystemToolDefinitions:
             ToolDefinition для регистрации в реестре.
         """
         return ToolDefinition(
-            name="write_text_file",
+            name="fs/write_text_file",
             description=(
                 "Write or update text file in client filesystem. "
                 "Supports diff generation for tracking changes."
@@ -120,6 +140,9 @@ class FileSystemToolDefinitions:
             """Обработчик для fs/read_text_file."""
             # Добавить тип операции в аргументы
             arguments["operation"] = "read"
+            # Нормализовать путь относительно session.cwd
+            if "path" in arguments and session.cwd:
+                arguments["path"] = _normalize_path(session.cwd, arguments["path"])
             return await executor.execute(session, arguments)
 
         # Создать обработчик для записи файлов
@@ -127,6 +150,9 @@ class FileSystemToolDefinitions:
             """Обработчик для fs/write_text_file."""
             # Добавить тип операции в аргументы
             arguments["operation"] = "write"
+            # Нормализовать путь относительно session.cwd
+            if "path" in arguments and session.cwd:
+                arguments["path"] = _normalize_path(session.cwd, arguments["path"])
             return await executor.execute(session, arguments)
 
         # Зарегистрировать инструменты в реестре

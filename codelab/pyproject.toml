@@ -77,6 +77,6 @@ include = ["src"]
 "unresolved-attribute" = "ignore"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "tests/server"]
 testpaths = ["tests"]
 asyncio_mode = "auto"

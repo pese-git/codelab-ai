@@ -9,8 +9,8 @@
 from typing import Any
 
 import pytest
+from factories import make_orchestrator
 
-from codelab.server.protocol.handlers.prompt import create_prompt_orchestrator
 from codelab.server.protocol.handlers.session import session_load
 from codelab.server.protocol.state import SessionState
 
@@ -21,7 +21,7 @@ class TestUserMessageChunkPersistence:
     @pytest.fixture
     def orchestrator(self):
         """Создает PromptOrchestrator для тестирования."""
-        return create_prompt_orchestrator()
+        return make_orchestrator()
 
     @pytest.fixture
     def session(self) -> SessionState:
@@ -86,7 +86,7 @@ class TestAgentMessageChunkFormat:
     @pytest.fixture
     def orchestrator(self):
         """Создает PromptOrchestrator для тестирования."""
-        return create_prompt_orchestrator()
+        return make_orchestrator()
 
     @pytest.fixture
     def session(self) -> SessionState:

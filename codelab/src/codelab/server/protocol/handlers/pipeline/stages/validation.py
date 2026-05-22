@@ -8,6 +8,8 @@ from codelab.server.protocol.handlers.state_manager import StateManager
 from ..base import PromptStage
 from ..context import PromptContext
 
+MAX_PROMPT_TEXT_LENGTH = 100_000
+
 
 class ValidationStage(PromptStage):
     """Валидация входных параметров и проверки состояния сессии."""
@@ -28,6 +30,16 @@ class ValidationStage(PromptStage):
         if not context.raw_text.strip():
             context.error_response = ACPMessage.error_response(
                 context.request_id, code=-32602, message="Empty prompt"
+            )
+            context.should_stop = True
+            return context
+
+        # Проверить длину текста
+        if len(context.raw_text) > MAX_PROMPT_TEXT_LENGTH:
+            context.error_response = ACPMessage.error_response(
+                context.request_id,
+                code=-32602,
+                message=f"Prompt text too long: {len(context.raw_text)} characters (max {MAX_PROMPT_TEXT_LENGTH})",
             )
             context.should_stop = True
             return context

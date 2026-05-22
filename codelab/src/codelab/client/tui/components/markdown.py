@@ -132,8 +132,12 @@ class InlineMarkdown(Static):
         if not text:
             return ""
 
-        result = text
+        # Шаг 1: Экранируем ВСЕ [ в исходном тексте, чтобы литеральные
+        # Rich-теги (например, [/bold] в ответе LLM) не ломали парсер.
+        # Используем временный плейсхолдер для наших будущих тегов.
+        result = text.replace('[', '\u0000LBRACKET\u0000')
 
+        # Шаг 2: Применяем Markdown -> Rich конверсии
         # Bold: **text** -> [bold]text[/bold]
         result = re.sub(r'\*\*([^*]+)\*\*', r'[bold]\1[/bold]', result)
 
@@ -143,9 +147,8 @@ class InlineMarkdown(Static):
         # Inline code: `code` -> [reverse]code[/reverse]
         result = re.sub(r'`([^`]+)`', r'[reverse] \1 [/reverse]', result)
 
-        # Links: [text](url) -> text (url) — не используем [link=url] из-за
-        # несовместимости Textual markup parser с https:// в значении атрибута
-        result = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', result)
+        # Links: [text](url) -> text (url) — скобки уже экранированы на шаге 1
+        result = re.sub(r'\u0000LBRACKET\u0000([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', result)
 
         # Strikethrough: ~~text~~ -> [strike]text[/strike]
         result = re.sub(r'~~([^~]+)~~', r'[strike]\1[/strike]', result)
@@ -153,14 +156,8 @@ class InlineMarkdown(Static):
         # Headers: # text -> [bold]text[/bold] (упрощенно для inline)
         result = re.sub(r'^#{1,6}\s+(.+)$', r'[bold]\1[/bold]', result, flags=re.MULTILINE)
 
-        # Экранируем все [ что не являются нашими сгенерированными тегами:
-        # [bold], [/bold], [italic], [/italic], [reverse], [/reverse],
-        # [strike], [/strike]
-        result = re.sub(
-            r'\[(?!/?(?:bold|italic|reverse|strike)\])',
-            r'\[',
-            result,
-        )
+        # Шаг 3: Восстанавливаем экранированные [ обратно
+        result = result.replace('\u0000LBRACKET\u0000', '\[')
 
         return result
 

@@ -151,7 +151,7 @@ class ACPMessage(BaseModel):
             True если сообщение является request.
 
         Пример:
-            ACPMessage.request("ping", {}).is_request  # True
+            ACPMessage.request("initialize", {"protocolVersion": 1}).is_request  # True
         """
         return self.method is not None and self.id is not None
 
@@ -289,7 +289,7 @@ class ACPMessage(BaseModel):
             JSON-представление сообщения без лишних пробелов.
 
         Пример:
-            wire = ACPMessage.request("ping", {}).to_json()
+            wire = ACPMessage.request("initialize", {"protocolVersion": 1}).to_json()
         """
         return json.dumps(self.to_dict(), separators=(",", ":"))
 

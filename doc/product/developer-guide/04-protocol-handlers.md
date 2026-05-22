@@ -34,7 +34,6 @@ server/protocol/handlers/
 ├── config.py            # session/set_config_option
 ├── tool_call_handler.py # Обработка tool calls
 ├── client_rpc_handler.py# RPC к клиенту
-└── legacy.py            # ping, echo, shutdown
 ```
 
 ### Базовый Handler

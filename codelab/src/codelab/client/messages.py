@@ -6,7 +6,7 @@
 - парсинг JSON-аргументов CLI.
 
 Пример использования:
-    request = ACPMessage.request("ping", {})
+    request = ACPMessage.request("initialize", {"protocolVersion": 1})
     payload = request.to_json()
 """
 

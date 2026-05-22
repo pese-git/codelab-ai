@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import structlog
@@ -17,6 +19,7 @@ from codelab.server.protocol.handlers.state_manager import StateManager
 from codelab.server.protocol.handlers.tool_call_handler import ToolCallHandler
 from codelab.server.protocol.state import LLMLoopResult, SessionState, ToolResult
 from codelab.server.tools.base import ToolRegistry
+from codelab.server.tools.mapping import llm_name_to_acp_name
 
 from ..base import PromptStage
 from ..context import PromptContext
@@ -55,12 +58,28 @@ class LLMLoopStage(PromptStage):
     async def process(self, context: PromptContext) -> PromptContext:
         agent_orchestrator: AgentOrchestrator | None = context.meta.get("agent_orchestrator")
         if agent_orchestrator is None:
-            context.error_response = ACPMessage.error_response(
-                context.request_id,
-                code=-32603,
-                message="Agent orchestrator not configured",
-            )
-            context.should_stop = True
+            # Demo mode: no LLM configured, return simple ack
+            if context.raw_text:
+                ack_text = f"ACK: {context.raw_text[:80]}"
+                ack_content = {"type": "text", "text": ack_text}
+                context.notifications.append(
+                    ACPMessage.notification(
+                        "session/update",
+                        {
+                            "sessionId": context.session_id,
+                            "update": {
+                                "sessionUpdate": "agent_message_chunk",
+                                "content": ack_content,
+                            },
+                        },
+                    )
+                )
+                # Сохраняем ACK в events_history для replay
+                self._replay_manager.save_agent_message_chunk(context.session, ack_content)
+                # Сохраняем ACK в history для conversation replay
+                self._state_manager.add_assistant_message(context.session, ack_text)
+            # Не переопределяем forced_stop_reason установленный ранее (например, DirectivesStage)
+            # context.stop_reason остаётся тем, что было установлено ранее (по умолчанию "end_turn")
             return context
 
         result = await self.run_loop(
@@ -270,12 +289,23 @@ class LLMLoopStage(PromptStage):
                 return LLMLoopResult(notifications=notifications, stop_reason="cancelled")
 
             try:
+                # Запускаем agent call как задачу для возможности отмены
                 if iteration == 1 and initial_prompt_text:
-                    agent_response = await agent_orchestrator.process_prompt(session, initial_prompt_text)
-                else:
-                    agent_response = await agent_orchestrator.continue_with_tool_results(
-                        session, tool_results or []
+                    agent_task = asyncio.create_task(
+                        agent_orchestrator.process_prompt(session, initial_prompt_text)
                     )
+                else:
+                    agent_task = asyncio.create_task(
+                        agent_orchestrator.continue_with_tool_results(session, tool_results or [])
+                    )
+
+                # Мониторим флаг отмены параллельно с выполнением задачи
+                agent_response = await self._run_with_cancellation_check(
+                    agent_task, session, agent_orchestrator, session_id
+                )
+            except asyncio.CancelledError:
+                logger.debug("llm_loop agent task cancelled", session_id=session_id, iteration=iteration)
+                return LLMLoopResult(notifications=notifications, stop_reason="cancelled")
             except Exception as e:
                 error_message = f"Agent error: {str(e)}"
                 notifications.append(_build_error_notification(session_id, error_message))
@@ -378,28 +408,31 @@ class LLMLoopStage(PromptStage):
                 logger.warning("tool_call has no name", session_id=session_id)
                 continue
 
+            # Конвертируем LLM имя обратно в ACP формат
+            acp_tool_name = llm_name_to_acp_name(tool_name)
+
             tool_kind = "other"
-            tool_definition = self._tool_registry.get(tool_name)
+            tool_definition = self._tool_registry.get(acp_tool_name)
             if tool_definition is not None:
                 tool_kind = tool_definition.kind
 
             tool_call_id = self._tool_call_handler.create_tool_call(
                 session=session,
-                title=tool_name,
+                title=acp_tool_name,
                 kind=tool_kind,
-                tool_name=tool_name,
+                tool_name=acp_tool_name,
                 tool_arguments=tool_arguments,
                 tool_call_id_from_llm=tool_call_id_from_llm,
             )
 
             notifications.append(
                 self._tool_call_handler.build_tool_call_notification(
-                    session_id=session_id, tool_call_id=tool_call_id, title=tool_name, kind=tool_kind
+                    session_id=session_id, tool_call_id=tool_call_id, title=acp_tool_name, kind=tool_kind
                 )
             )
 
             self._replay_manager.save_tool_call(
-                session=session, tool_call_id=tool_call_id, title=tool_name, kind=tool_kind, status="pending"
+                session=session, tool_call_id=tool_call_id, title=acp_tool_name, kind=tool_kind, status="pending"
             )
 
             if tool_definition is not None and not tool_definition.requires_permission:
@@ -436,7 +469,7 @@ class LLMLoopStage(PromptStage):
                 )
                 tool_results.append(ToolResult(
                     tool_call_id=tool_call_id_from_llm or tool_call_id,
-                    tool_name=tool_name,
+                    tool_name=acp_tool_name,
                     success=False,
                     error=rejection_msg,
                 ))
@@ -455,7 +488,7 @@ class LLMLoopStage(PromptStage):
                 )
 
                 result = await self._tool_registry.execute_tool(
-                    session_id, tool_name, tool_arguments, session=session
+                    session_id, acp_tool_name, tool_arguments, session=session
                 )
 
                 extracted_content = await self._content_extractor.extract_from_result(tool_call_id, result)
@@ -499,10 +532,11 @@ class LLMLoopStage(PromptStage):
 
                 tool_results.append(ToolResult(
                     tool_call_id=tool_call_id_from_llm or tool_call_id,
-                    tool_name=tool_name,
+                    tool_name=acp_tool_name,
                     success=result.success,
-                    output=result.output if result.success else None,
-                    error=result.error if not result.success else None,
+                    output=result.output,
+                    content=extracted_content.content_items,
+                    error=result.error,
                 ))
 
             except Exception as e:
@@ -543,6 +577,53 @@ class LLMLoopStage(PromptStage):
 
     def _is_cancel_requested(self, session: SessionState) -> bool:
         return session.active_turn is not None and session.active_turn.cancel_requested
+
+    async def _run_with_cancellation_check(
+        self,
+        task: asyncio.Task,
+        session: SessionState,
+        agent_orchestrator: AgentOrchestrator,
+        session_id: str,
+    ) -> Any:
+        """Запускает задачу и мониторит флаг отмены.
+
+        Если флаг cancel_requested установлен во время выполнения задачи,
+        вызывает agent.cancel_prompt() для прерывания LLM-запроса.
+
+        Args:
+            task: asyncio.Task с вызовом агента
+            session: Состояние сессии для проверки флага отмены
+            agent_orchestrator: Оркестратор для вызова cancel_prompt
+            session_id: ID сессии для логирования
+
+        Returns:
+            Результат выполнения задачи
+
+        Raises:
+            asyncio.CancelledError: Если задача была отменена
+        """
+        # Периодически проверяем флаг отмены параллельно с выполнением задачи
+        while not task.done():
+            if self._is_cancel_requested(session):
+                logger.info(
+                    "cancellation detected during LLM call, aborting",
+                    session_id=session_id,
+                )
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                raise asyncio.CancelledError()
+            # Ждём завершения задачи или проверяем флаг через короткий интервал
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+                return task.result()
+            except TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                raise
+
+        # Задача уже завершена
+        return task.result()
 
 
 def _build_error_notification(session_id: str, error_message: str) -> ACPMessage:

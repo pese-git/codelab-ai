@@ -202,6 +202,9 @@ class TerminalHandler:
 
         try:
             exit_code = await self.executor.wait_for_exit(terminal_id)
+            
+            # Получаем output терминала
+            output, _, _ = await self.executor.get_output(terminal_id)
 
             logger.info(
                 "agent_terminal_wait_success",
@@ -209,7 +212,7 @@ class TerminalHandler:
                 terminal_id=terminal_id,
                 exit_code=exit_code,
             )
-            return {"exitCode": exit_code}
+            return {"exitCode": exit_code, "output": output}
         except ValueError as e:
             logger.error(
                 "agent_terminal_wait_error",
@@ -250,14 +253,15 @@ class TerminalHandler:
         )
 
         try:
-            success = await self.executor.kill_terminal(terminal_id)
+            await self.executor.kill_terminal(terminal_id)
 
             logger.info(
                 "agent_terminal_kill_success",
                 session_id=session_id,
                 terminal_id=terminal_id,
             )
-            return {"success": success}
+            # ACP spec: empty response means success
+            return {}
         except (ValueError, RuntimeError) as e:
             logger.error(
                 "agent_terminal_kill_error",
@@ -297,14 +301,15 @@ class TerminalHandler:
         )
 
         try:
-            success = await self.executor.release_terminal(terminal_id)
+            await self.executor.release_terminal(terminal_id)
 
             logger.info(
                 "agent_terminal_release_success",
                 session_id=session_id,
                 terminal_id=terminal_id,
             )
-            return {"success": success}
+            # ACP spec: empty response means success
+            return {}
         except ValueError as e:
             logger.error(
                 "agent_terminal_release_error",

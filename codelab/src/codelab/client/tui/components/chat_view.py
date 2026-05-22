@@ -216,10 +216,13 @@ class ChatView(VerticalScroll):
         if self._content_container is None:
             return
 
-        # Используем timestamp для streaming виджета
-        from rich.markup import escape as markup_escape
+        # Используем Content API для безопасного комбинирования styled prefix
+        # с literal user text (избегаем crash на markup-like символах в тексте LLM)
+        from textual.content import Content
+        prefix = Content.from_markup("[bold green]⟳ [/]")
+        safe_text = Content.from_text(text)
         streaming_widget = Static(
-            f"[bold green]⟳ {markup_escape(text)}[/bold green]",
+            prefix + safe_text,
             id=f"stream_{time.time_ns()}",
             classes="message",
         )
@@ -234,10 +237,13 @@ class ChatView(VerticalScroll):
         if self._content_container is None:
             return
 
-        # Используем timestamp для tool call виджета
-        from rich.markup import escape as markup_escape
+        # Используем Content API для безопасного комбинирования styled prefix
+        # с literal user text (избегаем crash на markup-like символах)
+        from textual.content import Content
+        prefix = Content.from_markup("[italic]Tool: [/]")
+        safe_text = Content.from_text(str(tool_call))
         tool_widget = Static(
-            f"[italic]Tool: {markup_escape(str(tool_call))}[/italic]",
+            prefix + safe_text,
             id=f"tool_{time.time_ns()}",
             classes="message",
         )
