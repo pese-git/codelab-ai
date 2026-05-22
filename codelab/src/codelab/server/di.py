@@ -178,6 +178,7 @@ class AgentProvider(Provider):
         config: Annotated[AppConfig, from_context(provides=AppConfig)],
         llm_provider: LLMProvider,
         tool_registry: ToolRegistryProtocol,
+        llm_registry: LLMProviderRegistry,
     ) -> AgentOrchestrator:
         """Создаёт AgentOrchestrator."""
         orchestrator_config = OrchestratorConfig(
@@ -189,10 +190,20 @@ class AgentProvider(Provider):
             llm_provider_class="openai" if config.llm.provider == "openai" else "mock",
         )
 
+        # Создать model resolver для multi-provider support
+        from codelab.server.llm.resolver import ModelResolver
+
+        model_resolver = ModelResolver(
+            registry=llm_registry,
+            default_provider=config.llm.provider,
+        )
+
         return AgentOrchestrator(
             config=orchestrator_config,
             llm_provider=llm_provider,
             tool_registry=tool_registry,
+            llm_registry=llm_registry,
+            model_resolver=model_resolver,
         )
 
 

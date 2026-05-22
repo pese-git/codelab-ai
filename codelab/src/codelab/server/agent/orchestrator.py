@@ -19,7 +19,9 @@ from codelab.server.agent.base import (
 )
 from codelab.server.agent.naive import NaiveAgent
 from codelab.server.agent.state import OrchestratorConfig
-from codelab.server.llm.base import LLMMessage, LLMProvider
+from codelab.server.llm.base import LLMConfig, LLMMessage, LLMProvider
+from codelab.server.llm.registry import LLMProviderRegistry
+from codelab.server.llm.resolver import ModelResolver
 from codelab.server.protocol.state import ClientRuntimeCapabilities, SessionState, ToolResult
 from codelab.server.tools.base import ToolDefinition, ToolRegistry
 
@@ -46,20 +48,55 @@ class AgentOrchestrator:
         config: OrchestratorConfig,
         llm_provider: LLMProvider,
         tool_registry: ToolRegistry,
+        llm_registry: LLMProviderRegistry | None = None,
+        model_resolver: ModelResolver | None = None,
     ) -> None:
         """Инициализация оркестратора.
 
         Args:
             config: Конфигурация (класс агента, параметры LLM).
-            llm_provider: Провайдер LLM для запросов.
+            llm_provider: Провайдер LLM для запросов (legacy).
             tool_registry: Реестр всех зарегистрированных инструментов.
+            llm_registry: Реестр LLM провайдеров для multi-provider (опционально).
+            model_resolver: Резолвер моделей для выбора провайдера (опционально).
         """
         self.config = config
         self.llm_provider = llm_provider
         self.tool_registry = tool_registry
+        self.llm_registry = llm_registry
+        self.model_resolver = model_resolver
 
         # NaiveAgent — единственная реализация; tools передаём для initialize()
         self.agent: LLMAgent = NaiveAgent(llm=llm_provider, tools=tool_registry)
+
+    async def resolve_provider_for_session(
+        self,
+        session_state: SessionState,
+    ) -> LLMProvider:
+        """Резолвить провайдер для сессии на основе config values.
+
+        Если model_resolver доступен — использует его для выбора провайдера
+        из session config values. Иначе возвращает дефолтный llm_provider.
+
+        Args:
+            session_state: Состояние сессии
+
+        Returns:
+            LLMProvider для данной сессии
+        """
+        if self.model_resolver:
+            model_value = session_state.config_values.get("model", "")
+            if model_value:
+                try:
+                    provider, _ = await self.model_resolver.resolve(model_value)
+                    return provider
+                except Exception:
+                    logger.warning(
+                        "failed to resolve model, using default provider",
+                        model=model_value,
+                    )
+
+        return self.llm_provider
 
     async def process_prompt(
         self,

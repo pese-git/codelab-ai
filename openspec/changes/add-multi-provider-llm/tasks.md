@@ -92,9 +92,9 @@
 
 ## 13. Orchestrator Integration
 
-- [ ] 13.1 Обновить `server/agent/orchestrator.py` — использовать ModelResolver для получения провайдера из session config
-- [ ] 13.2 Обновить `server/protocol/handlers/pipeline/stages/llm_loop.py` — resolver вместо прямого provider
-- [ ] 13.3 Тесты для orchestrator — model resolution per session, fallback integration
+- [x] 13.1 Обновить `server/agent/orchestrator.py` — использовать ModelResolver для получения провайдера из session config
+- [x] 13.2 Обновить `server/protocol/handlers/pipeline/stages/llm_loop.py` — resolver вместо прямого provider
+- [x] 13.3 Тесты для orchestrator — model resolution per session, fallback integration
 
 ## 14. CLI Update
 
