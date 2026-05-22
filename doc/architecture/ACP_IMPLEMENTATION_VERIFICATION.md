@@ -2,6 +2,7 @@
 
 **Дата:** 2026-05-21
 **Метод:** Ручная верификация кода vs спецификация `doc/Agent Client Protocol/`
+**Обновлено:** 2026-05-22 — добавлены E2E тесты stdio transport (8 тестов), тесты ClientRPCBridge.terminal_output (29 тестов), тесты Tool Call advanced features (56 тестов), тесты extensibility (25 тестов)
 **Обновлено:** 2026-05-22 — устранён гэп #12 (RPC response models aligned with ACP spec), WriteTextFileResponse/TerminalKillResponse/TerminalReleaseResponse
 **Обновлено:** 2026-05-22 — устранён гэп #10 (session/list pagination edge cases), +22 теста
 **Обновлено:** 2026-05-22 — устранён гэп #11 (terminal output flow tests), +13 тестов
@@ -14,15 +15,15 @@
 
 | Метрика | Значение |
 |---|---|
-| Spec sections fully covered | **15** из 17 (88%) |
-| Spec sections partially covered | 1 из 17 (6%) |
+| Spec sections fully covered | **16** из 17 (94%) |
+| Spec sections partially covered | 0 из 17 (0%) |
 | Spec sections not covered | 1 из 17 (6%) — Streamable HTTP (draft) |
 | Все ACP методы реализованы | ✅ 17 из 17 |
-| stdio transport | ✅ Полностью (сервер + клиент) |
-| Тестовых файлов | ~148 |
-| Тестовых методов | ~2,330 |
+| stdio transport | ✅ Полностью (сервер + клиент + E2E тесты) |
+| Тестовых файлов | ~152 |
+| Тестовых методов | ~2,448 (+118 новых) |
 | Критичных проблем | ✅ 0 |
-| Известных гэпов | 4 |
+| Известных гэпов | 0 |
 
 ---
 
@@ -160,12 +161,13 @@
 - Built-in команды: help, mode, status
 - Dynamic updates
 
-### ⚠️ 15. Extensibility — Частично реализовано
+### ✅ 15. Extensibility — Полностью реализовано
 
 - ✅ `_meta` field поддерживается в Pydantic моделях
 - ✅ Extension methods (`_` prefix) зарезервированы в spec
-- ❌ Нет тестов на extensibility
-- ❌ Custom capability advertisement через `_meta` не реализован явно
+- ✅ Тесты на extensibility — 25 тестов (`test_extensibility.py`)
+- ✅ W3C trace context keys (`traceparent`, `tracestate`, `baggage`) корректно обрабатываются
+- ✅ Custom capabilities через `_meta` в agentCapabilities
 
 ### ⚠️ 16. Transports — Частично реализовано
 
@@ -382,14 +384,63 @@ LLM: terminal/release → cleanup
 
 **Результат:** Terminal output flow полностью протестирован и соответствует ACP spec.
 
+#### ~~13. Нет тестов extensibility~~ ✅ Решено (2026-05-22)
+
+**Файл:** `tests/server/test_extensibility.py` (новый, 25 тестов)
+
+**Добавлено покрытие:**
+1. **`_meta` field propagation** — initialize, session/new, session/prompt, session/load, set_config_option, set_mode
+2. **W3C trace context** — `traceparent`, `tracestate`, `baggage` корректно обрабатываются
+3. **Custom extension methods** — `_` prefix методы возвращают Method not found (-32601)
+4. **Custom notifications** — игнорируются без ошибки
+5. **Agent capabilities структура** — loadSession, mcpCapabilities, promptCapabilities, sessionCapabilities
+6. **Edge cases** — пустой `_meta`, null values, array values, multiple custom keys
+
+#### ~~12. Tool call `locations`, `rawInput`, `rawOutput` не тестированы~~ ✅ Решено (2026-05-22)
+
+**Файл:** `tests/server/test_tool_call_advanced.py` (новый, 56 тестов)
+
+**Добавлено покрытие:**
+1. **Locations** — single/multiple locations, path + line, empty locations (6 тестов)
+2. **rawInput/rawOutput** — tool_arguments, content storage, terminal output с exit code/signal (5 тестов)
+3. **Status transitions** — полная матрица переходов, терминальные состояния (11 тестов)
+4. **Content types** — text, diff, terminal, multiple content items (4 теста)
+5. **Tool kinds** — все 10 ACP kinds с titles (20 тестов)
+6. **Integration** — полный lifecycle fs/read, fs/write, terminal, cancellation, parallel (7 тестов)
+7. **Serialization** — ToolCallState to_dict/from_dict (3 теста)
+
+#### ~~14. Нет тестов для ClientRPCBridge.terminal_output~~ ✅ Решено (2026-05-22)
+
+**Файл:** `tests/server/test_client_rpc_bridge_terminal_output.py` (новый, 29 тестов)
+
+**Добавлено покрытие:**
+1. **Success scenarios** — running terminal, completed с exit code/signal, truncated, empty (9 тестов)
+2. **Error handling** — capability missing, timeout, response error, general error (5 тестов)
+3. **Integration** — реальный ClientRPCService, running terminal, capability missing, signal (4 теста)
+4. **Other methods** — read_file, write_file, create_terminal, wait_terminal_exit, release_terminal (11 тестов)
+
+#### ~~11. Нет stdio transport E2E тестов~~ ✅ Решено (2026-05-22)
+
+**Файл:** `tests/server/test_stdio_transport_e2e.py` (новый, 8 тестов)
+
+**Добавлено покрытие:**
+1. **Server startup** — сервер запускается и отвечает на initialize
+2. **Session lifecycle** — initialize → session/new → session/list
+3. **Parse error handling** — невалидный JSON → -32700
+4. **Method not found** — неизвестный метод → -32601
+5. **Graceful shutdown** — закрытие stdin → сервер завершается
+6. **Empty lines** — игнорируются
+7. **Multiple requests** — последовательная обработка запросов
+8. **Logs to stderr** — логи в stderr, JSON-RPC только в stdout
+
 ### 🟢 Желательные (улучшение качества)
 
 | # | Проблема | Статус |
 |---|---|---|
-| 9 | Нет тестов extensibility (`_meta`, custom methods) | Не покрыто |
+| 9 | ~~Нет тестов extensibility (`_meta`, custom methods)~~ | ✅ Решено (2026-05-22) |
 | 10 | ~~Нет тестов session/list pagination edge cases~~ | ✅ Решено (2026-05-22) |
 | 11 | ~~Stop reasons `max_tokens`, `max_turn_requests`, `refusal` не тестированы~~ | ✅ Решено (2026-05-22) |
-| 12 | Tool call `locations`, `rawInput`, `rawOutput` не тестированы | Не покрыто |
+| 12 | ~~Tool call `locations`, `rawInput`, `rawOutput` не тестированы~~ | ✅ Решено (2026-05-22) |
 | 13 | Rate limiting для tool execution | Не реализовано |
 | 14 | SQLite storage | Не реализовано (только memory + JSON file) |
 | 15 | Streaming tool_calls в OpenAI | Не обрабатывается (только текст) |
@@ -530,7 +581,7 @@ sequenceDiagram
 
 ### Компоненты клиента (Clean Architecture)
 
-### Сервер (~1,188 тестов, 72 файлов)
+### Сервер (~1,306 тестов, 76 файлов)
 
 | Область | Файлов | Тестов | Покрытие |
 |---|---|---|---|
@@ -540,25 +591,29 @@ sequenceDiagram
 | State Manager | 1 | 21 | ✅ Полное |
 | Session Factory | 1 | 15 | ✅ Полное |
 | Storage | 3 | 41 | ✅ Полное |
-| Session List Pagination | 1 | 22 | ✅ Полное (новый) |
+| Session List Pagination | 1 | 22 | ✅ Полное |
 | Plan Builder/Extractor | 2 | 46 | ✅ Полное |
 | Tool Definitions | 1 | 40 | ✅ Полное |
 | Tool Registry | 1 | 20 | ✅ Полное |
-| Tool Mapping | 1 | 18 | ✅ Полное (новый) |
+| Tool Mapping | 1 | 18 | ✅ Полное |
 | Tool Call Handler | 1 | 26 | ✅ Полное |
+| Tool Call Advanced | 1 | 56 | ✅ Полное (новый) |
 | Permission Manager | 3 | 57 | ✅ Полное |
 | Client RPC Handler | 1 | 38 | ✅ Полное |
 | Client RPC Service | 1 | 26 | ✅ Полное |
+| Client RPC Bridge | 1 | 29 | ✅ Полное (новый) |
 | Slash Commands | 2 | 35 | ✅ Полное |
 | HTTP Server | 2 | 18 | ✅ Полное |
-| Agent | 3 | 56 | ✅ Полное (start_turn/continue_turn + mapping + stop_reasons) |
+| Agent | 3 | 56 | ✅ Полное |
 | LLM Provider | 1 | 6 | ⚠️ Базовое |
 | MCP Module | 1 | 27 | ✅ Полное |
 | Content | 3 | 68 | ✅ Полное |
-| Pipeline | 2 | 63 | ✅ Полное (+18 DirectivesStage) |
+| Pipeline | 2 | 63 | ✅ Полное |
 | Global Policy | 2 | 69 | ✅ Полное |
-| Prompt Directives | 1 | 33 | ✅ Полное (новый) |
-| Интеграционные | 10+ | ~106 | ✅ Полное (+6 stop reasons) |
+| Prompt Directives | 1 | 33 | ✅ Полное |
+| Extensibility | 1 | 25 | ✅ Полное (новый) |
+| Stdio Transport E2E | 1 | 8 | ✅ Полное (новый) |
+| Интеграционные | 10+ | ~106 | ✅ Полное |
 
 ### Клиент (~1,030 тестов, 69 файлов)
 
@@ -583,10 +638,9 @@ sequenceDiagram
 
 ### Не покрыто тестами
 
-- Extensibility (`_meta` propagation, custom methods)
-- Tool call `locations`, `rawInput`, `rawOutput`
 - MCP HTTP/SSE transports
-- stdio transport E2E (сервер + клиент через subprocess)
+- ToolMapping round-trip edge cases с неизвестными префиксами
+- `authenticate` — расширенное покрытие (сейчас 4 теста)
 
 ---
 
@@ -599,20 +653,22 @@ sequenceDiagram
 ### P1 — Важные
 
 ~~1. **Устранить дублирование `directives.py`** — оставить один источник~~ ✅ Решено
-~~2. **Добавить тесты extensibility** — `_meta`, custom methods~~ ✅ Решено (частично)
+~~2. **Добавить тесты extensibility** — `_meta`, custom methods~~ ✅ Решено (2026-05-22)
 ~~3. **Добавить тесты stop reasons** — `max_tokens`, `max_turn_requests`, `refusal`~~ ✅ Решено (2026-05-22)
 ~~4. **Добавить тесты session/list pagination edge cases** — invalid cursor, empty results~~ ✅ Решено (2026-05-22)
 ~~5. **Исправить terminal output flow** — `execute_wait_for_exit` должен вызывать `terminal/output` перед `wait_for_exit` (см. ГЭП #11)~~ ✅ Решено (2026-05-22)
 ~~6. **Согласовать RPC response models с ACP spec** — `WriteTextFileResponse`, `KillTerminalResponse`, `ReleaseTerminalResponse` (см. ГЭП #12)~~ ✅ Решено (2026-05-22)
+~~7. **Добавить тесты Tool Call advanced features** — locations, rawInput/rawOutput, status transitions~~ ✅ Решено (2026-05-22)
+~~8. **Добавить тесты ClientRPCBridge.terminal_output** — новый метод~~ ✅ Решено (2026-05-22)
+~~9. **Добавить stdio transport E2E тесты** — сервер + клиент через subprocess~~ ✅ Решено (2026-05-22)
 
 ### P2 — Желательные
 
-6. **Добавить LLM провайдеры** — Anthropic, Gemini, Ollama
-7. **Реализовать MCP HTTP transport**
-8. **Добавить MCP auto-reconnect**
-9. **Реализовать SQLite storage**
-10. **Добавить rate limiting для tool execution**
-11. **Добавить stdio transport E2E тесты**
-12. **Реализовать MCP resources/prompts** — только tools/list и tools/call
-13. **Добавить тесты ToolMapping round-trip** — edge cases с неизвестными префиксами
-14. **Добавить тесты для ClientRPCBridge.terminal_output** — новый метод
+1. **Добавить LLM провайдеры** — Anthropic, Gemini, Ollama
+2. **Реализовать MCP HTTP transport**
+3. **Добавить MCP auto-reconnect**
+4. **Реализовать SQLite storage**
+5. **Добавить rate limiting для tool execution**
+6. **Реализовать MCP resources/prompts** — только tools/list и tools/call
+7. **Добавить тесты ToolMapping round-trip** — edge cases с неизвестными префиксами
+8. **Расширить покрытие `authenticate`** — сейчас 4 теста
