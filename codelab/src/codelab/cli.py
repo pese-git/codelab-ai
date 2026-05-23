@@ -104,9 +104,10 @@ def ensure_home_directory() -> None:
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
 
-    # Генерация глобального .env если не существует
+    # Генерация глобального .env если не существует и нет codelab.toml
     global_env = CODELAB_HOME / "config" / ".env"
-    if not global_env.exists():
+    global_toml = CODELAB_HOME / "codelab.toml"
+    if not global_env.exists() and not global_toml.exists():
         global_env.write_text(DEFAULT_ENV_TEMPLATE, encoding="utf-8")
         print(f"✅ Создан файл конфигурации: {global_env}")
         print("💡 Отредактируйте его и добавьте CODELAB_LLM_API_KEY для работы с LLM.")
