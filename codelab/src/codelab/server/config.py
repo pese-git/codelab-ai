@@ -188,12 +188,13 @@ class AppConfig(BaseSettings):
         """Найти все TOML файлы конфигурации в порядке приоритета (от низшего к высшему).
 
         Цепочка файлов:
-        1. codelab.toml.example — шаблон проекта (lowest)
-        2. ~/.codelab/codelab.toml — глобальный конфиг пользователя
-        3. ~/.codelab/auth.toml — глобальные API keys
-        4. codelab.toml — локальный проект
-        5. codelab.local.toml — project-local overrides
-        6. custom_path — custom TOML file (highest, если указан через --config)
+        1. ~/.codelab/codelab.toml — глобальный конфиг пользователя
+        2. ~/.codelab/auth.toml — глобальные API keys
+        3. codelab.toml — локальный проект
+        4. codelab.local.toml — project-local overrides
+        5. custom_path — custom TOML file (highest, если указан через --config)
+
+        Примечание: codelab.toml.example НЕ загружается — это только шаблон.
 
         Args:
             custom_path: Путь к custom TOML файлу.
@@ -203,32 +204,27 @@ class AppConfig(BaseSettings):
         """
         files: list[Path] = []
 
-        # 1. Project codelab.toml.example (template, lowest priority)
-        example_toml = Path.cwd() / "codelab.toml.example"
-        if example_toml.exists():
-            files.append(example_toml)
-
-        # 2. Global codelab.toml (user-level config)
+        # 1. Global codelab.toml (user-level config)
         global_toml = Path.home() / ".codelab" / "codelab.toml"
         if global_toml.exists():
             files.append(global_toml)
 
-        # 3. Global auth.toml (API keys — overrides template env vars)
+        # 2. Global auth.toml (API keys — overrides template env vars)
         auth_toml = Path.home() / ".codelab" / "auth.toml"
         if auth_toml.exists():
             files.append(auth_toml)
 
-        # 4. Project codelab.toml (overrides example and global)
+        # 3. Project codelab.toml (overrides global config)
         project_toml = Path.cwd() / "codelab.toml"
         if project_toml.exists():
             files.append(project_toml)
 
-        # 5. Local overrides
+        # 4. Local overrides
         local_toml = Path.cwd() / "codelab.local.toml"
         if local_toml.exists():
             files.append(local_toml)
 
-        # 6. Custom config (highest priority)
+        # 5. Custom config (highest priority)
         if custom_path:
             custom_toml = Path(custom_path)
             if custom_toml.exists():

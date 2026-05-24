@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -27,7 +28,7 @@ class ProviderEvent:
     """Базовое событие провайдера."""
 
     provider_id: str
-    timestamp: float = field(default_factory=asyncio.get_event_loop().time)
+    timestamp: float = field(default_factory=time.monotonic)
 
 
 @dataclass
