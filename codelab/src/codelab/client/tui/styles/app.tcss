@@ -1,20 +1,16 @@
 /* ============================================
-   CodeLab TUI - TCSS Стили
-   Фаза 1: Core Layout Migration
+   CodeLab TUI - Layout Styles Only
+   Цвета определены в themes/light.tcss и themes/dark.tcss
    ============================================ */
 
 /* --- Screen & Global --- */
 Screen {
     layout: vertical;
-    background: #f3f4f7;
-    color: #141a22;
 }
 
 /* --- Header --- */
 #header {
     height: 1;
-    background: #1e3a5f;
-    color: #ffffff;
     padding: 0 1;
     text-style: bold;
 }
@@ -58,15 +54,11 @@ Screen {
 /* --- Sidebar --- */
 #sidebar {
     height: 1fr;
-    background: #ebeff7;
-    border: round #6d7f9a;
     padding: 1;
     layout: vertical;
 }
 
 #sidebar:focus {
-    border: round #1d4ed8;
-    background: #e3ecff;
 }
 
 /* --- Sidebar SearchInput --- */
@@ -76,7 +68,6 @@ Screen {
 }
 
 #sidebar-search .search-container {
-    background: #ffffff;
 }
 
 /* --- Sidebar Sessions List --- */
@@ -87,16 +78,12 @@ Screen {
 /* --- FileTree --- */
 #file-tree {
     height: 1fr;
-    background: #f4f7fc;
-    border: round #6d7f9a;
     padding: 0 1;
 }
 
 /* --- Chat View --- */
 #chat-view {
     height: 1fr;
-    border: round #6d7f9a;
-    background: #ffffff;
     padding: 1;
 }
 
@@ -109,16 +96,12 @@ Screen {
 /* --- Plan Panel --- */
 #plan-panel {
     height: 8;
-    border: round #6d7f9a;
-    background: #f8fafc;
     padding: 1;
 }
 
 /* --- Tool Panel --- */
 #tool-panel {
     width: 2fr;
-    border: round #6d7f9a;
-    background: #f8fafc;
     padding: 1;
 }
 
@@ -131,13 +114,9 @@ Screen {
 #prompt-textarea {
     width: 1fr;
     height: 100%;
-    border: round #6d7f9a;
-    background: #ffffff;
 }
 
 #prompt-textarea:focus {
-    border: round #1d4ed8;
-    background: #f8fbff;
 }
 
 #submit-button {
@@ -155,20 +134,15 @@ Screen {
 /* --- Footer --- */
 #footer {
     height: 1;
-    background: #1e3a5f;
-    color: #e0e7ef;
     padding: 0 1;
 }
 
 /* --- Dock Region (OpenCode-style) --- */
-/* Область для PromptInput и QuickActionsBar внутри main-column */
 #dock-region {
     height: auto;
     min-height: 6;
     max-height: 15;
     layout: vertical;
-    background: #f8fafc;
-    border-top: solid #6d7f9a;
     padding: 0 1;
 }
 
@@ -226,18 +200,14 @@ StyledContainer {
 }
 
 StyledContainer.bordered {
-    border: solid #6d7f9a;
     padding: 1;
 }
 
 StyledContainer.rounded {
-    border: round #6d7f9a;
     padding: 1;
 }
 
 StyledContainer.panel {
-    border: round #6d7f9a;
-    background: #f8fafc;
     padding: 1;
 }
 
@@ -246,21 +216,17 @@ StyledContainer > .container-header {
     width: 100%;
     margin-bottom: 1;
     text-style: bold;
-    color: #1e3a5f;
 }
 
 /* ============================================
    Card Component
    ============================================ */
 Card {
-    border: round #6d7f9a;
-    background: #ffffff;
     padding: 1;
     margin: 0 0 1 0;
 }
 
 Card:focus-within {
-    border: round #1d4ed8;
 }
 
 /* ============================================
@@ -269,12 +235,9 @@ Card:focus-within {
 CollapsiblePanel {
     width: 100%;
     height: auto;
-    border: round #6d7f9a;
-    background: #f8fafc;
 }
 
 CollapsiblePanel:focus-within {
-    border: round #1d4ed8;
 }
 
 CollapsiblePanel > .panel-header {
@@ -282,11 +245,9 @@ CollapsiblePanel > .panel-header {
     height: 3;
     layout: horizontal;
     padding: 0 1;
-    background: #ebeff7;
 }
 
 CollapsiblePanel > .panel-header:hover {
-    background: #dfe6f5;
 }
 
 CollapsiblePanel > .panel-header > .panel-icon {
@@ -299,7 +260,6 @@ CollapsiblePanel > .panel-header > .panel-title {
     width: 1fr;
     height: 1;
     text-style: bold;
-    color: #1e3a5f;
 }
 
 CollapsiblePanel > .panel-header > .panel-toggle {
@@ -312,7 +272,6 @@ CollapsiblePanel > .panel-header > .panel-toggle {
 }
 
 CollapsiblePanel > .panel-header > .panel-toggle:hover {
-    background: #c8d4ea;
 }
 
 CollapsiblePanel > .panel-content {
@@ -349,8 +308,6 @@ AccordionPanel > CollapsiblePanel {
     width: 80;
     max-width: 90%;
     height: auto;
-    border: round #2f4a75;
-    background: #f6f9ff;
     padding: 1 2;
 }
 
@@ -362,8 +319,6 @@ AccordionPanel > CollapsiblePanel {
     width: 90;
     max-width: 95%;
     height: 80%;
-    border: round #2f4a75;
-    background: #f6f9ff;
     padding: 1;
 }
 
@@ -373,20 +328,15 @@ AccordionPanel > CollapsiblePanel {
 
 #file-viewer-search {
     margin: 0 0 1 0;
-    border: round #6d7f9a;
-    background: #ffffff;
 }
 
 #file-viewer-search-status {
     margin: 0 0 1 0;
-    color: #334155;
 }
 
 #file-viewer-content {
     height: 1fr;
     overflow: auto;
-    background: #ffffff;
-    border: round #6d7f9a;
     padding: 0 1;
 }
 
@@ -394,8 +344,6 @@ AccordionPanel > CollapsiblePanel {
     width: 110;
     max-width: 95%;
     height: 80%;
-    border: round #2f4a75;
-    background: #f6f9ff;
     padding: 1;
 }
 
@@ -406,8 +354,6 @@ AccordionPanel > CollapsiblePanel {
 #terminal-log-content {
     height: 1fr;
     overflow: auto;
-    background: #ffffff;
-    border: round #6d7f9a;
     padding: 0 1;
 }
 
@@ -415,8 +361,6 @@ AccordionPanel > CollapsiblePanel {
     width: 78;
     max-width: 90%;
     height: auto;
-    border: round #2f4a75;
-    background: #f6f9ff;
     padding: 1 2;
 }
 
@@ -445,30 +389,25 @@ AccordionPanel > CollapsiblePanel {
    Focus Styles
    ============================================ */
 *:focus {
-    border: round #1d4ed8;
 }
 
 /* ============================================
    Status Indicators
    ============================================ */
 .status-connected {
-    color: #22c55e;
 }
 
 .status-disconnected {
-    color: #94a3b8;
 }
 
 .status-error {
-    color: #ef4444;
 }
 
 .status-loading {
-    color: #f59e0b;
 }
 
 /* ============================================
-   Фаза 2: Session Components
+   Session Components
    ============================================ */
 
 /* --- MarkdownViewer --- */
@@ -478,8 +417,6 @@ MarkdownViewer {
 }
 
 MarkdownViewer > .code_inline {
-    background: #e2e8f0;
-    color: #0f172a;
 }
 
 /* --- InlineMarkdown --- */
@@ -491,10 +428,8 @@ InlineMarkdown {
 
 /* --- CodeBlock --- */
 CodeBlock {
-    background: #1e293b;
     padding: 1;
     margin: 1 0;
-    border: solid #334155;
 }
 
 /* --- StreamingText --- */
@@ -511,7 +446,6 @@ StreamingText > .streaming-content {
 StreamingText > .streaming-cursor {
     width: 1;
     height: 1;
-    background: #3b82f6;
 }
 
 StreamingText > .streaming-cursor.hidden {
@@ -522,7 +456,6 @@ StreamingText > .streaming-cursor.hidden {
 ThinkingIndicator {
     height: 1;
     padding: 0 1;
-    color: #64748b;
 }
 
 /* --- Avatar --- */
@@ -535,19 +468,15 @@ Avatar {
 }
 
 Avatar.user {
-    color: #3b82f6;
 }
 
 Avatar.assistant {
-    color: #22c55e;
 }
 
 Avatar.system {
-    color: #f59e0b;
 }
 
 Avatar.error {
-    color: #ef4444;
 }
 
 /* --- MessageHeader --- */
@@ -563,20 +492,16 @@ MessageHeader > .sender-name {
 }
 
 MessageHeader > .sender-name.user {
-    color: #3b82f6;
 }
 
 MessageHeader > .sender-name.assistant {
-    color: #22c55e;
 }
 
 MessageHeader > .sender-name.system {
-    color: #f59e0b;
 }
 
 MessageHeader > .timestamp {
     width: auto;
-    color: #94a3b8;
     margin-left: 1;
 }
 
@@ -593,28 +518,18 @@ MessageBubble {
     height: auto;
     padding: 1;
     margin: 0 0 1 0;
-    background: #f1f5f9;
-    border: solid #e2e8f0;
 }
 
 MessageBubble.user {
-    background: #eff6ff;
-    border: solid #bfdbfe;
 }
 
 MessageBubble.assistant {
-    background: #f0fdf4;
-    border: solid #bbf7d0;
 }
 
 MessageBubble.system {
-    background: #fefce8;
-    border: solid #fef08a;
 }
 
 MessageBubble.error {
-    background: #fef2f2;
-    border: solid #fecaca;
 }
 
 MessageBubble > .message-row {
@@ -632,7 +547,6 @@ DateSeparator {
     width: 100%;
     height: 1;
     text-align: center;
-    color: #94a3b8;
     margin: 1 0;
 }
 
@@ -641,7 +555,6 @@ MessageList {
     width: 100%;
     height: 1fr;
     padding: 1;
-    background: #ffffff;
 }
 
 MessageList > #message-container {
@@ -654,7 +567,6 @@ MessageList > .empty-state {
     width: 100%;
     height: auto;
     text-align: center;
-    color: #94a3b8;
     padding: 2;
 }
 
@@ -666,23 +578,18 @@ TurnStatusIndicator {
 }
 
 TurnStatusIndicator.pending {
-    color: #94a3b8;
 }
 
 TurnStatusIndicator.streaming {
-    color: #3b82f6;
 }
 
 TurnStatusIndicator.complete {
-    color: #22c55e;
 }
 
 TurnStatusIndicator.error {
-    color: #ef4444;
 }
 
 TurnStatusIndicator.cancelled {
-    color: #f59e0b;
 }
 
 /* --- ToolCallWidget --- */
@@ -691,17 +598,13 @@ ToolCallWidget {
     height: auto;
     padding: 1;
     margin: 1 0;
-    background: #f8fafc;
-    border: dashed #94a3b8;
 }
 
 ToolCallWidget > .tool-header {
     text-style: bold;
-    color: #3b82f6;
 }
 
 ToolCallWidget > .tool-args {
-    color: #64748b;
     margin-left: 2;
 }
 
@@ -711,15 +614,12 @@ SessionTurn {
     height: auto;
     padding: 1;
     margin: 0 0 1 0;
-    border: solid #e2e8f0;
 }
 
 SessionTurn.complete {
-    border: solid #bbf7d0;
 }
 
 SessionTurn.error {
-    border: solid #fecaca;
 }
 
 SessionTurn > .turn-header {

@@ -1,5 +1,6 @@
 /* ============================================
-   CodeLab TUI - Тёмная тема
+   CodeLab TUI - Тёмная тема (Tokyo Night)
+   Все цветовые стили для dark theme
    ============================================ */
 
 /* --- Screen & Global (Dark) --- */
@@ -44,6 +45,10 @@ FooterBar {
 Sidebar {
     background: #1f2335;
     border: round #565f89;
+}
+
+#sidebar-search .search-container {
+    background: #24283b;
 }
 
 /* --- FileTree (Dark) --- */
@@ -102,13 +107,36 @@ PromptInput {
     background: #1a1b26;
 }
 
+/* --- Dock Region (Dark) --- */
+#dock-region {
+    background: #1f2335;
+    border-top: solid #565f89;
+}
+
 /* --- Message Bubbles (Dark) --- */
 MessageBubble {
     background: #24283b;
+    border: solid #3b4261;
 }
 
 MessageBubble.user {
     background: #2a3a5a;
+    border: solid #4a6fa5;
+}
+
+MessageBubble.assistant {
+    background: #24283b;
+    border: solid #3b4261;
+}
+
+MessageBubble.system {
+    background: #2f3348;
+    border: solid #4a5577;
+}
+
+MessageBubble.error {
+    background: #3b2428;
+    border: solid #5a3a3a;
 }
 
 MessageBubble.agent {
@@ -161,17 +189,54 @@ ActionButton.-danger {
 /* --- Cards (Dark) --- */
 Card {
     background: #24283b;
-    border: solid #565f89;
+    border: round #565f89;
+}
+
+Card:focus-within {
+    border: round #7aa2f7;
 }
 
 StyledContainer.bordered {
     border: solid #565f89;
 }
 
+StyledContainer.rounded {
+    border: round #565f89;
+}
+
+StyledContainer.panel {
+    border: round #565f89;
+    background: #1f2335;
+}
+
+StyledContainer > .container-header {
+    color: #7aa2f7;
+}
+
 /* --- Panels (Dark) --- */
 CollapsiblePanel {
     background: #1f2335;
-    border: solid #565f89;
+    border: round #565f89;
+}
+
+CollapsiblePanel:focus-within {
+    border: round #7aa2f7;
+}
+
+CollapsiblePanel > .panel-header {
+    background: #24283b;
+}
+
+CollapsiblePanel > .panel-header:hover {
+    background: #2f3348;
+}
+
+CollapsiblePanel > .panel-header > .panel-title {
+    color: #7aa2f7;
+}
+
+CollapsiblePanel > .panel-header > .panel-toggle:hover {
+    background: #3b4261;
 }
 
 AccordionPanel {
@@ -227,6 +292,11 @@ MarkdownViewer {
     background: transparent;
 }
 
+MarkdownViewer > .code_inline {
+    background: #2f3348;
+    color: #bb9af7;
+}
+
 CodeBlock {
     background: #1f2335;
     border: solid #565f89;
@@ -235,6 +305,45 @@ CodeBlock {
 /* --- Modals (Dark) --- */
 ModalScreen {
     background: rgba(0, 0, 0, 0.7);
+}
+
+#permission-modal {
+    background: #24283b;
+    border: round #3b4261;
+}
+
+#file-viewer-modal {
+    background: #24283b;
+    border: round #3b4261;
+}
+
+#file-viewer-search {
+    background: #24283b;
+    border: round #565f89;
+}
+
+#file-viewer-search-status {
+    color: #a9b1d6;
+}
+
+#file-viewer-content {
+    background: #24283b;
+    border: round #565f89;
+}
+
+#terminal-log-modal {
+    background: #24283b;
+    border: round #3b4261;
+}
+
+#terminal-log-content {
+    background: #24283b;
+    border: round #565f89;
+}
+
+#help-modal {
+    background: #24283b;
+    border: round #3b4261;
 }
 
 HelpModal {
@@ -250,6 +359,126 @@ PermissionModal {
 FileViewerModal {
     background: #24283b;
     border: solid #565f89;
+}
+
+/* --- Status Indicators (Dark) --- */
+.status-connected {
+    color: #9ece6a;
+}
+
+.status-disconnected {
+    color: #565f89;
+}
+
+.status-error {
+    color: #f7768e;
+}
+
+.status-loading {
+    color: #e0af68;
+}
+
+/* --- Session Components (Dark) --- */
+StreamingText > .streaming-cursor {
+    background: #7aa2f7;
+}
+
+ThinkingIndicator {
+    color: #565f89;
+}
+
+Avatar.user {
+    color: #7aa2f7;
+}
+
+Avatar.assistant {
+    color: #9ece6a;
+}
+
+Avatar.system {
+    color: #e0af68;
+}
+
+Avatar.error {
+    color: #f7768e;
+}
+
+MessageHeader > .sender-name.user {
+    color: #7aa2f7;
+}
+
+MessageHeader > .sender-name.assistant {
+    color: #9ece6a;
+}
+
+MessageHeader > .sender-name.system {
+    color: #e0af68;
+}
+
+MessageHeader > .timestamp {
+    color: #565f89;
+}
+
+DateSeparator {
+    color: #565f89;
+}
+
+MessageList {
+    background: #1a1b26;
+}
+
+MessageList > .empty-state {
+    color: #565f89;
+}
+
+TurnStatusIndicator.pending {
+    color: #565f89;
+}
+
+TurnStatusIndicator.streaming {
+    color: #7aa2f7;
+}
+
+TurnStatusIndicator.complete {
+    color: #9ece6a;
+}
+
+TurnStatusIndicator.error {
+    color: #f7768e;
+}
+
+TurnStatusIndicator.cancelled {
+    color: #e0af68;
+}
+
+ToolCallWidget {
+    background: #1f2335;
+    border: dashed #565f89;
+}
+
+ToolCallWidget > .tool-header {
+    color: #7aa2f7;
+}
+
+ToolCallWidget > .tool-args {
+    color: #565f89;
+}
+
+SessionTurn {
+    border: solid #3b4261;
+}
+
+SessionTurn.complete {
+    border: solid #9ece6a;
+}
+
+SessionTurn.error {
+    border: solid #f7768e;
+}
+
+/* --- Focus Styles (Dark) --- */
+*:focus {
+    border: round #7aa2f7;
 }
 
 /* --- Scrollbars (Dark) --- */

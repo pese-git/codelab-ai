@@ -31,11 +31,11 @@
 
 ## 5. Разделение app.tcss на layout и theme
 
-- [ ] 5.1 Удалить все color-related свойства из `app.tcss` (background, color, border-color с hex значениями)
-- [ ] 5.2 Оставить в `app.tcss` только layout свойства (height, width, padding, margin, layout, border-style)
-- [ ] 5.3 Проверить что `themes/light.tcss` содержит все цветовые селекторы из app.tcss
-- [ ] 5.4 Проверить что `themes/dark.tcss` содержит все цветовые селекторы из app.tcss
-- [ ] 5.5 Добавить недостающие селекторы в theme TCSS файлы если необходимо
+- [x] 5.1 Удалить все color-related свойства из `app.tcss` (background, color, border-color с hex значениями)
+- [x] 5.2 Оставить в `app.tcss` только layout свойства (height, width, padding, margin, layout, border-style)
+- [x] 5.3 Проверить что `themes/light.tcss` содержит все цветовые селекторы из app.tcss
+- [x] 5.4 Проверить что `themes/dark.tcss` содержит все цветовые селекторы из app.tcss
+- [x] 5.5 Добавить недостающие селекторы в theme TCSS файлы если необходимо
 
 ## 6. Обновление компонентов с DEFAULT_CSS
 
