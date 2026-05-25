@@ -33,7 +33,7 @@ FooterBar {
 /* --- Sidebar (Dark) --- */
 #sidebar {
     background: #1f2335;
-    border: round #3b4261;
+    border: round #565f89;
 }
 
 #sidebar:focus {
@@ -43,13 +43,13 @@ FooterBar {
 
 Sidebar {
     background: #1f2335;
-    border: round #3b4261;
+    border: round #565f89;
 }
 
 /* --- FileTree (Dark) --- */
 #file-tree {
     background: #1f2335;
-    border: round #3b4261;
+    border: round #565f89;
 }
 
 FileTree {
@@ -59,7 +59,7 @@ FileTree {
 /* --- Chat View (Dark) --- */
 #chat-view {
     background: #1a1b26;
-    border: round #3b4261;
+    border: round #565f89;
 }
 
 ChatView {
@@ -69,7 +69,7 @@ ChatView {
 /* --- Plan Panel (Dark) --- */
 #plan-panel {
     background: #1f2335;
-    border: round #3b4261;
+    border: round #565f89;
 }
 
 PlanPanel {
@@ -79,7 +79,7 @@ PlanPanel {
 /* --- Tool Panel (Dark) --- */
 #tool-panel {
     background: #1f2335;
-    border: round #3b4261;
+    border: round #565f89;
 }
 
 ToolPanel {
@@ -89,7 +89,7 @@ ToolPanel {
 /* --- Prompt Input (Dark) --- */
 #prompt-textarea {
     background: #24283b;
-    border: round #3b4261;
+    border: round #565f89;
     color: #c0caf5;
 }
 
@@ -161,28 +161,28 @@ ActionButton.-danger {
 /* --- Cards (Dark) --- */
 Card {
     background: #24283b;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 StyledContainer.bordered {
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 /* --- Panels (Dark) --- */
 CollapsiblePanel {
     background: #1f2335;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 AccordionPanel {
     background: #1f2335;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 /* --- Tool Call Cards (Dark) --- */
 ToolCallCard {
     background: #24283b;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 ToolCallCard.-running {
@@ -219,7 +219,7 @@ PermissionBadge.-denied {
 
 PermissionRequest {
     background: #24283b;
-    border: solid #e0af68;
+    border: solid #565f89;
 }
 
 /* --- Markdown (Dark) --- */
@@ -229,7 +229,7 @@ MarkdownViewer {
 
 CodeBlock {
     background: #1f2335;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 /* --- Modals (Dark) --- */
@@ -239,17 +239,17 @@ ModalScreen {
 
 HelpModal {
     background: #24283b;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 PermissionModal {
     background: #24283b;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 FileViewerModal {
     background: #24283b;
-    border: solid #3b4261;
+    border: solid #565f89;
 }
 
 /* --- Scrollbars (Dark) --- */

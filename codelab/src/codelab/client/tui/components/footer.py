@@ -68,6 +68,7 @@ class FooterBar(Static):
         *,
         show_tokens: bool = True,
         show_hotkeys: bool = True,
+        theme_manager: object | None = None,
     ) -> None:
         """Инициализирует FooterBar с обязательным UIViewModel.
 
@@ -75,11 +76,13 @@ class FooterBar(Static):
             ui_vm: UIViewModel для управления состояниями
             show_tokens: Показывать ли токены/стоимость
             show_hotkeys: Показывать ли подсказки по горячим клавишам
+            theme_manager: ThemeManager для отображения текущей темы
         """
         super().__init__("", id="footer")
         self.ui_vm = ui_vm
         self._show_tokens = show_tokens
         self._show_hotkeys = show_hotkeys
+        self._theme_manager = theme_manager
         self._agent_status = AgentStatus.IDLE
         self._tokens_used: int = 0
         self._cost: float = 0.0
@@ -183,6 +186,11 @@ class FooterBar(Static):
             tokens_text = self._build_tokens_text()
             parts.append(tokens_text)
 
+        # Тема (справа)
+        theme_text = self._build_theme_text()
+        if theme_text:
+            parts.append(theme_text)
+
         return " │ ".join(parts)
 
     def _build_hotkeys_text(self) -> str:
@@ -239,6 +247,24 @@ class FooterBar(Static):
         if status.value == "error":
             return "✗"
         return "○"
+
+    def _build_theme_text(self) -> str:
+        """Собрать текст с текущей темой.
+
+        Returns:
+            Текст с иконкой темы или пустую строку.
+        """
+        if self._theme_manager is None:
+            return ""
+
+        try:
+            theme_name = self._theme_manager.current_theme_name
+            if theme_name == "dark":
+                return "🌙 Dark"
+            else:
+                return "☀️ Light"
+        except AttributeError:
+            return ""
 
     def set_agent_status(self, status: AgentStatus) -> None:
         """Установить статус агента.

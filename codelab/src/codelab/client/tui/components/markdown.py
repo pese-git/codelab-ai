@@ -184,31 +184,34 @@ class CodeBlock(Static):
     def __init__(
         self,
         code: str,
-        language: str = "text",
+        language: str = "python",
         *,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
+        theme: str = "monokai",
     ) -> None:
         """Инициализирует CodeBlock.
         
         Args:
-            code: Исходный код
-            language: Язык программирования для подсветки
+            code: Код для отобра
+            language: Язык программирования
             name: Имя виджета
             id: ID виджета
             classes: CSS классы
+            theme: Тема подсветки (monokai для dark, github-light для light)
         """
         from rich.syntax import Syntax
         
         self._code = code
         self._language = language
+        self._theme = theme
         
         # Создаем Rich Syntax объект
         syntax = Syntax(
             code,
             language,
-            theme="monokai",
+            theme=theme,
             line_numbers=False,
             word_wrap=True,
         )
@@ -241,7 +244,7 @@ class CodeBlock(Static):
         syntax = Syntax(
             code,
             self._language,
-            theme="monokai",
+            theme=self._theme,
             line_numbers=False,
             word_wrap=True,
         )

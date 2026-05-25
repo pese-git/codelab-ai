@@ -54,8 +54,8 @@ from .components import (
     ToolCallCard,
     ToolPanel,
 )
-from .config import TUIConfigStore, resolve_tui_connection
-from .themes import ThemeManager, ThemeType
+from .config import TUIConfigStore, TUITheme, resolve_tui_connection
+from .themes import ThemeManager
 
 
 class ACPClientApp(App[None]):
@@ -104,6 +104,7 @@ class ACPClientApp(App[None]):
         transport_mode: str = "websocket",
         stdio_command: str | None = None,
         stdio_args: list[str] | None = None,
+        theme: str | None = None,
     ) -> None:
         """Инициализирует приложение с Clean Architecture.
 
@@ -117,6 +118,7 @@ class ACPClientApp(App[None]):
             transport_mode: Режим транспорта ("websocket" или "stdio")
             stdio_command: Команда для запуска агента (для stdio режима)
             stdio_args: Аргументы команды (для stdio режима)
+            theme: Тема интерфейса ("light" или "dark", если None — из конфига)
         """
         super().__init__()
         self._host = host
@@ -135,6 +137,9 @@ class ACPClientApp(App[None]):
 
         # ThemeManager для переключения тем
         self._theme_manager = ThemeManager(app=self)
+        
+        # Применяем тему из конфига или CLI
+        self._apply_initial_theme(theme)
         
         # Флаг видимости sidebar
         self._sidebar_visible = True
@@ -228,9 +233,27 @@ class ACPClientApp(App[None]):
         self._main_layout = MainLayout(ui_vm=self._ui_vm, id="body")
         yield self._main_layout
         # FooterBar как отдельный элемент внизу экрана
-        yield FooterBar(self._ui_vm)
+        yield FooterBar(self._ui_vm, theme_manager=self._theme_manager)
         # ToastContainer должен быть поверх других элементов (в конце compose)
         yield ToastContainer(id="toast-container")
+
+    def _apply_initial_theme(self, cli_theme: str | None) -> None:
+        """Применяет тему при старте из конфига или CLI.
+
+        Приоритет: CLI theme > config file > default (light).
+
+        Args:
+            cli_theme: Тема из CLI флага --theme (если есть)
+        """
+        if cli_theme in ("light", "dark"):
+            # CLI имеет высший приоритет
+            self._theme_manager.set_theme(cli_theme)
+            self._app_logger.info("theme_applied_from_cli", theme=cli_theme)
+        else:
+            # Загружаем из конфига
+            config = self._config_store.load()
+            self._theme_manager.set_theme(config.theme)
+            self._app_logger.info("theme_applied_from_config", theme=config.theme)
 
     def on_ready(self) -> None:
         """Запускается когда приложение готово к работе."""
@@ -294,7 +317,7 @@ class ACPClientApp(App[None]):
         dock_region = self._main_layout.dock_region
         if dock_region is not None:
             dock_region.mount(PromptInput(self._chat_vm))
-            dock_region.mount(QuickActionsBar(self._ui_vm))
+            dock_region.mount(QuickActionsBar(self._ui_vm, theme_manager=self._theme_manager))
             self._app_logger.debug("dock_region_components_mounted")
         
         # Монтируем ToolPanel в right-panel-column
@@ -520,14 +543,27 @@ class ACPClientApp(App[None]):
 
     def action_toggle_theme(self) -> None:
         """Переключает между светлой и тёмной темой."""
-        current = self._theme_manager.current_theme
-        if current == ThemeType.DARK:
-            self._theme_manager.set_theme(ThemeType.LIGHT.value)
+        current = self._theme_manager.current_theme_name
+        if current == "dark":
+            self._theme_manager.set_theme("light")
         else:
-            self._theme_manager.set_theme(ThemeType.DARK.value)
+            self._theme_manager.set_theme("dark")
+        
+        # Сохраняем тему в конфиг
+        config = self._config_store.load()
+        config.theme = cast(TUITheme, self._theme_manager.current_theme_name)
+        self._config_store.save(config)
+        
+        # Обновляем иконку в QuickActionsBar
+        try:
+            quick_actions = self.query_one(QuickActionsBar)
+            quick_actions.update_theme_icon()
+        except Exception as e:
+            self._app_logger.debug("failed_to_update_theme_icon", error=str(e))
+        
         self._app_logger.debug(
             "theme_toggled",
-            new_theme=self._theme_manager.current_theme.name,
+            new_theme=self._theme_manager.current_theme_name,
         )
 
     def action_select_model(self) -> None:
@@ -936,6 +972,7 @@ def run_tui_app(
     transport_mode: str = "websocket",
     stdio_command: str | None = None,
     stdio_args: list[str] | None = None,
+    theme: str | None = None,
 ) -> None:
     """Запускает TUI приложение с параметрами подключения и рабочей директории.
 
@@ -947,8 +984,11 @@ def run_tui_app(
         transport_mode: Режим транспорта ("websocket" или "stdio")
         stdio_command: Команда для запуска агента (для stdio режима)
         stdio_args: Аргументы команды (для stdio режима)
+        theme: Тема интерфейса ("light" или "dark", если None — из конфига)
     """
-    resolved_host, resolved_port = resolve_tui_connection(host=host, port=port)
+    resolved_host, resolved_port, resolved_theme = resolve_tui_connection(
+        host=host, port=port, theme=cast(TUITheme, theme) if theme in ("light", "dark") else None
+    )
     app = ACPClientApp(
         host=resolved_host,
         port=resolved_port,
@@ -957,5 +997,6 @@ def run_tui_app(
         transport_mode=transport_mode,
         stdio_command=stdio_command,
         stdio_args=stdio_args,
+        theme=resolved_theme,
     )
     app.run()

@@ -50,7 +50,7 @@ class Theme:
         return "\n".join(lines)
 
 
-# Предустановленная тёмная тема
+# Предустановленная тёмная тема (Tokyo Night с улучшенным контрастом)
 DARK_THEME = Theme(
     name="dark",
     display_name="Тёмная",
@@ -70,22 +70,22 @@ DARK_THEME = Theme(
         "warning": "#e0af68",
         "error": "#f7768e",
         "info": "#7dcfff",
-        # Границы
-        "border": "#3b4261",
+        # Границы (улучшенный контраст)
+        "border": "#565f89",               # Было #3b4261 (1.58:1 → 2.8:1)
         "border-focus": "#7aa2f7",
         # Header/Footer
         "header-bg": "#1e2030",
         "footer-bg": "#1e2030",
         # Sidebar
         "sidebar-bg": "#1f2335",
-        "sidebar-border": "#3b4261",
+        "sidebar-border": "#565f89",       # Было #3b4261
         # Chat
         "chat-bg": "#1a1b26",
         "message-user-bg": "#24283b",
         "message-agent-bg": "#1f2335",
         # Input
         "input-bg": "#24283b",
-        "input-border": "#3b4261",
+        "input-border": "#565f89",         # Было #3b4261
         "input-focus-border": "#7aa2f7",
         # Buttons
         "button-bg": "#3b4261",
@@ -242,9 +242,19 @@ class ThemeManager:
         if self._app is None:
             return
 
-        # Обновляем стили через refresh
+        # Загружаем TCSS файл темы
+        tcss_file = self._css_path / f"{self._current_theme.name}.tcss"
+        
+        if not tcss_file.exists():
+            logger.error("theme_tcss_not_found", tcss_file=str(tcss_file))
+            return
+
         try:
+            # Применяем TCSS через refresh CSS
+            # Textual автоматически подхватывает изменения
             self._app.refresh_css()
+            
+            logger.info("theme_applied", theme=self._current_theme.name, tcss_file=str(tcss_file))
         except Exception as e:
             logger.error("theme_apply_error", error=str(e))
 
