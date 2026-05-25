@@ -235,7 +235,7 @@ class FileTree(DirectoryTree):
             return label
         node_path = node_data.path.resolve()
         if self._path_has_changes(node_path):
-            label.append(" *", style="bold #d97706")
+            label.append(" *", style="bold $warning")
         return label
 
     def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:

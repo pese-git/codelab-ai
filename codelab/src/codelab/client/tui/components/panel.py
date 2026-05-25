@@ -47,12 +47,6 @@ class CollapsiblePanel(Container):
     CollapsiblePanel {
         width: 100%;
         height: auto;
-        border: round #6d7f9a;
-        background: #f8fafc;
-    }
-    
-    CollapsiblePanel:focus-within {
-        border: round #1d4ed8;
     }
     
     CollapsiblePanel > .panel-header {
@@ -60,11 +54,6 @@ class CollapsiblePanel(Container):
         height: 3;
         layout: horizontal;
         padding: 0 1;
-        background: #ebeff7;
-    }
-    
-    CollapsiblePanel > .panel-header:hover {
-        background: #dfe6f5;
     }
     
     CollapsiblePanel > .panel-header > .panel-icon {
@@ -84,12 +73,7 @@ class CollapsiblePanel(Container):
         height: 1;
         min-width: 3;
         content-align: center middle;
-        background: transparent;
         border: none;
-    }
-    
-    CollapsiblePanel > .panel-header > .panel-toggle:hover {
-        background: #c8d4ea;
     }
     
     CollapsiblePanel > .panel-content {
