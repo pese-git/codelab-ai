@@ -2,6 +2,53 @@
 
 Справочная информация по LLM подсистеме CodeLab.
 
+## Архитектура компонентов
+
+```mermaid
+classDiagram
+    class LLMProvider {
+        <<abstract>>
+        +name* str
+        +capabilities* LLMCapabilities
+        +initialize(config)* None
+        +create_completion(request)* CompletionResponse
+        +stream_completion(request)* AsyncGenerator
+    }
+
+    class OpenAICompatibleProvider {
+        +base_url str
+        +default_model str
+        +create_completion(request) CompletionResponse
+        +stream_completion(request) AsyncGenerator
+    }
+
+    class OpenAIProvider
+    class AnthropicProvider
+    class OllamaProvider
+    class MockLLMProvider
+
+    class LLMProviderRegistry {
+        -providers dict
+        +register(id, factory, info) None
+        +get_provider(id) LLMProvider
+        +list_all_models() list[ModelInfo]
+    }
+
+    class ModelResolver {
+        +resolve(model_ref) tuple[Provider, str]
+        +resolve_from_session(...) tuple[Provider, str]
+    }
+
+    LLMProvider <|-- OpenAICompatibleProvider
+    OpenAICompatibleProvider <|-- OpenAIProvider
+    OpenAICompatibleProvider <|-- OllamaProvider
+    LLMProvider <|-- AnthropicProvider
+    LLMProvider <|-- MockLLMProvider
+
+    LLMProviderRegistry o-- LLMProvider
+    ModelResolver --> LLMProviderRegistry
+```
+
 ## LLMProvider Interface
 
 ```python
@@ -56,6 +103,29 @@ class LLMCapabilities:
 | Mock | ✅ | ✅ | ✅ | ❌ | ✅ |
 
 ## CompletionRequest
+
+### Completion Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Orchestrator as PromptOrchestrator
+    participant Resolver as ModelResolver
+    participant Registry as LLMProviderRegistry
+    participant Provider as LLMProvider
+    participant EventBus as ProviderEventBus
+
+    Orchestrator->>Resolver: resolve("openai/gpt-4o", config)
+    Resolver->>Registry: get_provider("openai")
+    Registry-->>Resolver: OpenAIProvider
+    Resolver-->>Orchestrator: (OpenAIProvider, "gpt-4o")
+
+    Orchestrator->>Provider: create_completion(request)
+    Provider->>Provider: convert to provider format
+    Provider->>Provider: call API
+    Provider->>EventBus: emit ProviderRequest event
+    Provider-->>Orchestrator: CompletionResponse
+    Provider->>EventBus: emit ProviderResponse event
+```
 
 ```python
 @dataclass
@@ -120,6 +190,36 @@ class LLMToolCall:
 ```
 
 ## ProviderErrorType
+
+### Error Classification
+
+```mermaid
+graph LR
+    subgraph "Retryable Errors"
+        RL[RATE_LIMIT]
+        TO[TIMEOUT]
+        SU[SERVICE_UNAVAILABLE]
+        IE[INTERNAL_ERROR]
+        MU[MODEL_UNAVAILABLE]
+    end
+
+    subgraph "Non-Retryable Errors"
+        AE[AUTH_ERROR]
+        IR[INVALID_REQUEST]
+    end
+
+    subgraph "Unknown"
+        UK[UNKNOWN]
+    end
+
+    RL -. fallback triggers .-> TO
+    TO -. fallback triggers .-> SU
+    SU -. fallback triggers .-> IE
+    IE -. fallback triggers .-> MU
+
+    AE -. stop immediately .-> UK
+    IR -. stop immediately .-> UK
+```
 
 ```python
 class ProviderErrorType(str, Enum):
@@ -240,6 +340,42 @@ class ModelRef:
 ```
 
 ## FallbackConfig
+
+### Fallback Architecture
+
+```mermaid
+graph TD
+    subgraph "FallbackOrchestrator"
+        Strategy[Fallback Strategy]
+        CB[Circuit Breaker]
+        Telemetry[TelemetrySink]
+    end
+
+    subgraph "Strategies"
+        Sequential[Sequential Fallback]
+        Priority[Priority-Based]
+    end
+
+    subgraph "Circuit Breaker States"
+        Closed[Closed - Normal]
+        Open[Open - Failing]
+        HalfOpen[Half-Open - Testing]
+    end
+
+    Strategy --> Sequential
+    Strategy --> Priority
+
+    CB --> Closed
+    CB --> Open
+    CB --> HalfOpen
+
+    Closed -. 5 failures .-> Open
+    Open -. 60s timeout .-> HalfOpen
+    HalfOpen -. success .-> Closed
+    HalfOpen -. failure .-> Open
+
+    Sequential -. record metrics .-> Telemetry
+```
 
 ```python
 @dataclass

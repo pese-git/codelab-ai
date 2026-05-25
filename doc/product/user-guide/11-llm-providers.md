@@ -2,6 +2,47 @@
 
 CodeLab поддерживает 8+ LLM провайдеров с возможностью переключения модели во время сессии.
 
+## Архитектура LLM подсистемы
+
+```mermaid
+graph TD
+    subgraph "User/Client"
+        Client[Client TUI/Web]
+    end
+
+    subgraph "CodeLab Server"
+        Config[Configuration]
+        Registry[LLMProviderRegistry]
+        Resolver[ModelResolver]
+
+        subgraph "LLM Providers"
+            OpenAI[OpenAIProvider]
+            Anthropic[AnthropicProvider]
+            OpenRouter[OpenRouterProvider]
+            Ollama[OllamaProvider]
+            Mock[MockLLMProvider]
+        end
+
+        subgraph "Fallback System"
+            Orchestrator[FallbackOrchestrator]
+            CircuitBreaker[CircuitBreaker]
+        end
+    end
+
+    Client -->|prompt-turn| Config
+    Config -->|resolve model| Resolver
+    Resolver -->|lookup| Registry
+    Registry --> OpenAI
+    Registry --> Anthropic
+    Registry --> OpenRouter
+    Registry --> Ollama
+    Registry --> Mock
+
+    Orchestrator -->|try next| Registry
+    Orchestrator --> CircuitBreaker
+    CircuitBreaker -. track errors .-> Registry
+```
+
 ## Обзор провайдеров
 
 | Провайдер | ID | API | Модели по умолчанию | Base URL |
@@ -130,6 +171,37 @@ codelab serve \
 ## Fallback цепочка
 
 При ошибках основного провайдера можно настроить автоматический fallback:
+
+### Fallback Flow
+
+```mermaid
+sequenceDiagram
+    participant Agent as Agent Orchestrator
+    participant Orch as FallbackOrchestrator
+    participant CB as CircuitBreaker
+    participant P1 as Primary Provider
+    participant P2 as Fallback Provider
+
+    Agent->>Orch: create_completion(request)
+    Orch->>CB: is_circuit_open(primary)?
+    CB-->>Orch: no (circuit closed)
+    Orch->>P1: create_completion()
+
+    alt Success
+        P1-->>Orch: CompletionResponse
+        Orch-->>Agent: response
+    else Rate Limit / Timeout
+        P1-->>Orch: ProviderError(retryable)
+        Orch->>CB: record_failure(primary)
+        Orch->>Orch: get next fallback
+        Orch->>CB: is_circuit_open(fallback)?
+        CB-->>Orch: no
+        Orch->>P2: create_completion()
+        P2-->>Orch: CompletionResponse
+        Orch->>CB: record_success(fallback)
+        Orch-->>Agent: response
+    end
+```
 
 ```bash
 codelab serve \
