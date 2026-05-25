@@ -54,8 +54,7 @@ class ModelItem(Static):
     }
 
     ModelItem.-current {
-        border-left: solid $success;
-        border-left-width: 3;
+        border-left: heavy $success;
     }
 
     ModelItem .model-name {
