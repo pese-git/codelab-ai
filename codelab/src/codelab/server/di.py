@@ -190,7 +190,7 @@ class AgentProvider(Provider):
             model=config.llm.model,
             temperature=config.llm.temperature,
             max_tokens=config.llm.max_tokens,
-            llm_provider_class="openai" if config.llm.provider == "openai" else "mock",
+            llm_provider_class=config.llm.provider,
         )
 
         # Создать model resolver для multi-provider support
