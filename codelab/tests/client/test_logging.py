@@ -1,6 +1,7 @@
 """Тесты для модуля логирования."""
 
 import logging
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -60,8 +61,9 @@ def test_setup_logging_with_default_file_path() -> None:
     home = Path.home()
     log_dir = home / ".codelab" / "logs"
     assert log_dir.exists()
-    # Проверяем что файл создан
-    log_file = log_dir / "codelab.log"
+    # Проверяем что файл создан с PID в имени
+    pid = os.getpid()
+    log_file = log_dir / f"codelab-{pid}.log"
     assert log_file.exists()
 
 
@@ -118,3 +120,34 @@ def test_no_duplicate_log_entries() -> None:
         # Проверяем что каждая запись встречается один раз
         assert content.count("single_entry_test") == 1
         assert content.count("after_second_setup") == 1
+
+
+def test_setup_logging_default_creates_pid_file() -> None:
+    """Проверяет что файл создаётся с PID в имени при log_file='default'."""
+    pid = os.getpid()
+    log_dir = Path.home() / ".codelab" / "logs"
+    expected_file = log_dir / f"codelab-{pid}.log"
+
+    # Удаляем файл если существует (для чистоты теста)
+    expected_file.unlink(missing_ok=True)
+
+    logger = setup_logging(log_file="default")
+    assert logger is not None
+    assert expected_file.exists()
+
+
+def test_pid_in_log_entries() -> None:
+    """Проверяет что PID присутствует в каждой записи лога."""
+    with TemporaryDirectory() as tmpdir:
+        log_file = str(Path(tmpdir) / "test_pid.log")
+        setup_logging(level="INFO", log_file=log_file)
+        logger = structlog.get_logger("codelab")
+        logger.info("test_pid_entry")
+
+        # Flush handlers
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+
+        content = Path(log_file).read_text()
+        # PID должен быть в записи
+        assert str(os.getpid()) in content

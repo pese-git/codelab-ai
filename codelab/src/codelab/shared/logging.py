@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +38,6 @@ def _add_pid(
     event_dict: structlog.types.EventDict,
 ) -> structlog.types.EventDict:
     """Добавляет PID процесса к каждому log entry для диагностики."""
-    import os
-
     event_dict["pid"] = os.getpid()
     return event_dict
 
@@ -98,7 +97,7 @@ def setup_logging(
         json_format: Использовать JSON формат (True) или консольный (False).
         log_file: Путь к файлу логов. Поддерживает спецпути:
                   - None - логи не сохраняются в файл
-                  - "default" - использует ~/.codelab/logs/codelab.log
+                  - "default" - использует ~/.codelab/logs/codelab-{pid}.log
                   - абсолютный или относительный путь
         log_dir: Кастомная директория для логов (опционально).
                  Используется вместо ~/.codelab/logs/ если указана.
@@ -140,9 +139,9 @@ def setup_logging(
     file_path: Path | None = None
     if log_file:
         if log_file == "default":
-            # Используем стандартный путь ~/.codelab/logs/codelab.log
+            # Используем стандартный путь ~/.codelab/logs/codelab-{pid}.log
             logs_directory = get_logs_dir(log_dir)
-            file_path = logs_directory / "codelab.log"
+            file_path = logs_directory / f"codelab-{os.getpid()}.log"
         else:
             # Используем указанный путь
             file_path = Path(log_file)
