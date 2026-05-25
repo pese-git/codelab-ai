@@ -157,7 +157,7 @@ class InlineMarkdown(Static):
         result = re.sub(r'^#{1,6}\s+(.+)$', r'[bold]\1[/bold]', result, flags=re.MULTILINE)
 
         # Шаг 3: Восстанавливаем экранированные [ обратно
-        result = result.replace('\u0000LBRACKET\u0000', '\[')
+        result = result.replace('\u0000LBRACKET\u0000', '[')
 
         return result
 
