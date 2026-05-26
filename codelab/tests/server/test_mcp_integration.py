@@ -171,7 +171,7 @@ class TestMCPToolAdapterIntegration:
 
             assert isinstance(query_def, ToolDefinition)
             assert query_def.name == "mcp:test-sqlite:query"
-            assert query_def.description == "Execute a SQL SELECT query (read-only)"
+            assert query_def.description == "[MCP:test-sqlite] Execute a SQL SELECT query (read-only)"
             assert query_def.parameters["type"] == "object"
             assert "sql" in query_def.parameters["properties"]
             assert query_def.requires_permission is True

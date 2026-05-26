@@ -181,9 +181,13 @@ class MCPToolAdapter:
         # Выводим kind из аннотаций или эвристики по имени
         inferred_kind = self._infer_kind(mcp_tool)
 
+        # Добавляем тег MCP сервера в описание для идентификации LLM
+        base_description = mcp_tool.description or mcp_tool.name
+        description = f"[MCP:{self.server_id}] {base_description}"
+
         return ToolDefinition(
             name=namespaced_name,
-            description=mcp_tool.description or f"MCP tool: {mcp_tool.name}",
+            description=description,
             parameters=parameters,
             kind=inferred_kind,
             requires_permission=True,

@@ -143,7 +143,7 @@ class TestMCPToolAdapter:
         # Проверяем преобразованное определение
         assert isinstance(tool_def, ToolDefinition)
         assert tool_def.name == "mcp:fs-server:read_file"
-        assert tool_def.description == "Читает содержимое файла"
+        assert tool_def.description == "[MCP:fs-server] Читает содержимое файла"
         # Kind выводится из имени инструмента (read_file -> read)
         assert tool_def.kind == "read"
         assert tool_def.requires_permission is True
