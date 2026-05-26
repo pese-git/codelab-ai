@@ -1,54 +1,54 @@
-## ADDED Requirements
+## ДОБАВЛЕННЫЕ Требования
 
-### Requirement: TUI theme configuration from multiple sources
-The system SHALL support loading theme configuration from multiple sources with defined priority order: JSON config < TOML global < TOML project < Environment variable < CLI flag < UI toggle.
+### Требование: Конфигурация тем TUI из нескольких источников
+Система ДОЛЖНА поддерживать загрузку конфигурации темы из нескольких источников с определённым порядком приоритета: JSON конфиг < TOML глобальный < TOML проект < Переменная окружения < Флаг CLI < Переключатель в UI.
 
-#### Scenario: Load theme from JSON config only
-- **WHEN** no other sources provide theme configuration
-- **THEN** system SHALL load theme from `~/.codelab/tui_config.json` with default value "light"
+#### Сценарий: Загрузка темы только из JSON конфига
+- **КОГДА** другие источники не предоставляют конфигурацию темы
+- **ТОГДА** система ДОЛЖНА загрузить тему из `~/.codelab/tui_config.json` со значением по умолчанию "light"
 
-#### Scenario: TOML global overrides JSON config
-- **WHEN** `~/.codelab/codelab.toml` contains `[tui]` section with `theme` key
-- **THEN** system SHALL use theme from TOML global, overriding JSON config
+#### Сценарий: TOML глобальный переопределяет JSON конфиг
+- **КОГДА** `~/.codelab/codelab.toml` содержит секцию `[tui]` с ключом `theme`
+- **ТОГДА** система ДОЛЖНА использовать тему из TOML глобального, переопределяя JSON конфиг
 
-#### Scenario: TOML project overrides TOML global
-- **WHEN** `./codelab.toml` or `./codelab.local.toml` contains `[tui]` section with `theme` key
-- **THEN** system SHALL use theme from project TOML, overriding TOML global
+#### Сценарий: TOML проект переопределяет TOML глобальный
+- **КОГДА** `./codelab.toml` или `./codelab.local.toml` содержит секцию `[tui]` с ключом `theme`
+- **ТОГДА** система ДОЛЖНА использовать тему из TOML проекта, переопределяя TOML глобальный
 
-#### Scenario: Environment variable overrides TOML
-- **WHEN** environment variable `CODELAB_THEME` is set to "light" or "dark"
-- **THEN** system SHALL use theme from environment variable, overriding all TOML sources
+#### Сценарий: Переменная окружения переопределяет TOML
+- **КОГДА** переменная окружения `CODELAB_THEME` установлена в "light" или "dark"
+- **ТОГДА** система ДОЛЖНА использовать тему из переменной окружения, переопределяя все источники TOML
 
-#### Scenario: CLI flag overrides environment variable
-- **WHEN** `codelab connect --theme dark` is executed
-- **THEN** system SHALL use theme from CLI flag, overriding environment variable
+#### Сценарий: Флаг CLI переопределяет переменную окружения
+- **КОГДА** выполняется команда `codelab connect --theme dark`
+- **ТОГДА** система ДОЛЖНА использовать тему из флага CLI, переопределяя переменную окружения
 
-#### Scenario: UI toggle overrides CLI flag at runtime
-- **WHEN** user presses Ctrl+T or clicks theme toggle button
-- **THEN** system SHALL switch theme and save to JSON config, overriding all other sources
+#### Сценарий: Переключатель в UI переопределяет флаг CLI во время выполнения
+- **КОГДА** пользователь нажимает Ctrl+T или кликает кнопку переключения темы
+- **ТОГДА** система ДОЛЖНА переключить тему и сохранить в JSON конфиг, переопределяя все остальные источники
 
-### Requirement: TOML configuration format
-The system SHALL read theme configuration from `[tui]` section in TOML files with key `theme` accepting values "light" or "dark".
+### Требование: Формат TOML конфигурации
+Система ДОЛЖНА читать конфигурацию темы из секции `[tui]` в TOML файлах с ключом `theme`, принимающим значения "light" или "dark".
 
-#### Scenario: Valid TOML theme value
-- **WHEN** TOML file contains `theme = "dark"` in `[tui]` section
-- **THEN** system SHALL parse and use "dark" theme
+#### Сценарий: Валидное значение темы в TOML
+- **КОГДА** TOML файл содержит `theme = "dark"` в секции `[tui]`
+- **ТОГДА** система ДОЛЖНА распарсить и использовать тему "dark"
 
-#### Scenario: Invalid TOML theme value
-- **WHEN** TOML file contains invalid theme value (not "light" or "dark")
-- **THEN** system SHALL fallback to "light" theme and log warning
+#### Сценарий: Невалидное значение темы в TOML
+- **КОГДА** TOML файл содержит невалидное значение темы (не "light" или "dark")
+- **ТОГДА** система ДОЛЖНА вернуться к теме "light" и записать предупреждение в лог
 
-#### Scenario: Missing [tui] section
-- **WHEN** TOML file does not contain `[tui]` section
-- **THEN** system SHALL continue without error and use lower priority source
+#### Сценарий: Отсутствует секция [tui]
+- **КОГДА** TOML файл не содержит секцию `[tui]`
+- **ТОГДА** система ДОЛЖНА продолжить работу без ошибки и использовать источник более низкого приоритета
 
-### Requirement: TOML file chain loading
-The system SHALL load TOML files in order: `~/.codelab/codelab.toml` → `~/.codelab/auth.toml` → `./codelab.toml` → `./codelab.local.toml` → custom path (if provided).
+### Требование: Цепочная загрузка TOML файлов
+Система ДОЛЖНА загружать TOML файлы в порядке: `~/.codelab/codelab.toml` → `~/.codelab/auth.toml` → `./codelab.toml` → `./codelab.local.toml` → пользовательский путь (если указан).
 
-#### Scenario: Load all existing TOML files
-- **WHEN** multiple TOML files exist in the chain
-- **THEN** system SHALL merge configurations with later files overriding earlier ones
+#### Сценарий: Загрузка всех существующих TOML файлов
+- **КОГДА** существует несколько TOML файлов в цепочке
+- **ТОГДА** система ДОЛЖНА объединить конфигурации, при этом более поздние файлы переопределяют более ранние
 
-#### Scenario: Skip non-existent TOML files
-- **WHEN** some TOML files in chain do not exist
-- **THEN** system SHALL skip them without error and continue with next file
+#### Сценарий: Пропуск несуществующих TOML файлов
+- **КОГДА** некоторые TOML файлы в цепочке не существуют
+- **ТОГДА** система ДОЛЖНА пропустить их без ошибки и продолжить со следующим файлом

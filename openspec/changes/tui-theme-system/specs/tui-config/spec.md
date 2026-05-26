@@ -1,27 +1,27 @@
-## ADDED Requirements
+## ДОБАВЛЕННЫЕ Требования
 
-### Requirement: TUIConfigStore TOML loading capability
-The TUIConfigStore SHALL support loading configuration from TOML files in addition to JSON, with proper merge priority.
+### Требование: Возможность загрузки TOML в TUIConfigStore
+TUIConfigStore ДОЛЖЕН поддерживать загрузку конфигурации из TOML файлов в дополнение к JSON, с правильным приоритетом объединения.
 
-#### Scenario: Load theme from TOML [tui] section
-- **WHEN** TOML file contains `[tui]` section with `theme` key
-- **THEN** TUIConfigStore SHALL extract theme value and include it in merged config
+#### Сценарий: Загрузка темы из TOML секции [tui]
+- **КОГДА** TOML файл содержит секцию `[tui]` с ключом `theme`
+- **ТОГДА** TUIConfigStore ДОЛЖЕН извлечь значение темы и включить его в объединённый конфиг
 
-#### Scenario: Load host/port from TOML [tui] section
-- **WHEN** TOML file contains `[tui]` section with `host` and `port` keys
-- **THEN** TUIConfigStore SHALL extract these values and include them in merged config
+#### Сценарий: Загрузка host/port из TOML секции [tui]
+- **КОГДА** TOML файл содержит секцию `[tui]` с ключами `host` и `port`
+- **ТОГДА** TUIConfigStore ДОЛЖЕН извлечь эти значения и включить их в объединённый конфиг
 
-#### Scenario: Merge JSON and TOML configs
-- **WHEN** both JSON config and TOML files exist
-- **THEN** TUIConfigStore SHALL merge them with TOML values overriding JSON values
+#### Сценарий: Объединение JSON и TOML конфигов
+- **КОГДА** существуют как JSON конфиг, так и TOML файлы
+- **ТОГДА** TUIConfigStore ДОЛЖЕН объединить их, при этом значения TOML переопределяют значения JSON
 
-### Requirement: TUIConfigStore priority resolution
-The TUIConfigStore SHALL resolve configuration from multiple sources with defined priority: JSON < TOML chain.
+### Требование: Приоритетное разрешение в TUIConfigStore
+TUIConfigStore ДОЛЖЕН разрешать конфигурацию из нескольких источников с определённым приоритетом: JSON < цепочка TOML.
 
-#### Scenario: TOML overrides JSON for theme
-- **WHEN** JSON has `theme: "light"` and TOML has `theme = "dark"`
-- **THEN** resolved config SHALL have `theme = "dark"`
+#### Сценарий: TOML переопределяет JSON для темы
+- **КОГДА** JSON имеет `theme: "light"` а TOML имеет `theme = "dark"`
+- **ТОГДА** разрешённый конфиг ДОЛЖЕН иметь `theme = "dark"`
 
-#### Scenario: JSON used when TOML has no [tui] section
-- **WHEN** JSON has theme value and TOML has no `[tui]` section
-- **THEN** resolved config SHALL use theme from JSON
+#### Сценарий: JSON используется когда TOML не имеет секции [tui]
+- **КОГДА** JSON имеет значение темы а TOML не имеет секции `[tui]`
+- **ТОГДА** разрешённый конфиг ДОЛЖЕН использовать тему из JSON

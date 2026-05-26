@@ -1,57 +1,57 @@
-## ADDED Requirements
+## ДОБАВЛЕННЫЕ Требования
 
-### Requirement: Theme toggle action
-The system SHALL provide a toggle action that switches between "light" and "dark" themes when invoked via keyboard shortcut (Ctrl+T), command palette, or UI button.
+### Требование: Действие переключения темы
+Система ДОЛЖНА предоставлять действие переключения, которое переключает между темами "light" и "dark" при вызове через горячую клавишу (Ctrl+T), палитру команд или кнопку в UI.
 
-#### Scenario: Toggle from light to dark
-- **WHEN** current theme is "light" and toggle action is invoked
-- **THEN** system SHALL switch to "dark" theme
+#### Сценарий: Переключение с light на dark
+- **КОГДА** текущая тема "light" и вызвано действие переключения
+- **ТОГДА** система ДОЛЖНА переключиться на тему "dark"
 
-#### Scenario: Toggle from dark to light
-- **WHEN** current theme is "dark" and toggle action is invoked
-- **THEN** system SHALL switch to "light" theme
+#### Сценарий: Переключение с dark на light
+- **КОГДА** текущая тема "dark" и вызвано действие переключения
+- **ТОГДА** система ДОЛЖНА переключиться на тему "light"
 
-#### Scenario: Toggle saves theme to config
-- **WHEN** theme is toggled via any method
-- **THEN** system SHALL save new theme to `~/.codelab/tui_config.json`
+#### Сценарий: Переключение сохраняет тему в конфиг
+- **КОГДА** тема переключена любым способом
+- **ТОГДА** система ДОЛЖНА сохранить новую тему в `~/.codelab/tui_config.json`
 
-#### Scenario: Toggle logs the change
-- **WHEN** theme is toggled
-- **THEN** system SHALL log the theme change with new theme name
+#### Сценарий: Переключение записывает изменение в лог
+- **КОГДА** тема переключена
+- **ТОГДА** система ДОЛЖНА записать изменение темы с именем новой темы в лог
 
-### Requirement: Theme visual indicator in QuickActionsBar
-The system SHALL display a theme icon in QuickActionsBar that reflects the current theme: sun icon (☀️) for light theme, moon icon (🌙) for dark theme.
+### Требование: Визуальный индикатор темы в QuickActionsBar
+Система ДОЛЖНА отображать иконку темы в QuickActionsBar, отражающую текущую тему: иконка солнца (☀️) для light темы, иконка луны (🌙) для dark темы.
 
-#### Scenario: Show sun icon for light theme
-- **WHEN** current theme is "light"
-- **THEN** QuickActionsBar SHALL display sun icon (☀️) on theme toggle button
+#### Сценарий: Показать иконку солнца для light темы
+- **КОГДА** текущая тема "light"
+- **ТОГДА** QuickActionsBar ДОЛЖЕН отображать иконку солнца (☀️) на кнопке переключения темы
 
-#### Scenario: Show moon icon for dark theme
-- **WHEN** current theme is "dark"
-- **THEN** QuickActionsBar SHALL display moon icon (🌙) on theme toggle button
+#### Сценарий: Показать иконку луны для dark темы
+- **КОГДА** текущая тема "dark"
+- **ТОГДА** QuickActionsBar ДОЛЖЕН отображать иконку луны (🌙) на кнопке переключения темы
 
-#### Scenario: Icon updates on toggle
-- **WHEN** theme is toggled
-- **THEN** QuickActionsBar icon SHALL update to reflect new theme
+#### Сценарий: Иконка обновляется при переключении
+- **КОГДА** тема переключена
+- **ТОГДА** иконка в QuickActionsBar ДОЛЖНА обновиться для отражения новой темы
 
-### Requirement: Theme display in FooterBar
-The system SHALL display the current theme name in FooterBar as text indicator.
+### Требование: Отображение темы в FooterBar
+Система ДОЛЖНА отображать название текущей темы в FooterBar в виде текстового индикатора.
 
-#### Scenario: Display "Light" in footer
-- **WHEN** current theme is "light"
-- **THEN** FooterBar SHALL display "Light" or equivalent indicator
+#### Сценарий: Отображение "Light" в footer
+- **КОГДА** текущая тема "light"
+- **ТОГДА** FooterBar ДОЛЖЕН отображать "Light" или эквивалентный индикатор
 
-#### Scenario: Display "Dark" in footer
-- **WHEN** current theme is "dark"
-- **THEN** FooterBar SHALL display "Dark" or equivalent indicator
+#### Сценарий: Отображение "Dark" в footer
+- **КОГДА** текущая тема "dark"
+- **ТОГДА** FooterBar ДОЛЖЕН отображать "Dark" или эквивалентный индикатор
 
-#### Scenario: Footer updates on toggle
-- **WHEN** theme is toggled
-- **THEN** FooterBar text SHALL update to reflect new theme name
+#### Сценарий: Footer обновляется при переключении
+- **КОГДА** тема переключена
+- **ТОГДА** текст в FooterBar ДОЛЖЕН обновиться для отражения имени новой темы
 
-### Requirement: Command palette theme toggle
-The system SHALL include "Toggle Theme" command in command palette that invokes theme toggle action.
+### Требование: Переключение темы через палитру команд
+Система ДОЛЖНА включать команду "Toggle Theme" в палитре команд, которая вызывает действие переключения темы.
 
-#### Scenario: Execute toggle from command palette
-- **WHEN** user selects "Toggle Theme" in command palette
-- **THEN** system SHALL execute theme toggle action
+#### Сценарий: Выполнение переключения из палитры команд
+- **КОГДА** пользователь выбирает "Toggle Theme" в палитре команд
+- **ТОГДА** система ДОЛЖНА выполнить действие переключения темы

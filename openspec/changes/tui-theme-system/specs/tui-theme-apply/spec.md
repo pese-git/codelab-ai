@@ -1,72 +1,72 @@
-## ADDED Requirements
+## ДОБАВЛЕННЫЕ Требования
 
-### Requirement: Dynamic theme application without restart
-The system SHALL apply theme changes immediately without requiring application restart, using Textual's CSS refresh mechanism.
+### Требование: Динамическое применение темы без перезапуска
+Система ДОЛЖНА применять изменения темы немедленно без необходимости перезапуска приложения, используя механизм обновления CSS в Textual.
 
-#### Scenario: Apply theme on startup
-- **WHEN** application starts with theme from config
-- **THEN** system SHALL load and apply corresponding TCSS file before UI is displayed
+#### Сценарий: Применение темы при запуске
+- **КОГДА** приложение запускается с темой из конфига
+- **ТОГДА** система ДОЛЖНА загрузить и применить соответствующий TCSS файл до отображения UI
 
-#### Scenario: Apply theme on toggle
-- **WHEN** theme is toggled at runtime
-- **THEN** system SHALL load new TCSS file and refresh CSS within 500ms
+#### Сценарий: Применение темы при переключении
+- **КОГДА** тема переключена во время выполнения
+- **ТОГДА** система ДОЛЖНА загрузить новый TCSS файл и обновить CSS в течение 500мс
 
-#### Scenario: No visual glitch during theme switch
-- **WHEN** theme is toggled
-- **THEN** system SHALL not display mixed colors from both themes during transition
+#### Сценарий: Отсутствие визуальных артефактов при переключении темы
+- **КОГДА** тема переключена
+- **ТОГДА** система НЕ ДОЛЖНА отображать смешанные цвета из обеих тем во время перехода
 
-### Requirement: TCSS file loading
-The system SHALL load theme-specific TCSS files from `tui/themes/` directory: `light.tcss` for light theme, `dark.tcss` for dark theme.
+### Требование: Загрузка TCSS файлов
+Система ДОЛЖНА загружать theme-specific TCSS файлы из директории `tui/themes/`: `light.tcss` для light темы, `dark.tcss` для dark темы.
 
-#### Scenario: Load light.tcss for light theme
-- **WHEN** theme is set to "light"
-- **THEN** system SHALL load `tui/themes/light.tcss` and apply all styles
+#### Сценарий: Загрузка light.tcss для light темы
+- **КОГДА** тема установлена в "light"
+- **ТОГДА** система ДОЛЖНА загрузить `tui/themes/light.tcss` и применить все стили
 
-#### Scenario: Load dark.tcss for dark theme
-- **WHEN** theme is set to "dark"
-- **THEN** system SHALL load `tui/themes/dark.tcss` and apply all styles
+#### Сценарий: Загрузка dark.tcss для dark темы
+- **КОГДА** тема установлена в "dark"
+- **ТОГДА** система ДОЛЖНА загрузить `tui/themes/dark.tcss` и применить все стили
 
-#### Scenario: Handle missing TCSS file
-- **WHEN** theme TCSS file does not exist
-- **THEN** system SHALL log error and fallback to light theme with default styles
+#### Сценарий: Обработка отсутствующего TCSS файла
+- **КОГДА** TCSS файл темы не существует
+- **ТОГДА** система ДОЛЖНА записать ошибку в лог и вернуться к light теме со стилями по умолчанию
 
-### Requirement: Layout and theme separation
-The system SHALL maintain separation between layout styles (in `app.tcss`) and theme colors (in `themes/*.tcss`), with `app.tcss` containing only structural properties (height, width, padding, margin, layout, border-style without colors).
+### Требование: Разделение layout и темы
+Система ДОЛЖНА поддерживать разделение между layout стилями (в `app.tcss`) и цветами темы (в `themes/*.tcss`), при этом `app.tcss` содержит только структурные свойства (height, width, padding, margin, layout, border-style без цветов).
 
-#### Scenario: app.tcss contains no color values
-- **WHEN** `app.tcss` is parsed
-- **THEN** it SHALL NOT contain any hex color values or color property definitions
+#### Сценарий: app.tcss не содержит значений цветов
+- **КОГДА** `app.tcss` распарсен
+- **ТОГДА** он НЕ ДОЛЖЕН содержать hex значений цветов или определений свойства color
 
-#### Scenario: Theme TCSS contains all color definitions
-- **WHEN** `themes/light.tcss` or `themes/dark.tcss` is parsed
-- **THEN** it SHALL contain all color-related properties (background, color, border-color) for all UI components
+#### Сценарий: Theme TCSS содержит все определения цветов
+- **КОГДА** `themes/light.tcss` или `themes/dark.tcss` распарсен
+- **ТОГДА** он ДОЛЖЕН содержать все свойства связанные с цветами (background, color, border-color) для всех UI компонентов
 
-#### Scenario: Theme TCSS covers all selectors from app.tcss
-- **WHEN** comparing selectors in `app.tcss` and theme TCSS files
-- **THEN** every selector with color properties in `app.tcss` SHALL have corresponding selector in both theme TCSS files
+#### Сценарий: Theme TCSS покрывает все селекторы из app.tcss
+- **КОГДА** сравниваются селекторы в `app.tcss` и theme TCSS файлах
+- **ТОГДА** каждый селектор со свойствами цветов в `app.tcss` ДОЛЖЕН иметь соответствующий селектор в обоих theme TCSS файлах
 
-### Requirement: ThemeManager CSS variable system
-The ThemeManager SHALL generate CSS variables from theme color definitions and apply them to the Textual application.
+### Требование: Система CSS переменных ThemeManager
+ThemeManager ДОЛЖЕН генерировать CSS переменные из определений цветов темы и применять их к Textual приложению.
 
-#### Scenario: Generate CSS variables from theme
-- **WHEN** theme is set
-- **THEN** ThemeManager SHALL generate CSS variables for all color keys in theme definition
+#### Сценарий: Генерация CSS переменных из темы
+- **КОГДА** тема установлена
+- **ТОГДА** ThemeManager ДОЛЖЕН генерировать CSS переменные для всех ключей цветов в определении темы
 
-#### Scenario: Apply CSS variables to screen
-- **WHEN** CSS variables are generated
-- **THEN** system SHALL apply them to Screen root element for cascade inheritance
+#### Сценарий: Применение CSS переменных к экрану
+- **КОГДА** CSS переменные сгенерированы
+- **ТОГДА** система ДОЛЖНА применить их к корневому элементу Screen для каскадного наследования
 
-### Requirement: Component DEFAULT_CSS compatibility
-All TUI components using DEFAULT_CSS SHALL use Textual CSS variables (e.g., `$primary`, `$surface`) that adapt to theme changes, not hardcoded color values.
+### Требование: Совместимость DEFAULT_CSS компонентов
+Все TUI компоненты, использующие DEFAULT_CSS, ДОЛЖНЫ использовать CSS переменные Textual (например, `$primary`, `$surface`), адаптирующиеся к изменениям темы, а не захардкоженные значения цветов.
 
-#### Scenario: MessageBubble adapts to theme
-- **WHEN** theme is toggled
-- **THEN** MessageBubble background colors SHALL update to match new theme
+#### Сценарий: MessageBubble адаптируется к теме
+- **КОГДА** тема переключена
+- **ТОГДА** цвета фона MessageBubble ДОЛЖНЫ обновиться для соответствия новой теме
 
-#### Scenario: ActionButton adapts to theme
-- **WHEN** theme is toggled
-- **THEN** ActionButton background and text colors SHALL update to match new theme
+#### Сценарий: ActionButton адаптируется к теме
+- **КОГДА** тема переключена
+- **ТОГДА** цвета фона и текста ActionButton ДОЛЖНЫ обновиться для соответствия новой теме
 
-#### Scenario: CodeBlock adapts to theme
-- **WHEN** theme is toggled
-- **THEN** CodeBlock background and border colors SHALL update to match new theme
+#### Сценарий: CodeBlock адаптируется к теме
+- **КОГДА** тема переключена
+- **ТОГДА** цвета фона и границ CodeBlock ДОЛЖНЫ обновиться для соответствия новой теме
