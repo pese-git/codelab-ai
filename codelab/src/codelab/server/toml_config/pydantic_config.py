@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -29,6 +30,61 @@ def _humanize_name(model_id: str) -> str:
         claude-sonnet-4 → Claude Sonnet 4
     """
     return re.sub(r"[-_]", " ", model_id).title()
+
+
+def _flatten_dotted_keys(data: dict[str, Any]) -> dict[str, Any]:
+    """Распутывает вложенные структуры от точек в TOML ключах.
+
+    TOML интерпретирует точки в именах ключей как вложенность:
+    [models.qwen3.6-plus] → {"qwen3": {"6-plus": {...}}}
+
+    Эта функция рекурсивно flattens такие структуры обратно.
+
+    Args:
+        data: Dict из TOML
+
+    Returns:
+        Dict с распутанными ключами
+    """
+    if not isinstance(data, dict):
+        return data
+
+    # Ключи которые являются настоящими полями конфигурации модели
+    config_keys = {
+        "context_window", "max_output_tokens",
+        "cost_per_input_token", "cost_per_output_token",
+    }
+
+    result: dict[str, Any] = {}
+
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            result[key] = value
+            continue
+
+        # Проверяем, это вложенность от точки или реальная структура
+        # Если ключи в value НЕ являются config_keys — это вложенность от точки
+        value_keys = set(value.keys())
+        is_nested = not value_keys.intersection(config_keys)
+
+        if is_nested and len(value_keys) == 1:
+            # Одиночная вложенность от точки — рекурсивно flattens
+            nested_key = next(iter(value_keys))
+            nested_value = value[nested_key]
+            if isinstance(nested_value, dict):
+                # Продолжаем распутывание
+                flattened = _flatten_dotted_keys({nested_key: nested_value})
+                # Объединяем с результатом
+                for fk, fv in flattened.items():
+                    full_key = f"{key}.{fk}"
+                    result[full_key] = fv
+            else:
+                result[f"{key}.{nested_key}"] = nested_value
+        else:
+            # Это реальная конфигурация модели
+            result[key] = _flatten_dotted_keys(value)
+
+    return result
 
 
 def _expand_env_vars(value: str) -> str:
@@ -112,6 +168,18 @@ class ProviderConfig(BaseModel):
         """Раскрывает переменные окружения в api_key."""
         if v and isinstance(v, str):
             return _expand_env_vars(v)
+        return v
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def flatten_dotted_model_keys(cls, v: Any) -> Any:
+        """Распутывает вложенные структуры от точек в TOML ключах моделей.
+
+        TOML интерпретирует [models.qwen3.6-plus] как {"qwen3": {"6-plus": {...}}}.
+        Эта функция преобразует обратно в {"qwen3.6-plus": {...}}.
+        """
+        if isinstance(v, dict):
+            return _flatten_dotted_keys(v)
         return v
 
     def to_provider_info(self, provider_id: str) -> ProviderInfo:

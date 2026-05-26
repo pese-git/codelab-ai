@@ -244,6 +244,28 @@ class ACPProtocol:
         },
     }
 
+    def _get_default_model(self) -> str:
+        """Получить модель по умолчанию из конфигурации или Registry.
+
+        Returns:
+            Модель в формате "provider/model" (например, "openrouter/gpt-4o").
+        """
+        # Попробовать взять из agent_orchestrator config
+        if self._agent_orchestrator is not None:
+            orchestrator_config = self._agent_orchestrator.config
+            provider_class = orchestrator_config.llm_provider_class
+            model = orchestrator_config.model
+            return f"{provider_class}/{model}"
+
+        # Fallback: взять первую модель из Registry
+        if self._config_option_builder is not None:
+            models = self._config_option_builder.get_model_list()
+            if models:
+                return models[0].full_id
+
+        # Последний fallback
+        return "openai/gpt-4o"
+
     def _build_config_specs(self) -> dict[str, dict[str, Any]]:
         """Построить config specs из Registry или использовать defaults.
 
@@ -254,8 +276,9 @@ class ACPProtocol:
             additional_specs = {
                 "mode": self._default_config_specs["mode"],
             }
+            default_model = self._get_default_model()
             return self._config_option_builder.build_config_specs(
-                default_model="openai/gpt-4o",
+                default_model=default_model,
                 additional_specs=additional_specs,
             )
         return dict(self._default_config_specs)

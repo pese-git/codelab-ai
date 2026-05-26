@@ -163,6 +163,84 @@ def _parse_model_config(data: dict[str, Any]) -> ModelConfig:
     )
 
 
+def _flatten_dotted_keys(data: dict[str, Any]) -> dict[str, Any]:
+    """Распутывает вложенные структуры от точек в TOML ключах.
+
+    TOML интерпретирует точки в именах ключей как вложенность:
+    [models.qwen3.6-plus] → {"qwen3": {"6-plus": {...}}}
+
+    Эта функция рекурсивно flattens такие структуры обратно.
+
+    Args:
+        data: Dict из TOML
+
+    Returns:
+        Dict с распутанными ключами
+    """
+    if not isinstance(data, dict):
+        return data
+
+    # Ключи которые являются настоящими полями конфигурации
+    config_keys = {
+        "context_window", "max_output_tokens",
+        "cost_per_input_token", "cost_per_output_token",
+    }
+
+    logger.debug(
+        "_flatten_dotted_keys input",
+        input_keys=list(data.keys()),
+        input_data=data,
+    )
+
+    result: dict[str, Any] = {}
+
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            result[key] = value
+            continue
+
+        # Проверяем, это вложенность от точки или реальная структура
+        # Если все ключи в value не являются config_keys — это вложенность
+        value_keys = set(value.keys())
+        is_nested = not value_keys.intersection(config_keys)
+
+        logger.debug(
+            "_flatten_dotted_keys processing key",
+            key=key,
+            value_keys=list(value_keys),
+            is_nested=is_nested,
+        )
+
+        if is_nested and len(value_keys) == 1:
+            # Одиночная вложенность от точки — рекурсивно flattens
+            nested_key = next(iter(value_keys))
+            nested_value = value[nested_key]
+            if isinstance(nested_value, dict):
+                # Продолжаем распутывание
+                flattened = _flatten_dotted_keys({nested_key: nested_value})
+                # Объединяем с результатом
+                for fk, fv in flattened.items():
+                    full_key = f"{key}.{fk}"
+                    result[full_key] = fv
+                    logger.debug(
+                        "_flatten_dotted_keys flattened key",
+                        original=f"{key}.{nested_key}",
+                        flattened=full_key,
+                    )
+            else:
+                result[f"{key}.{nested_key}"] = nested_value
+        else:
+            # Это реальная конфигурация модели
+            result[key] = _flatten_dotted_keys(value)
+
+    logger.debug(
+        "_flatten_dotted_keys output",
+        output_keys=list(result.keys()),
+    )
+
+    return result
+
+
 def _parse_provider_config(data: dict[str, Any]) -> ProviderConfig:
     """Распарсить конфигурацию провайдера из TOML data.
 
@@ -181,9 +259,24 @@ def _parse_provider_config(data: dict[str, Any]) -> ProviderConfig:
     models: dict[str, ModelConfig] = {}
     models_data = data.get("models", {})
     if isinstance(models_data, dict):
+        logger.debug(
+            "_parse_provider_config models_data before flatten",
+            models_keys=list(models_data.keys()),
+        )
+        # Распутать вложенные структуры от точек в TOML ключах
+        models_data = _flatten_dotted_keys(models_data)
+        logger.debug(
+            "_parse_provider_config models_data after flatten",
+            models_keys=list(models_data.keys()),
+        )
         for model_id, model_data in models_data.items():
             if isinstance(model_data, dict):
                 models[model_id] = _parse_model_config(model_data)
+
+    logger.debug(
+        "_parse_provider_config final models",
+        model_ids=list(models.keys()),
+    )
 
     return ProviderConfig(
         api_key=api_key,
