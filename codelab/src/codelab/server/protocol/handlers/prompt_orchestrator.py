@@ -130,6 +130,7 @@ class PromptOrchestrator:
         session: SessionState,
         storage: SessionStorage,
         agent_orchestrator: AgentOrchestrator,
+        mcp_manager: Any | None = None,
     ) -> ProtocolOutcome:
         """Обрабатывает session/prompt request.
 
@@ -147,6 +148,7 @@ class PromptOrchestrator:
             session: Состояние сессии
             storage: Хранилище сессий
             agent_orchestrator: LLM-агент для обработки
+            mcp_manager: MCP manager для сессии (из runtime registry)
 
         Returns:
             ProtocolOutcome с notifications и response
@@ -177,6 +179,7 @@ class PromptOrchestrator:
             raw_text=prompt_text,
         )
         context.meta["agent_orchestrator"] = agent_orchestrator
+        context.meta["mcp_manager"] = mcp_manager
         context.notifications.append(_build_ack_notification(session_id, text_preview))
 
         result = await self._pipeline.run(context)

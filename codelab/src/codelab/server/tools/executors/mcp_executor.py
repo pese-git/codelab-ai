@@ -14,7 +14,6 @@ import structlog
 from codelab.server.protocol.state import SessionState
 from codelab.server.tools.base import ToolExecutionResult
 from codelab.server.tools.executors.base import ToolExecutor
-from codelab.server.tools.mapping import acp_name_to_llm_name
 
 if TYPE_CHECKING:
     from codelab.server.mcp.manager import MCPManager
@@ -84,11 +83,11 @@ class MCPToolExecutor(ToolExecutor):
                 error=f"Not an MCP tool: {tool_name}",
             )
 
-        mcp_manager = session.mcp_manager
-        if mcp_manager is None:
+        if self._mcp_manager is None:
+            session_id = session.session_id if session else "unknown"
             return ToolExecutionResult(
                 success=False,
-                error=f"MCP manager not available for session {session.session_id}",
+                error=f"MCP manager not available for session {session_id}",
             )
 
         logger.info(
@@ -101,7 +100,7 @@ class MCPToolExecutor(ToolExecutor):
         mcp_arguments = {k: v for k, v in arguments.items() if k != "tool_name"}
 
         try:
-            result = await mcp_manager.call_tool(tool_name, mcp_arguments)
+            result = await self._mcp_manager.call_tool(tool_name, mcp_arguments)
             return result
         except Exception as exc:
             logger.error(

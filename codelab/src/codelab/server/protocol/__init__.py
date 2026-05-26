@@ -5,6 +5,7 @@
 
 from .core import ACPProtocol
 from .session_factory import SessionFactory
+from .session_runtime import SessionRuntimeRegistry, SessionRuntimeState
 from .state import (
     ActiveTurnState,
     ClientRuntimeCapabilities,
@@ -23,6 +24,8 @@ __all__ = [
     "SessionFactory",
     "ProtocolOutcome",
     "SessionState",
+    "SessionRuntimeRegistry",
+    "SessionRuntimeState",
     "ToolCallState",
     "ActiveTurnState",
     "PromptDirectives",

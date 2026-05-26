@@ -143,6 +143,7 @@ class AgentOrchestrator:
         self,
         session_state: SessionState,
         prompt: str,
+        mcp_manager: Any | None = None,
     ) -> AgentResponse:
         """Начало нового turn: вызывает agent.start_turn().
 
@@ -152,6 +153,7 @@ class AgentOrchestrator:
         Args:
             session_state: Текущее состояние сессии.
             prompt: Текст промпта пользователя.
+            mcp_manager: MCP manager для сессии (из runtime registry).
 
         Returns:
             AgentResponse с ответом LLM (текст и/или tool_calls).
@@ -174,8 +176,8 @@ class AgentOrchestrator:
             session_id=session_state.session_id,
             session=session_state,
             prompt=[{"type": "text", "text": prompt}],
-            conversation_history=self._build_history(session_state),
-            available_tools=self._filter_tools(session_state),
+            conversation_history=self._build_history(session_state, mcp_manager),
+            available_tools=self._filter_tools(session_state, mcp_manager),
             config=session_state.config_values,
             model=model_ref,
         )
@@ -206,6 +208,7 @@ class AgentOrchestrator:
         self,
         session_state: SessionState,
         tool_results: list[ToolResult],
+        mcp_manager: Any | None = None,
     ) -> AgentResponse:
         """Продолжение turn после получения tool_results: вызывает agent.continue_turn().
 
@@ -216,6 +219,7 @@ class AgentOrchestrator:
         Args:
             session_state: Состояние сессии (история обновляется на месте).
             tool_results: Результаты выполнения tool_calls.
+            mcp_manager: MCP manager для сессии (из runtime registry).
 
         Returns:
             AgentResponse с ответом LLM (текст или новые tool_calls).
@@ -241,8 +245,8 @@ class AgentOrchestrator:
             session_id=session_state.session_id,
             session=session_state,
             # История уже содержит: [..., assistant(tool_calls), tool(result), ...]
-            history=self._build_history(session_state),
-            available_tools=self._filter_tools(session_state),
+            history=self._build_history(session_state, mcp_manager),
+            available_tools=self._filter_tools(session_state, mcp_manager),
             config=session_state.config_values,
             model=model_ref,
         )
@@ -269,11 +273,14 @@ class AgentOrchestrator:
 
     # ── Вспомогательные методы ───────────────────────────────────────────────
 
-    def _build_system_message(self, session_state: SessionState) -> str:
+    def _build_system_message(
+        self, session_state: SessionState, mcp_manager: Any | None = None
+    ) -> str:
         """Собрать system message с информацией о MCP серверах.
 
         Args:
             session_state: Состояние сессии.
+            mcp_manager: MCP manager для сессии (из runtime registry).
 
         Returns:
             Текст system message или пустая строка.
@@ -285,7 +292,6 @@ class AgentOrchestrator:
             parts.append(self.config.system_prompt)
 
         # Информация о подключённых MCP серверах
-        mcp_manager = session_state.mcp_manager
         has_mcp = mcp_manager is not None
         mcp_count = mcp_manager.server_count if has_mcp else 0
 
@@ -335,11 +341,14 @@ class AgentOrchestrator:
 
         return "\n".join(lines)
 
-    def _build_history(self, session_state: SessionState) -> list[LLMMessage]:
+    def _build_history(
+        self, session_state: SessionState, mcp_manager: Any | None = None
+    ) -> list[LLMMessage]:
         """Конвертировать session_state.history в список LLMMessage для LLM.
 
         Args:
             session_state: Состояние сессии.
+            mcp_manager: MCP manager для сессии (из runtime registry).
 
         Returns:
             Список LLMMessage, готовый к передаче в LLM провайдер.
@@ -347,7 +356,7 @@ class AgentOrchestrator:
         messages: list[LLMMessage] = []
 
         # System message (кастомный промпт + MCP информация)
-        system_msg = self._build_system_message(session_state)
+        system_msg = self._build_system_message(session_state, mcp_manager)
         if system_msg:
             messages.append(LLMMessage(role="system", content=system_msg))
             logger.info(
@@ -366,15 +375,18 @@ class AgentOrchestrator:
 
         return messages
 
-    def _filter_tools(self, session_state: SessionState) -> list[ToolDefinition]:
+    def _filter_tools(
+        self, session_state: SessionState, mcp_manager: Any | None = None
+    ) -> list[ToolDefinition]:
         """Получить инструменты, доступные для данной сессии.
 
         Args:
             session_state: Состояние сессии с runtime_capabilities.
+            mcp_manager: MCP manager для сессии (из runtime registry).
 
         Returns:
             Список ToolDefinition, отфильтрованный по capabilities клиента,
-            включая MCP инструменты из session.mcp_manager.
+            включая MCP инструменты из mcp_manager.
         """
         all_tools = self.tool_registry.get_available_tools(session_state.session_id)
         filtered = self._filter_tools_by_capabilities(
@@ -382,8 +394,8 @@ class AgentOrchestrator:
         )
 
         # Добавляем MCP инструменты из MCPManager
-        if session_state.mcp_manager is not None:
-            mcp_tools = session_state.mcp_manager.get_all_tools()
+        if mcp_manager is not None:
+            mcp_tools = mcp_manager.get_all_tools()
             filtered.extend(mcp_tools)
 
         return filtered

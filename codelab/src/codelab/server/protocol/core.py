@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from .handlers.config_option_builder import ConfigOptionBuilder
     from .handlers.global_policy_manager import GlobalPolicyManager
     from .handlers.prompt_orchestrator import PromptOrchestrator
+    from .session_runtime import SessionRuntimeRegistry
 
 
 # Тип обработчика метода: async-функция, принимающая сообщение и возвращающая outcome
@@ -89,6 +90,7 @@ class ACPProtocol:
         send_callback: Callable[[ACPMessage], Awaitable[None]] | None = None,
         llm_registry: LLMProviderRegistry | None = None,
         config_option_builder: ConfigOptionBuilder | None = None,
+        runtime_registry: SessionRuntimeRegistry | None = None,
     ) -> None:
         """Инициализирует протокол и хранилище сессий.
 
@@ -105,6 +107,7 @@ class ACPProtocol:
             send_callback: Callback для отправки сообщений транспортом (опционально).
             llm_registry: Реестр LLM провайдеров для dynamic config options (опционально).
             config_option_builder: Билдер config options из Registry (опционально).
+            runtime_registry: Реестр runtime-состояний сессий (опционально).
 
         Пример использования:
             protocol = ACPProtocol()
@@ -184,6 +187,9 @@ class ACPProtocol:
         # LLM Registry и ConfigOptionBuilder для dynamic config options
         self._llm_registry = llm_registry
         self._config_option_builder = config_option_builder
+
+        # Реестр runtime-состояний сессий (REQUEST-scoped)
+        self._runtime_registry = runtime_registry or SessionRuntimeRegistry()
 
         # Config specs — строятся динамически из Registry если доступен
         self._config_specs: dict[str, dict[str, Any]] = self._build_config_specs()
@@ -851,12 +857,19 @@ class ACPProtocol:
         # и блокирует новые запросы. Новый turn создаст свой active_turn.
         session.active_turn = None
 
+        # Получить MCP manager из registry
+        mcp_manager = None
+        runtime = await self._runtime_registry.get(session.session_id)
+        if runtime:
+            mcp_manager = runtime.mcp_manager
+
         outcome = await orchestrator.handle_prompt(
             request_id=message.id,
             params=params,
             session=session,
             storage=self._storage,
             agent_orchestrator=self._agent_orchestrator,  # type: ignore[arg-type]
+            mcp_manager=mcp_manager,
         )
 
         # Сохраняем сессию (критично для permission flow)
@@ -985,8 +998,15 @@ class ACPProtocol:
         Вызывается из session/new и session/load.
         """
         mcp_servers = params.get("mcpServers", [])
-        if mcp_servers and isinstance(mcp_servers, list):
-            await self._initialize_mcp_servers(session_state, mcp_servers)
+        if not mcp_servers or not isinstance(mcp_servers, list):
+            return
+
+        # Проверить есть ли уже MCP в registry
+        runtime = await self._runtime_registry.get(session_state.session_id)
+        if runtime and runtime.mcp_manager is not None:
+            return  # Уже инициализирован
+
+        await self._initialize_mcp_servers(session_state, mcp_servers)
 
     async def _handle_permission_response(
         self,
@@ -1187,7 +1207,9 @@ class ACPProtocol:
         
         # Создаём MCPManager для этой сессии
         mcp_manager = MCPManager(session_state.session_id)
-        session_state.mcp_manager = mcp_manager
+        await self._runtime_registry.set_mcp_manager(
+            session_state.session_id, mcp_manager
+        )
         
         for server_config_dict in mcp_servers:
             # Пропускаем невалидные конфигурации
