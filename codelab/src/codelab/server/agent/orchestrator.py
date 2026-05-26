@@ -180,6 +180,17 @@ class AgentOrchestrator:
             model=model_ref,
         )
 
+        logger.info(
+            "agent context built",
+            session_id=session_state.session_id,
+            history_messages=len(context.conversation_history),
+            available_tools_count=len(context.available_tools),
+            mcp_tools_count=sum(
+                1 for t in context.available_tools
+                if t.name.startswith("mcp:")
+            ),
+        )
+
         agent_response = await self.agent.start_turn(context)
 
         logger.info(
@@ -274,8 +285,20 @@ class AgentOrchestrator:
             parts.append(self.config.system_prompt)
 
         # Информация о подключённых MCP серверах
-        if session_state.mcp_manager is not None:
-            mcp_info = self._format_mcp_info(session_state.mcp_manager)
+        mcp_manager = session_state.mcp_manager
+        has_mcp = mcp_manager is not None
+        mcp_count = mcp_manager.server_count if has_mcp else 0
+
+        logger.info(
+            "building system message",
+            session_id=session_state.session_id,
+            has_system_prompt=bool(self.config.system_prompt),
+            has_mcp_manager=has_mcp,
+            mcp_server_count=mcp_count,
+        )
+
+        if has_mcp:
+            mcp_info = self._format_mcp_info(mcp_manager)
             if mcp_info:
                 parts.append(mcp_info)
 
@@ -327,6 +350,12 @@ class AgentOrchestrator:
         system_msg = self._build_system_message(session_state)
         if system_msg:
             messages.append(LLMMessage(role="system", content=system_msg))
+            logger.info(
+                "system message added to LLM",
+                session_id=session_state.session_id,
+                system_message_length=len(system_msg),
+                system_message_preview=system_msg[:200],
+            )
 
         # История сессии
         messages.extend(
