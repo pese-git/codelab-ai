@@ -48,6 +48,7 @@ class ToolPanel(Vertical):
     ToolPanel {
         height: auto;
         max-height: 20;
+        background: $background;
     }
     
     ToolPanel #tool-call-list {
