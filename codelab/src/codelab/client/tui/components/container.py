@@ -63,18 +63,14 @@ class StyledContainer(TextualContainer):
     }
     
     StyledContainer.bordered {
-        border: solid #6d7f9a;
         padding: 1;
     }
     
     StyledContainer.rounded {
-        border: round #6d7f9a;
         padding: 1;
     }
     
     StyledContainer.panel {
-        border: round #6d7f9a;
-        background: #f8fafc;
         padding: 1;
     }
     
@@ -164,14 +160,8 @@ class Card(StyledContainer):
     
     DEFAULT_CSS = """
     Card {
-        border: round #6d7f9a;
-        background: #ffffff;
         padding: 1;
         margin: 0 0 1 0;
-    }
-    
-    Card:focus-within {
-        border: round #1d4ed8;
     }
     """
 

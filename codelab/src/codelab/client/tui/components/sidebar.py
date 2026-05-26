@@ -84,6 +84,12 @@ class Sidebar(Vertical):
             self.ui_vm.sidebar_tab.subscribe(self._on_sidebar_tab_changed)
             self.ui_vm.sessions_expanded.subscribe(self._on_sessions_expanded_changed)
 
+    DEFAULT_CSS = """
+    Sidebar {
+        background: $background;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         """Создаёт содержимое Sidebar: SearchInput и список сессий."""
         yield SearchInput(

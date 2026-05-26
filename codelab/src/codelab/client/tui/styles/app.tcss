@@ -1,22 +1,45 @@
 /* ============================================
-   CodeLab TUI - TCSS Стили
-   Фаза 1: Core Layout Migration
+   CodeLab TUI - Layout & Theme-Aware Styles
+   Цвета определяются через CSS-variables из Textual Theme.
+   При переключении темы Textual автоматически обновляет:
+   - $background, $foreground, $primary, $secondary
+   - $success, $warning, $error, $accent
+   - $surface, $panel, $border
+   - $header-bg, $sidebar-bg, $border-focus, и др.
    ============================================ */
 
 /* --- Screen & Global --- */
 Screen {
     layout: vertical;
-    background: #f3f4f7;
-    color: #141a22;
+    background: $background;
+    color: $foreground;
 }
 
 /* --- Header --- */
 #header {
     height: 1;
-    background: #1e3a5f;
-    color: #ffffff;
     padding: 0 1;
     text-style: bold;
+    background: $header-bg;
+    color: $foreground;
+}
+
+HeaderBar {
+    background: $header-bg;
+    color: $foreground;
+}
+
+/* --- Footer --- */
+#footer {
+    height: 1;
+    padding: 0 1;
+    background: $footer-bg;
+    color: $foreground;
+}
+
+FooterBar {
+    background: $footer-bg;
+    color: $foreground;
 }
 
 /* --- Body Layout --- */
@@ -29,6 +52,7 @@ Screen {
 #sidebar-column {
     width: 30;
     layout: vertical;
+    background: $background;
 }
 
 #sidebar-column.hidden {
@@ -43,12 +67,36 @@ Screen {
 #main-column {
     width: 3fr;
     layout: vertical;
+    background: $background;
+}
+
+/* Content Area - область для ChatView и PlanPanel */
+#content-area {
+    height: 1fr;
+    layout: vertical;
+    background: $background;
 }
 
 /* --- Right Panel Column --- */
 #right-panel-column {
     width: 30;
     layout: vertical;
+    background: $background;
+}
+
+#right-panel-column.hidden {
+    display: none;
+}
+
+/* Tool Panel - растягивается на всю высоту правой колонки */
+#tool-panel {
+    height: 1fr;
+    background: $background;
+}
+
+ToolPanel {
+    height: 1fr;
+    background: $background;
 }
 
 #right-panel-column.hidden {
@@ -58,25 +106,29 @@ Screen {
 /* --- Sidebar --- */
 #sidebar {
     height: 1fr;
-    background: #ebeff7;
-    border: round #6d7f9a;
     padding: 1;
     layout: vertical;
+    background: $sidebar-bg;
+    border: round $border;
 }
 
 #sidebar:focus {
-    border: round #1d4ed8;
-    background: #e3ecff;
+    border: round $border-focus;
+    background: $surface;
 }
 
-/* --- Sidebar SearchInput --- */
+Sidebar {
+    background: $sidebar-bg;
+    border: round $border;
+}
+
 #sidebar-search {
     height: 3;
     margin-bottom: 1;
 }
 
 #sidebar-search .search-container {
-    background: #ffffff;
+    background: $surface;
 }
 
 /* --- Sidebar Sessions List --- */
@@ -87,17 +139,25 @@ Screen {
 /* --- FileTree --- */
 #file-tree {
     height: 1fr;
-    background: #f4f7fc;
-    border: round #6d7f9a;
     padding: 0 1;
+    background: $panel;
+    border: round $border;
+}
+
+FileTree {
+    background: $panel;
 }
 
 /* --- Chat View --- */
 #chat-view {
     height: 1fr;
-    border: round #6d7f9a;
-    background: #ffffff;
     padding: 1;
+    background: $background;
+    border: round $border;
+}
+
+ChatView {
+    background: $background;
 }
 
 #chat_content {
@@ -109,17 +169,25 @@ Screen {
 /* --- Plan Panel --- */
 #plan-panel {
     height: 8;
-    border: round #6d7f9a;
-    background: #f8fafc;
     padding: 1;
+    background: $panel;
+    border: round $border;
+}
+
+PlanPanel {
+    background: $panel;
 }
 
 /* --- Tool Panel --- */
 #tool-panel {
     width: 2fr;
-    border: round #6d7f9a;
-    background: #f8fafc;
     padding: 1;
+    background: $panel;
+    border: round $border;
+}
+
+ToolPanel {
+    background: $panel;
 }
 
 /* --- Prompt Input --- */
@@ -131,13 +199,18 @@ Screen {
 #prompt-textarea {
     width: 1fr;
     height: 100%;
-    border: round #6d7f9a;
-    background: #ffffff;
+    background: $surface;
+    border: round $border;
+    color: $foreground;
 }
 
 #prompt-textarea:focus {
-    border: round #1d4ed8;
-    background: #f8fbff;
+    border: round $border-focus;
+    background: $background;
+}
+
+PromptInput {
+    background: $background;
 }
 
 #submit-button {
@@ -152,24 +225,15 @@ Screen {
     margin-left: 1;
 }
 
-/* --- Footer --- */
-#footer {
-    height: 1;
-    background: #1e3a5f;
-    color: #e0e7ef;
-    padding: 0 1;
-}
-
 /* --- Dock Region (OpenCode-style) --- */
-/* Область для PromptInput и QuickActionsBar внутри main-column */
 #dock-region {
     height: auto;
     min-height: 6;
     max-height: 15;
     layout: vertical;
-    background: #f8fafc;
-    border-top: solid #6d7f9a;
     padding: 0 1;
+    background: $panel;
+    border-top: solid $border;
 }
 
 #dock-region.hidden {
@@ -188,6 +252,7 @@ MainLayout {
     layout: horizontal;
     width: 100%;
     height: 100%;
+    background: $background;
 }
 
 MainLayout > .sidebar-column {
@@ -226,19 +291,19 @@ StyledContainer {
 }
 
 StyledContainer.bordered {
-    border: solid #6d7f9a;
     padding: 1;
+    border: solid $border;
 }
 
 StyledContainer.rounded {
-    border: round #6d7f9a;
     padding: 1;
+    border: round $border;
 }
 
 StyledContainer.panel {
-    border: round #6d7f9a;
-    background: #f8fafc;
     padding: 1;
+    border: round $border;
+    background: $panel;
 }
 
 StyledContainer > .container-header {
@@ -246,21 +311,21 @@ StyledContainer > .container-header {
     width: 100%;
     margin-bottom: 1;
     text-style: bold;
-    color: #1e3a5f;
+    color: $primary;
 }
 
 /* ============================================
    Card Component
    ============================================ */
 Card {
-    border: round #6d7f9a;
-    background: #ffffff;
     padding: 1;
     margin: 0 0 1 0;
+    background: $surface;
+    border: round $border;
 }
 
 Card:focus-within {
-    border: round #1d4ed8;
+    border: round $border-focus;
 }
 
 /* ============================================
@@ -269,12 +334,12 @@ Card:focus-within {
 CollapsiblePanel {
     width: 100%;
     height: auto;
-    border: round #6d7f9a;
-    background: #f8fafc;
+    background: $panel;
+    border: round $border;
 }
 
 CollapsiblePanel:focus-within {
-    border: round #1d4ed8;
+    border: round $border-focus;
 }
 
 CollapsiblePanel > .panel-header {
@@ -282,11 +347,11 @@ CollapsiblePanel > .panel-header {
     height: 3;
     layout: horizontal;
     padding: 0 1;
-    background: #ebeff7;
+    background: $surface;
 }
 
 CollapsiblePanel > .panel-header:hover {
-    background: #dfe6f5;
+    background: $panel;
 }
 
 CollapsiblePanel > .panel-header > .panel-icon {
@@ -299,7 +364,7 @@ CollapsiblePanel > .panel-header > .panel-title {
     width: 1fr;
     height: 1;
     text-style: bold;
-    color: #1e3a5f;
+    color: $primary;
 }
 
 CollapsiblePanel > .panel-header > .panel-toggle {
@@ -312,7 +377,7 @@ CollapsiblePanel > .panel-header > .panel-toggle {
 }
 
 CollapsiblePanel > .panel-header > .panel-toggle:hover {
-    background: #c8d4ea;
+    background: $surface;
 }
 
 CollapsiblePanel > .panel-content {
@@ -336,6 +401,8 @@ AccordionPanel {
     width: 100%;
     height: auto;
     layout: vertical;
+    background: $panel;
+    border: solid $border;
 }
 
 AccordionPanel > CollapsiblePanel {
@@ -343,161 +410,173 @@ AccordionPanel > CollapsiblePanel {
 }
 
 /* ============================================
-   Modal Styles
+   Message Bubbles
    ============================================ */
-#permission-modal {
-    width: 80;
-    max-width: 90%;
+MessageBubble {
+    width: 100%;
     height: auto;
-    border: round #2f4a75;
-    background: #f6f9ff;
-    padding: 1 2;
-}
-
-#permission-title {
-    margin: 0 0 1 0;
-}
-
-#file-viewer-modal {
-    width: 90;
-    max-width: 95%;
-    height: 80%;
-    border: round #2f4a75;
-    background: #f6f9ff;
     padding: 1;
-}
-
-#file-viewer-title {
     margin: 0 0 1 0;
+    background: $surface;
+    border: solid $border;
 }
 
-#file-viewer-search {
-    margin: 0 0 1 0;
-    border: round #6d7f9a;
-    background: #ffffff;
+MessageBubble.user {
+    background: $message-user-bg;
+    border: solid $border;
 }
 
-#file-viewer-search-status {
-    margin: 0 0 1 0;
-    color: #334155;
+MessageBubble.assistant {
+    background: $surface;
+    border: solid $border;
 }
 
-#file-viewer-content {
-    height: 1fr;
-    overflow: auto;
-    background: #ffffff;
-    border: round #6d7f9a;
-    padding: 0 1;
+MessageBubble.system {
+    background: $panel;
+    border: solid $border;
 }
 
-#terminal-log-modal {
-    width: 110;
-    max-width: 95%;
-    height: 80%;
-    border: round #2f4a75;
-    background: #f6f9ff;
-    padding: 1;
+MessageBubble.error {
+    background: $message-error-bg;
+    border: solid $border;
 }
 
-#terminal-log-title {
-    margin: 0 0 1 0;
+MessageBubble.agent {
+    background: $surface;
 }
 
-#terminal-log-content {
-    height: 1fr;
-    overflow: auto;
-    background: #ffffff;
-    border: round #6d7f9a;
-    padding: 0 1;
-}
-
-#help-modal {
-    width: 78;
-    max-width: 90%;
+MessageBubble > .message-row {
+    width: 100%;
     height: auto;
-    border: round #2f4a75;
-    background: #f6f9ff;
-    padding: 1 2;
 }
 
-#help-title {
-    margin: 0 0 1 0;
-}
-
-#help-content {
-    margin: 0 0 1 0;
+MessageBubble > .message-row > .message-body {
+    width: 1fr;
+    height: auto;
 }
 
 /* ============================================
-   Utility Classes
+   Buttons
    ============================================ */
-.hidden {
-    display: none;
+Button {
+    background: $surface;
+    color: $foreground;
 }
 
-.collapsed {
-    height: 0;
-    padding: 0;
-    overflow: hidden;
+Button:hover {
+    background: $panel;
+}
+
+Button.primary {
+    background: $primary;
+    color: $background;
+}
+
+Button.primary:hover {
+    background: $accent;
+}
+
+ActionButton {
+    background: $surface;
+    color: $foreground;
+}
+
+ActionButton:hover {
+    background: $panel;
+}
+
+ActionButton.-primary {
+    background: $primary;
+    color: $background;
+}
+
+ActionButton.-success {
+    background: $success;
+    color: $background;
+}
+
+ActionButton.-danger {
+    background: $error;
+    color: $background;
 }
 
 /* ============================================
-   Focus Styles
+   Tool Call Cards
    ============================================ */
-*:focus {
-    border: round #1d4ed8;
+ToolCallCard {
+    background: $surface;
+    border: solid $border;
+}
+
+ToolCallCard.-running {
+    border: solid $primary;
+}
+
+ToolCallCard.-success {
+    border: solid $success;
+}
+
+ToolCallCard.-error {
+    border: solid $error;
 }
 
 /* ============================================
-   Status Indicators
+   Permission Components
    ============================================ */
-.status-connected {
-    color: #22c55e;
+PermissionBadge {
+    background: $surface;
 }
 
-.status-disconnected {
-    color: #94a3b8;
+PermissionBadge.-pending {
+    background: $badge-pending-bg;
+    color: $badge-pending-fg;
 }
 
-.status-error {
-    color: #ef4444;
+PermissionBadge.-approved {
+    background: $success;
+    color: $background;
 }
 
-.status-loading {
-    color: #f59e0b;
+PermissionBadge.-denied {
+    background: $error;
+    color: $background;
+}
+
+PermissionRequest {
+    background: $surface;
+    border: solid $border;
 }
 
 /* ============================================
-   Фаза 2: Session Components
+   Markdown
    ============================================ */
-
-/* --- MarkdownViewer --- */
 MarkdownViewer {
     padding: 0;
     margin: 0;
+    background: transparent;
 }
 
 MarkdownViewer > .code_inline {
-    background: #e2e8f0;
-    color: #0f172a;
+    background: $panel;
+    color: $foreground;
 }
 
-/* --- InlineMarkdown --- */
 InlineMarkdown {
     padding: 0;
     margin: 0;
     height: auto;
 }
 
-/* --- CodeBlock --- */
 CodeBlock {
-    background: #1e293b;
     padding: 1;
     margin: 1 0;
-    border: solid #334155;
+    background: $panel;
+    border: solid $border;
 }
 
-/* --- StreamingText --- */
+/* ============================================
+   StreamingText
+   ============================================ */
 StreamingText {
     height: auto;
     padding: 0;
@@ -511,7 +590,7 @@ StreamingText > .streaming-content {
 StreamingText > .streaming-cursor {
     width: 1;
     height: 1;
-    background: #3b82f6;
+    background: $primary;
 }
 
 StreamingText > .streaming-cursor.hidden {
@@ -522,7 +601,7 @@ StreamingText > .streaming-cursor.hidden {
 ThinkingIndicator {
     height: 1;
     padding: 0 1;
-    color: #64748b;
+    color: $foreground-muted;
 }
 
 /* --- Avatar --- */
@@ -535,19 +614,19 @@ Avatar {
 }
 
 Avatar.user {
-    color: #3b82f6;
+    color: $primary;
 }
 
 Avatar.assistant {
-    color: #22c55e;
+    color: $success;
 }
 
 Avatar.system {
-    color: #f59e0b;
+    color: $warning;
 }
 
 Avatar.error {
-    color: #ef4444;
+    color: $error;
 }
 
 /* --- MessageHeader --- */
@@ -563,21 +642,21 @@ MessageHeader > .sender-name {
 }
 
 MessageHeader > .sender-name.user {
-    color: #3b82f6;
+    color: $primary;
 }
 
 MessageHeader > .sender-name.assistant {
-    color: #22c55e;
+    color: $success;
 }
 
 MessageHeader > .sender-name.system {
-    color: #f59e0b;
+    color: $warning;
 }
 
 MessageHeader > .timestamp {
     width: auto;
-    color: #94a3b8;
     margin-left: 1;
+    color: $foreground-muted;
 }
 
 /* --- MessageContent --- */
@@ -587,53 +666,13 @@ MessageContent {
     padding: 0;
 }
 
-/* --- MessageBubble --- */
-MessageBubble {
-    width: 100%;
-    height: auto;
-    padding: 1;
-    margin: 0 0 1 0;
-    background: #f1f5f9;
-    border: solid #e2e8f0;
-}
-
-MessageBubble.user {
-    background: #eff6ff;
-    border: solid #bfdbfe;
-}
-
-MessageBubble.assistant {
-    background: #f0fdf4;
-    border: solid #bbf7d0;
-}
-
-MessageBubble.system {
-    background: #fefce8;
-    border: solid #fef08a;
-}
-
-MessageBubble.error {
-    background: #fef2f2;
-    border: solid #fecaca;
-}
-
-MessageBubble > .message-row {
-    width: 100%;
-    height: auto;
-}
-
-MessageBubble > .message-row > .message-body {
-    width: 1fr;
-    height: auto;
-}
-
 /* --- DateSeparator --- */
 DateSeparator {
     width: 100%;
     height: 1;
     text-align: center;
-    color: #94a3b8;
     margin: 1 0;
+    color: $foreground-muted;
 }
 
 /* --- MessageList --- */
@@ -641,7 +680,7 @@ MessageList {
     width: 100%;
     height: 1fr;
     padding: 1;
-    background: #ffffff;
+    background: $background;
 }
 
 MessageList > #message-container {
@@ -654,8 +693,8 @@ MessageList > .empty-state {
     width: 100%;
     height: auto;
     text-align: center;
-    color: #94a3b8;
     padding: 2;
+    color: $foreground-muted;
 }
 
 /* --- TurnStatusIndicator --- */
@@ -666,23 +705,23 @@ TurnStatusIndicator {
 }
 
 TurnStatusIndicator.pending {
-    color: #94a3b8;
+    color: $foreground-muted;
 }
 
 TurnStatusIndicator.streaming {
-    color: #3b82f6;
+    color: $primary;
 }
 
 TurnStatusIndicator.complete {
-    color: #22c55e;
+    color: $success;
 }
 
 TurnStatusIndicator.error {
-    color: #ef4444;
+    color: $error;
 }
 
 TurnStatusIndicator.cancelled {
-    color: #f59e0b;
+    color: $warning;
 }
 
 /* --- ToolCallWidget --- */
@@ -691,18 +730,18 @@ ToolCallWidget {
     height: auto;
     padding: 1;
     margin: 1 0;
-    background: #f8fafc;
-    border: dashed #94a3b8;
+    background: $panel;
+    border: dashed $border;
 }
 
 ToolCallWidget > .tool-header {
     text-style: bold;
-    color: #3b82f6;
+    color: $primary;
 }
 
 ToolCallWidget > .tool-args {
-    color: #64748b;
     margin-left: 2;
+    color: $foreground-muted;
 }
 
 /* --- SessionTurn --- */
@@ -711,15 +750,15 @@ SessionTurn {
     height: auto;
     padding: 1;
     margin: 0 0 1 0;
-    border: solid #e2e8f0;
+    border: solid $border;
 }
 
 SessionTurn.complete {
-    border: solid #bbf7d0;
+    border: solid $success;
 }
 
 SessionTurn.error {
-    border: solid #fecaca;
+    border: solid $error;
 }
 
 SessionTurn > .turn-header {
@@ -743,4 +782,163 @@ SessionTurn > .tool-calls-section {
     width: 100%;
     height: auto;
     margin-top: 1;
+}
+
+/* ============================================
+   Modal Styles
+   ============================================ */
+ModalScreen {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+#permission-modal {
+    width: 80;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+    border: round $border;
+}
+
+#permission-title {
+    margin: 0 0 1 0;
+}
+
+#file-viewer-modal {
+    width: 90;
+    max-width: 95%;
+    height: 80%;
+    padding: 1;
+    background: $panel;
+    border: round $border;
+}
+
+#file-viewer-title {
+    margin: 0 0 1 0;
+}
+
+#file-viewer-search {
+    margin: 0 0 1 0;
+    background: $surface;
+    border: round $border;
+}
+
+#file-viewer-search-status {
+    margin: 0 0 1 0;
+    color: $foreground;
+}
+
+#file-viewer-content {
+    height: 1fr;
+    overflow: auto;
+    padding: 0 1;
+    background: $surface;
+    border: round $border;
+}
+
+#terminal-log-modal {
+    width: 110;
+    max-width: 95%;
+    height: 80%;
+    padding: 1;
+    background: $panel;
+    border: round $border;
+}
+
+#terminal-log-title {
+    margin: 0 0 1 0;
+}
+
+#terminal-log-content {
+    height: 1fr;
+    overflow: auto;
+    padding: 0 1;
+    background: $surface;
+    border: round $border;
+}
+
+#help-modal {
+    width: 78;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+    border: round $border;
+}
+
+#help-title {
+    margin: 0 0 1 0;
+}
+
+#help-content {
+    margin: 0 0 1 0;
+}
+
+HelpModal {
+    background: $surface;
+    border: solid $border;
+}
+
+PermissionModal {
+    background: $surface;
+    border: solid $border;
+}
+
+FileViewerModal {
+    background: $surface;
+    border: solid $border;
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+.hidden {
+    display: none;
+}
+
+.collapsed {
+    height: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+/* ============================================
+   Focus Styles
+   ============================================ */
+*:focus {
+    border: round $border-focus;
+}
+
+/* ============================================
+   Status Indicators
+   ============================================ */
+.status-connected {
+    color: $success;
+}
+
+.status-disconnected {
+    color: $foreground-muted;
+}
+
+.status-error {
+    color: $error;
+}
+
+.status-loading {
+    color: $warning;
+}
+
+/* ============================================
+   Scrollbars
+   ============================================ */
+ScrollBar {
+    background: $panel;
+}
+
+ScrollBar > .scrollbar--slider {
+    background: $border;
+}
+
+ScrollBar > .scrollbar--slider:hover {
+    background: $foreground-muted;
 }

@@ -115,12 +115,14 @@ class MainLayout(Container):
         layout: horizontal;
         width: 100%;
         height: 1fr;
+        background: $background;
     }
     
     MainLayout > #sidebar-column {
         width: 30;
         height: 100%;
         layout: vertical;
+        background: $background;
     }
     
     MainLayout > #sidebar-column.hidden {
@@ -131,10 +133,12 @@ class MainLayout(Container):
         width: 1fr;
         height: 100%;
         layout: vertical;
+        background: $background;
     }
     
     MainLayout > #main-column > #content-area {
         height: 1fr;
+        background: $background;
     }
     
     /* Dock Region - область для PromptInput и QuickActionsBar (как в OpenCode) */
@@ -142,6 +146,7 @@ class MainLayout(Container):
         height: auto;
         min-height: 6;
         max-height: 15;
+        background: $background;
     }
     
     MainLayout > #main-column > #dock-region.hidden {
@@ -152,6 +157,7 @@ class MainLayout(Container):
         width: 30;
         height: 100%;
         layout: vertical;
+        background: $background;
     }
     
     MainLayout > #right-panel-column.hidden {

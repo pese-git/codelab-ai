@@ -101,6 +101,12 @@ class PromptInput(Horizontal):
         # Подписываемся на изменения в ChatViewModel
         self.chat_vm.is_streaming.subscribe(self._on_streaming_changed)
 
+    DEFAULT_CSS = """
+    PromptInput {
+        background: $background;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         """Создаёт поле ввода и кнопки Send/Stop."""
         self._text_area = PromptTextArea()

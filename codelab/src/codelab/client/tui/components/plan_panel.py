@@ -34,6 +34,12 @@ class PlanPanel(Static):
         >>> plan_vm.set_plan("1. Задача A\\n2. Задача B")
     """
 
+    DEFAULT_CSS = """
+    PlanPanel {
+        background: $background;
+    }
+    """
+
     def __init__(self, plan_vm: PlanViewModel) -> None:
         """Инициализирует PlanPanel с обязательным PlanViewModel.
 

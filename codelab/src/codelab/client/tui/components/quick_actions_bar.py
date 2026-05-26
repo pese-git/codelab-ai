@@ -76,6 +76,7 @@ class QuickActionsBar(Static):
         name: str | None = None,
         id: str | None = None,  # noqa: A002
         classes: str | None = None,
+        theme_manager: object | None = None,
     ) -> None:
         """Создаёт панель быстрых действий.
         
@@ -84,9 +85,11 @@ class QuickActionsBar(Static):
             name: Имя виджета
             id: ID виджета
             classes: Дополнительные CSS классы
+            theme_manager: ThemeManager для отображения иконки темы
         """
         super().__init__(name=name, id=id or "quick-actions-bar", classes=classes)
         self._ui_vm = ui_vm
+        self._theme_manager = theme_manager
         self._action_bar: ActionBar | None = None
         
         # Подписываемся на изменения состояния загрузки
@@ -132,12 +135,42 @@ class QuickActionsBar(Static):
             )
             
             # Кнопка темы
+            theme_icon = self._get_theme_icon()
             self._action_bar.add_action(
                 "Тема",
                 variant="ghost",
-                icon="🎨",
+                icon=theme_icon,
                 action_id="quick-theme",
             )
+    
+    def _get_theme_icon(self) -> str:
+        """Получить иконку текущей темы.
+        
+        Returns:
+            Иконка темы (☀️ для light, 🌙 для dark)
+        """
+        if self._theme_manager is None:
+            return "🎨"
+        
+        try:
+            theme_name = self._theme_manager.current_theme_name
+            return "🌙" if theme_name == "dark" else "☀️"
+        except AttributeError:
+            return "🎨"
+    
+    def update_theme_icon(self) -> None:
+        """Обновить иконку темы при переключении."""
+        if self._action_bar is None:
+            return
+        
+        new_icon = self._get_theme_icon()
+        # Обновляем иконку кнопки темы через свойство icon
+        try:
+            theme_button = self._action_bar.get_action("quick-theme")
+            if theme_button:
+                theme_button.icon = new_icon
+        except Exception:
+            pass
     
     def _on_loading_changed(self, is_loading: bool) -> None:
         """Обновляет состояние кнопки отмены при изменении загрузки.

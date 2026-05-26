@@ -211,6 +211,54 @@ codelab serve --fallback-enabled --fallback-strategy sequential --fallback-order
 
 Fallback перебирает провайдеры по порядку при retryable ошибках (rate_limit, timeout, internal_error).
 
+### Конфигурация TUI клиента
+
+TUI клиент поддерживает настройку темы и подключения через несколько источников с приоритетом:
+
+**Приоритет источников** (от низшего к высшему):
+1. JSON конфиг (`~/.codelab/tui_config.json`)
+2. TOML глобальный (`~/.codelab/codelab.toml`)
+3. TOML проект (`./codelab.toml`, `./codelab.local.toml`)
+4. Environment variable (`CODELAB_THEME`)
+5. CLI флаг (`--theme`)
+6. UI toggle (`Ctrl+T` в приложении)
+
+#### Настройка темы
+
+**Через TOML конфиг** (`~/.codelab/codelab.toml` или `./codelab.toml`):
+```toml
+[tui]
+theme = "dark"  # light или dark
+host = "127.0.0.1"
+port = 8765
+```
+
+**Через CLI:**
+```bash
+codelab connect --theme dark
+codelab connect --host 192.168.1.100 --port 9000 --theme light
+```
+
+**Через Environment variable:**
+```bash
+CODELAB_THEME=dark codelab connect
+```
+
+**Через UI:**
+- Нажмите `Ctrl+T` для переключения темы
+- Или используйте кнопку "Тема" в панели быстрых действий
+
+#### Доступные темы
+
+| Тема | Описание | Палитра |
+|------|----------|---------|
+| `light` | Светлая тема с холодными тонами | Off-white `#f3f4f7`, синий `#1d4ed8` |
+| `dark` | Тёмная тема Tokyo Night с улучшенным контрастом | Base `#1a1b26`, blue `#7aa2f7` |
+
+**Индикация текущей темы:**
+- ☀️ / 🌙 иконка в панели быстрых действий
+- Текст "Light" / "Dark" в строке статуса (footer)
+
 ## Архитектура сервера
 
 Сервер использует DI-контейнер **Dishka** для управления зависимостями. Зависимости разделены на два уровня:

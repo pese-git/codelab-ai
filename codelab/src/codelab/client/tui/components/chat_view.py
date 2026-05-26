@@ -48,6 +48,12 @@ class ChatView(VerticalScroll):
         >>> chat_vm.messages.value = [message1, message2]
     """
 
+    DEFAULT_CSS = """
+    ChatView {
+        background: $background;
+    }
+    """
+
     def __init__(
         self,
         chat_vm: ChatViewModel,

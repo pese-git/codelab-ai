@@ -165,6 +165,77 @@ class TestQuickActionsBar:
         
         bar._action_bar.set_action_disabled.assert_called_with("quick-cancel", True)
 
+    def test_update_theme_icon_with_dark_theme(self) -> None:
+        """update_theme_icon устанавливает иконку луны для dark темы."""
+        ui_vm = self._create_mock_ui_vm()
+        mock_theme_manager = Mock()
+        mock_theme_manager.current_theme_name = "dark"
+        bar = QuickActionsBar(ui_vm, theme_manager=mock_theme_manager)
+        bar._action_bar = Mock()
+        
+        mock_button = Mock()
+        bar._action_bar.get_action.return_value = mock_button
+        
+        bar.update_theme_icon()
+        
+        bar._action_bar.get_action.assert_called_with("quick-theme")
+        mock_button.icon = "🌙"
+
+    def test_update_theme_icon_with_light_theme(self) -> None:
+        """update_theme_icon устанавливает иконку солнца для light темы."""
+        ui_vm = self._create_mock_ui_vm()
+        mock_theme_manager = Mock()
+        mock_theme_manager.current_theme_name = "light"
+        bar = QuickActionsBar(ui_vm, theme_manager=mock_theme_manager)
+        bar._action_bar = Mock()
+        
+        mock_button = Mock()
+        bar._action_bar.get_action.return_value = mock_button
+        
+        bar.update_theme_icon()
+        
+        bar._action_bar.get_action.assert_called_with("quick-theme")
+        mock_button.icon = "☀️"
+
+    def test_update_theme_icon_without_theme_manager(self) -> None:
+        """update_theme_icon без theme_manager использует иконку по умолчанию."""
+        ui_vm = self._create_mock_ui_vm()
+        bar = QuickActionsBar(ui_vm)
+        bar._action_bar = Mock()
+        
+        mock_button = Mock()
+        bar._action_bar.get_action.return_value = mock_button
+        
+        bar.update_theme_icon()
+        
+        bar._action_bar.get_action.assert_called_with("quick-theme")
+        mock_button.icon = "🎨"
+
+    def test_update_theme_icon_when_action_bar_is_none(self) -> None:
+        """update_theme_icon не делает ничего если _action_bar None."""
+        ui_vm = self._create_mock_ui_vm()
+        mock_theme_manager = Mock()
+        mock_theme_manager.current_theme_name = "dark"
+        bar = QuickActionsBar(ui_vm, theme_manager=mock_theme_manager)
+        bar._action_bar = None
+        
+        # Не должно выбрасывать исключение
+        bar.update_theme_icon()
+
+    def test_update_theme_icon_when_button_not_found(self) -> None:
+        """update_theme_icon не делает ничего если кнопка не найдена."""
+        ui_vm = self._create_mock_ui_vm()
+        mock_theme_manager = Mock()
+        mock_theme_manager.current_theme_name = "dark"
+        bar = QuickActionsBar(ui_vm, theme_manager=mock_theme_manager)
+        bar._action_bar = Mock()
+        bar._action_bar.get_action.return_value = None
+        
+        # Не должно выбрасывать исключение
+        bar.update_theme_icon()
+        
+        bar._action_bar.get_action.assert_called_with("quick-theme")
+
 
 class TestQuickActionsBarMessages:
     """Тесты для сообщений QuickActionsBar."""

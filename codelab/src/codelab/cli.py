@@ -259,6 +259,13 @@ def main() -> None:
         default=None,
         help="Команда для запуска агента (по умолчанию: codelab serve --stdio)",
     )
+    connect_parser.add_argument(
+        "--theme",
+        type=str,
+        choices=["light", "dark"],
+        default=None,
+        help="Тема TUI (light/dark, по умолчанию: из конфига)",
+    )
 
     args = parser.parse_args()
 
@@ -434,6 +441,7 @@ def run_connect(args: argparse.Namespace) -> None:
     cwd = getattr(args, "cwd", None)
     use_stdio = getattr(args, "stdio", False)
     agent_command = getattr(args, "agent_command", None)
+    theme = getattr(args, "theme", None)
 
     if use_stdio:
         logger.info(
@@ -452,11 +460,12 @@ def run_connect(args: argparse.Namespace) -> None:
             cwd=cwd,
             transport_mode="stdio",
             stdio_command=stdio_args_list[0],
-            stdio_args=stdio_args_list[1:],
+            stdio_args=[str(arg) for arg in stdio_args_list[1:]],
+            theme=theme,
         )
     else:
         logger.info("starting_connect_mode", host=host, port=port)
-        _run_tui_app(host=host, port=port, cwd=cwd)
+        _run_tui_app(host=host, port=port, cwd=cwd, theme=theme)
 
 
 def _run_tui_app(
@@ -467,6 +476,7 @@ def _run_tui_app(
     transport_mode: str = "websocket",
     stdio_command: str | None = None,
     stdio_args: list[str] | None = None,
+    theme: str | None = None,
 ) -> None:
     """Запускает TUI приложение.
 
@@ -477,10 +487,11 @@ def _run_tui_app(
         transport_mode: Режим транспорта ("websocket" или "stdio")
         stdio_command: Команда для запуска агента (для stdio режима)
         stdio_args: Аргументы команды (для stdio режима)
+        theme: Тема интерфейса ("light" или "dark")
     """
     from codelab.client.tui.app import ACPClientApp
 
-    logger.info("starting_tui", host=host, port=port, cwd=cwd or "(current)")
+    logger.info("starting_tui", host=host, port=port, cwd=cwd or "(current)", theme=theme)
 
     # Создаём и запускаем TUI приложение
     app = ACPClientApp(
@@ -490,6 +501,7 @@ def _run_tui_app(
         transport_mode=transport_mode,
         stdio_command=stdio_command,
         stdio_args=stdio_args,
+        theme=theme,
     )
     app.run()
 
