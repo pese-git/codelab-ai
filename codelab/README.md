@@ -157,6 +157,37 @@ cp .env.example .env
 | `CODELAB_HOST` | Хост сервера | `127.0.0.1` |
 | `CODELAB_LOG_LEVEL` | Уровень логирования | `INFO` |
 
+### TOML конфигурация
+
+CodeLab поддерживает конфигурацию через TOML файл `~/.codelab/codelab.toml`:
+
+```toml
+[llm]
+provider = "openrouter"
+model = "qwen3.6-plus"
+temperature = 0.1
+max_tokens = 8192
+
+[llm.providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+
+[llm.providers.openrouter.models.qwen3.6-plus]
+context_window = 128000
+max_output_tokens = 64000
+```
+
+> **Важно:** Если имя модели содержит точку (например, `qwen3.6-plus`), CodeLab автоматически обрабатывает вложенность TOML ключей. Вы можете использовать оба варианта:
+>
+> ```toml
+> # Без кавычек (автоматически распутывается)
+> [llm.providers.openrouter.models.qwen3.6-plus]
+>
+> # С кавычками (явно)
+> [llm.providers.openrouter.models."qwen3.6-plus"]
+> ```
+>
+> Оба варианта эквивалентны. CodeLab корректно обрабатывает точки в именах моделей начиная с версии 0.1.0.
+
 ### Поддерживаемые LLM провайдеры
 
 | Провайдер | ID | Модели по умолчанию | Base URL |
