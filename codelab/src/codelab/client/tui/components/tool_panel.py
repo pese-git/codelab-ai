@@ -46,8 +46,7 @@ class ToolPanel(Vertical):
 
     DEFAULT_CSS = """
     ToolPanel {
-        height: auto;
-        max-height: 20;
+        height: 1fr;
         background: $background;
     }
     
@@ -59,6 +58,7 @@ class ToolPanel(Vertical):
     ToolPanel #tool-list {
         height: auto;
         display: none;  /* Скрываем текстовый список, используем ToolCallList */
+        background: $background;
     }
     
     ToolPanel #tool-progress {

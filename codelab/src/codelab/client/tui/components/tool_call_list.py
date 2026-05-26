@@ -60,6 +60,7 @@ class ToolCallList(VerticalScroll):
     #tool-list-content {
         width: 100%;
         height: auto;
+        background: $background;
     }
     
     .tool-group-header {

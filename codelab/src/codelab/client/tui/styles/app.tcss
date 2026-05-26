@@ -88,6 +88,21 @@ FooterBar {
     display: none;
 }
 
+/* Tool Panel - растягивается на всю высоту правой колонки */
+#tool-panel {
+    height: 1fr;
+    background: $background;
+}
+
+ToolPanel {
+    height: 1fr;
+    background: $background;
+}
+
+#right-panel-column.hidden {
+    display: none;
+}
+
 /* --- Sidebar --- */
 #sidebar {
     height: 1fr;
