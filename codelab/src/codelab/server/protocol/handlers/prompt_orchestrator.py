@@ -359,6 +359,7 @@ class PromptOrchestrator:
         session_id: str,
         tool_call_id: str,
         agent_orchestrator: AgentOrchestrator,
+        mcp_manager: Any | None = None,
     ) -> LLMLoopResult:
         """Выполняет pending tool после permission approval и продолжает LLM loop."""
         return await self._llm_loop_stage.execute_pending_tool(
@@ -366,6 +367,7 @@ class PromptOrchestrator:
             session_id=session_id,
             tool_call_id=tool_call_id,
             agent_orchestrator=agent_orchestrator,
+            mcp_manager=mcp_manager,
         )
 
 

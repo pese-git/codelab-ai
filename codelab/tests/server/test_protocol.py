@@ -3232,3 +3232,203 @@ async def test_get_prompt_orchestrator_creates_default_registry_without_tool_reg
     assert result is not None
     assert isinstance(result, PromptOrchestrator)
 
+
+@pytest.mark.asyncio
+async def test_execute_pending_tool_saves_session_with_new_permission_request_id() -> None:
+    """Проверяет, что _execute_tool_in_background сохраняет сессию
+    после установки нового permission_request_id.
+
+    Regression test: если после выполнения инструмента LLM loop возвращает
+    ещё один tool call, требующий permission, новый permission_request_id
+    должен быть сохранён в storage. Иначе при ответе клиента сессия не будет
+    найдена по permission_request_id.
+    """
+    from collections.abc import AsyncGenerator
+
+    from codelab.server.agent.orchestrator import AgentOrchestrator
+    from codelab.server.agent.state import OrchestratorConfig
+    from codelab.server.llm.base import LLMConfig, LLMProvider
+    from codelab.server.llm.models import (
+        CompletionRequest,
+        CompletionResponse,
+        LLMToolCall,
+        StopReason,
+    )
+    from codelab.server.tools.base import ToolExecutionResult
+    from codelab.server.tools.registry import SimpleToolRegistry
+
+    # Создаём LLM провайдер, который возвращает tool call на каждом вызове
+    # (имитирует ситуацию, когда LLM вызывает несколько инструментов подряд)
+    class SequentialToolLLMProvider(LLMProvider):
+        """LLM провайдер, возвращающий tool call на каждом вызове."""
+
+        def __init__(self) -> None:
+            self._call_count = 0
+            self._config: LLMConfig | None = None
+
+        @property
+        def name(self) -> str:
+            return "sequential_tool_mock"
+
+        @property
+        def capabilities(self):
+            from codelab.server.llm.base import LLMCapabilities
+
+            return LLMCapabilities(
+                supports_tools=True,
+                supports_streaming=True,
+                supports_function_calling=True,
+            )
+
+        async def initialize(self, config: LLMConfig) -> None:
+            self._config = config
+
+        async def create_completion(self, request: CompletionRequest) -> CompletionResponse:
+            self._call_count += 1
+            tool_call = LLMToolCall(
+                id=f"call_{self._call_count:03d}",
+                name="mock_tool",
+                arguments={"action": f"step_{self._call_count}"},
+            )
+            return CompletionResponse(
+                text="",
+                tool_calls=[tool_call],
+                stop_reason=StopReason.TOOL_USE,
+                model=request.model,
+            )
+
+        async def stream_completion(
+            self, request: CompletionRequest
+        ) -> AsyncGenerator[CompletionResponse, None]:
+            self._call_count += 1
+            tool_call = LLMToolCall(
+                id=f"call_{self._call_count:03d}",
+                name="mock_tool",
+                arguments={"action": f"step_{self._call_count}"},
+            )
+            yield CompletionResponse(
+                text="",
+                tool_calls=[tool_call],
+                stop_reason=StopReason.TOOL_USE,
+                model=request.model,
+            )
+
+    # Создаём tool registry с инструментом, требующим permission
+    tool_registry = SimpleToolRegistry()
+    tool_registry.register_tool(
+        name="mock_tool",
+        description="Mock tool for testing",
+        parameters={
+            "type": "object",
+            "properties": {"action": {"type": "string"}},
+            "required": ["action"],
+        },
+        kind="execute",
+        executor=lambda action, **kwargs: ToolExecutionResult(
+            success=True, output=f"done: {action}",
+        ),
+        requires_permission=True,
+    )
+
+    # Создаём agent orchestrator с sequential tool provider
+    config = OrchestratorConfig(agent_class="naive")
+    llm_provider = SequentialToolLLMProvider()
+    agent_orchestrator = AgentOrchestrator(config, llm_provider, tool_registry)
+
+    # Создаём протокол с agent_orchestrator
+    protocol = ACPProtocol(agent_orchestrator=agent_orchestrator)
+
+    # Инициализируем
+    await protocol.handle(
+        ACPMessage.request(
+            "initialize",
+            {
+                "protocolVersion": 1,
+                "clientCapabilities": {},
+            },
+        )
+    )
+
+    # Создаём сессию
+    created = await protocol.handle(
+        ACPMessage.request("session/new", {"cwd": "/tmp", "mcpServers": []})
+    )
+    assert created.response is not None
+    assert isinstance(created.response.result, dict)
+    session_id = created.response.result["sessionId"]
+
+    # Prompt — LLM вернёт tool call, требующий permission
+    prompt_outcome = await protocol.handle(
+        ACPMessage.request(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "run tool"}],
+            },
+        )
+    )
+    assert prompt_outcome.response is None  # turn deferred
+
+    # Находим permission request
+    permission_request = next(
+        notification
+        for notification in prompt_outcome.notifications
+        if notification.method == "session/request_permission"
+    )
+    first_permission_id = permission_request.id
+    assert first_permission_id is not None
+
+    # Проверяем, что первый permission_request_id сохранён в storage
+    loaded_session = await protocol._storage.load_session(session_id)
+    assert loaded_session is not None
+    assert loaded_session.active_turn is not None
+    assert loaded_session.active_turn.permission_request_id == first_permission_id
+
+    # Отвечаем "allow" на permission request
+    resolved = await protocol.handle_client_response(
+        ACPMessage.response(
+            first_permission_id,
+            {
+                "outcome": {
+                    "outcome": "selected",
+                    "optionId": "allow_once",
+                },
+            },
+        )
+    )
+    assert resolved.pending_tool_execution is not None
+
+    # Выполняем pending tool — LLM вернёт ещё один tool call
+    await protocol._execute_tool_in_background(
+        session_id=resolved.pending_tool_execution.session_id,
+        tool_call_id=resolved.pending_tool_execution.tool_call_id,
+    )
+
+    # КРИТИЧЕСКАЯ ПРОВЕРКА: после execute_pending_tool storage должен содержать
+    # новый permission_request_id (для второго tool call)
+    loaded_session_after = await protocol._storage.load_session(session_id)
+    assert loaded_session_after is not None
+    assert loaded_session_after.active_turn is not None
+
+    # Новый permission_request_id должен отличаться от первого
+    new_permission_id = loaded_session_after.active_turn.permission_request_id
+    assert new_permission_id is not None
+    assert new_permission_id != first_permission_id, (
+        "permission_request_id должен обновиться после execute_pending_tool, "
+        "когда LLM loop возвращает новый tool call"
+    )
+
+    # Теперь проверим, что find_session_by_permission_request_id находит сессию
+    # по новому permission_request_id
+    from codelab.server.protocol.handlers.permissions import (
+        find_session_by_permission_request_id,
+    )
+
+    found_session = await find_session_by_permission_request_id(
+        new_permission_id, protocol._storage
+    )
+    assert found_session is not None, (
+        "Сессия должна быть найдена по новому permission_request_id из storage"
+    )
+    assert found_session.session_id == session_id
+

@@ -24,16 +24,36 @@ async def find_session_by_permission_request_id(
     Пример использования:
         session = await find_session_by_permission_request_id("perm_1", storage)
     """
+    import structlog
+    logger = structlog.get_logger()
+
     cursor = None
+    sessions_checked = 0
     while True:
         page, cursor = await storage.list_sessions(cursor=cursor, limit=100)
         for session in page:
+            sessions_checked += 1
             active_turn = session.active_turn
             if active_turn is None:
                 continue
+            logger.debug(
+                "find_session_by_permission_request_id: checking session",
+                session_id=session.session_id,
+                active_turn_perm_request_id=active_turn.permission_request_id,
+                looking_for=permission_request_id,
+            )
             if active_turn.permission_request_id == permission_request_id:
+                logger.debug(
+                    "find_session_by_permission_request_id: found matching session",
+                    session_id=session.session_id,
+                )
                 return session
         if cursor is None:
+            logger.debug(
+                "find_session_by_permission_request_id: no match found",
+                permission_request_id=permission_request_id,
+                total_sessions_checked=sessions_checked,
+            )
             return None
 
 

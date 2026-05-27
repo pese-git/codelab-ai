@@ -481,6 +481,14 @@ class LLMLoopStage(PromptStage):
                     if session.active_turn:
                         session.active_turn.phase = "awaiting_permission"
                         session.active_turn.permission_tool_call_id = tool_call_id
+                        logger.debug(
+                            "permission request built and active_turn updated",
+                            session_id=session_id,
+                            tool_call_id=tool_call_id,
+                            permission_request_id=session.active_turn.permission_request_id,
+                            permission_msg_id=permission_msg.id,
+                            active_turn_phase=session.active_turn.phase,
+                        )
 
                 logger.debug("permission request sent, pausing llm loop", session_id=session_id, tool_call_id=tool_call_id)
                 return LLMLoopResult(tool_results=tool_results, pending_permission=True)
