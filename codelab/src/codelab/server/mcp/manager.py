@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
+import random
+from enum import Enum
 from typing import Any
 
 from ..tools.base import ToolDefinition, ToolExecutionResult
@@ -16,6 +19,19 @@ from .models import MCPServerConfig, MCPTool
 from .tool_adapter import MCPToolAdapter
 
 logger = logging.getLogger(__name__)
+
+
+class MCPManagerState(Enum):
+    """Состояние MCPManager."""
+    
+    READY = "ready"
+    """Готов к работе."""
+    
+    RECONNECTING = "reconnecting"
+    """Выполняется переподключение."""
+    
+    FAILED = "failed"
+    """Ошибка, переподключение не удалось."""
 
 
 class MCPManagerError(Exception):
@@ -63,6 +79,11 @@ class MCPManager:
         self._clients: dict[str, MCPClient] = {}
         self._adapters: dict[str, MCPToolAdapter] = {}
         self._tools_cache: dict[str, list[MCPTool]] = {}
+        
+        # Auto-reconnect state
+        self._state: MCPManagerState = MCPManagerState.READY
+        self._reconnect_tasks: dict[str, asyncio.Task] = {}
+        self._health_check_tasks: dict[str, asyncio.Task] = {}
     
     @property
     def server_ids(self) -> list[str]:
@@ -400,3 +421,202 @@ class MCPManager:
                 )
         
         logger.info("MCPManager shutdown complete for session %s", self.session_id)
+    
+    # ===== Auto-Reconnect =====
+    
+    @property
+    def state(self) -> MCPManagerState:
+        """Текущее состояние менеджера."""
+        return self._state
+    
+    async def reconnect_with_backoff(self, server_id: str) -> bool:
+        """Переподключиться к серверу с exponential backoff.
+        
+        Args:
+            server_id: Идентификатор сервера.
+        
+        Returns:
+            True если переподключение удалось.
+        """
+        if server_id not in self._clients:
+            logger.warning(
+                "Cannot reconnect: server '%s' not found",
+                server_id
+            )
+            return False
+        
+        client = self._clients[server_id]
+        config = client.config
+        retry_config = config.get_retry_config()
+        
+        max_retries = int(retry_config["max_retries"])
+        initial_delay = float(retry_config["initial_delay"])
+        max_delay = float(retry_config["max_delay"])
+        backoff_multiplier = float(retry_config["backoff_multiplier"])
+        
+        self._state = MCPManagerState.RECONNECTING
+        
+        logger.info(
+            "Starting reconnect for server '%s' (max_retries=%d)",
+            server_id, max_retries
+        )
+        
+        delay = initial_delay
+        
+        for attempt in range(max_retries):
+            try:
+                # Jitter: 10% от delay
+                jitter = random.uniform(0, delay * 0.1)
+                sleep_time = delay + jitter
+                
+                logger.info(
+                    "Reconnect attempt %d/%d for server '%s' in %.2fs",
+                    attempt + 1, max_retries, server_id, sleep_time
+                )
+                
+                await asyncio.sleep(sleep_time)
+                
+                # Пытаемся переподключиться
+                await client.disconnect()
+                await client.connect()
+                await client.initialize()
+                
+                # Обновляем инструменты
+                mcp_tools = await client.list_tools()
+                self._tools_cache[server_id] = mcp_tools
+                
+                # Обновляем адаптер
+                adapter = self._adapters.get(server_id)
+                if adapter:
+                    adapter.adapt_tools(mcp_tools)
+                
+                logger.info(
+                    "Successfully reconnected to server '%s'",
+                    server_id
+                )
+                
+                self._state = MCPManagerState.READY
+                return True
+                
+            except Exception as e:
+                logger.warning(
+                    "Reconnect attempt %d/%d failed for server '%s': %s",
+                    attempt + 1, max_retries, server_id, e
+                )
+                
+                # Увеличиваем delay
+                delay = min(delay * backoff_multiplier, max_delay)
+        
+        # Все попытки исчерпаны
+        self._state = MCPManagerState.FAILED
+        
+        logger.error(
+            "Failed to reconnect to server '%s' after %d attempts",
+            server_id, max_retries
+        )
+        
+        return False
+    
+    async def start_health_check(self, server_id: str, interval: float = 60.0) -> None:
+        """Запустить periodic health check для сервера.
+        
+        Args:
+            server_id: Идентификатор сервера.
+            interval: Интервал проверки в секундах.
+        """
+        if server_id in self._health_check_tasks:
+            logger.warning(
+                "Health check already running for server '%s'",
+                server_id
+            )
+            return
+        
+        task = asyncio.create_task(
+            self._health_check_loop(server_id, interval),
+            name=f"mcp_health_check_{server_id}"
+        )
+        self._health_check_tasks[server_id] = task
+        
+        logger.info(
+            "Started health check for server '%s' (interval=%.0fs)",
+            server_id, interval
+        )
+    
+    async def _health_check_loop(self, server_id: str, interval: float) -> None:
+        """Цикл periodic health check.
+        
+        Args:
+            server_id: Идентификатор сервера.
+            interval: Интервал проверки.
+        """
+        while self._state != MCPManagerState.FAILED:
+            try:
+                await asyncio.sleep(interval)
+                
+                client = self._clients.get(server_id)
+                if client is None:
+                    logger.warning(
+                        "Health check: server '%s' not found",
+                        server_id
+                    )
+                    break
+                
+                # Проверяем состояние клиента
+                if client.state != MCPClientState.READY:
+                    logger.warning(
+                        "Health check failed for server '%s': state=%s",
+                        server_id, client.state.value
+                    )
+                    
+                    # Запускаем переподключение
+                    await self.reconnect_with_backoff(server_id)
+                
+                else:
+                    logger.debug(
+                        "Health check passed for server '%s'",
+                        server_id
+                    )
+            
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(
+                    "Error in health check for server '%s': %s",
+                    server_id, e
+                )
+    
+    async def stop_health_check(self, server_id: str) -> None:
+        """Остановить health check для сервера.
+        
+        Args:
+            server_id: Идентификатор сервера.
+        """
+        task = self._health_check_tasks.pop(server_id, None)
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            
+            logger.info(
+                "Stopped health check for server '%s'",
+                server_id
+            )
+    
+    async def handle_server_failure(self, server_id: str) -> None:
+        """Обработать ошибку сервера и запустить переподключение.
+        
+        Args:
+            server_id: Идентификатор сервера.
+        """
+        logger.warning(
+            "Server '%s' failure detected, initiating reconnect",
+            server_id
+        )
+        
+        # Запускаем переподключение в фоне
+        if server_id not in self._reconnect_tasks:
+            task = asyncio.create_task(
+                self.reconnect_with_backoff(server_id),
+                name=f"mcp_reconnect_{server_id}"
+            )
+            self._reconnect_tasks[server_id] = task

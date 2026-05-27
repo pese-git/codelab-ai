@@ -257,6 +257,125 @@ class MCPListToolsResult(BaseModel):
     """Список доступных инструментов."""
 
 
+# ===== MCP Resource Models =====
+
+
+class MCPResource(BaseModel):
+    """Определение ресурса MCP сервера.
+    
+    Содержит URI, имя и описание ресурса.
+    """
+    
+    model_config = ConfigDict(populate_by_name=True)
+    
+    uri: str
+    """Уникальный URI ресурса."""
+    
+    name: str
+    """Человекочитаемое имя ресурса."""
+    
+    description: str | None = None
+    """Описание ресурса."""
+    
+    mime_type: str | None = Field(default=None, alias="mimeType")
+    """MIME-тип ресурса (например, text/plain, image/png)."""
+
+
+class MCPListResourcesResult(BaseModel):
+    """Результат запроса resources/list.
+    
+    Содержит список доступных ресурсов на MCP сервере.
+    """
+    
+    resources: list[MCPResource]
+    """Список доступных ресурсов."""
+
+
+class MCPReadResourceResult(BaseModel):
+    """Результат запроса resources/read.
+    
+    Содержит содержимое ресурса.
+    """
+    
+    model_config = ConfigDict(populate_by_name=True)
+    
+    contents: list[dict[str, Any]]
+    """Список элементов содержимого ресурса."""
+    
+    def get_text_content(self) -> str:
+        """Извлечь текстовый контент из результата.
+        
+        Returns:
+            Объединённый текст из всех текстовых элементов.
+        """
+        texts: list[str] = []
+        for item in self.contents:
+            if item.get("type") == "text":
+                texts.append(item.get("text", ""))
+        return "\n".join(texts)
+
+
+# ===== MCP Prompt Models =====
+
+
+class MCPPromptArgument(BaseModel):
+    """Определение аргумента промпта MCP сервера."""
+    
+    model_config = ConfigDict(populate_by_name=True)
+    
+    name: str
+    """Имя аргумента."""
+    
+    description: str | None = None
+    """Описание аргумента."""
+    
+    required: bool = False
+    """Обязателен ли аргумент."""
+
+
+class MCPPrompt(BaseModel):
+    """Определение промпта MCP сервера.
+    
+    Содержит имя, описание и аргументы промпта.
+    """
+    
+    model_config = ConfigDict(populate_by_name=True)
+    
+    name: str
+    """Уникальное имя промпта."""
+    
+    description: str | None = None
+    """Описание промпта."""
+    
+    arguments: list[MCPPromptArgument] = Field(default_factory=list)
+    """Список аргументов промпта."""
+
+
+class MCPListPromptsResult(BaseModel):
+    """Результат запроса prompts/list.
+    
+    Содержит список доступных промптов на MCP сервере.
+    """
+    
+    prompts: list[MCPPrompt]
+    """Список доступных промптов."""
+
+
+class MCPGetPromptResult(BaseModel):
+    """Результат запроса prompts/get.
+    
+    Содержит промпт с заполненными placeholder'ами.
+    """
+    
+    model_config = ConfigDict(populate_by_name=True)
+    
+    description: str | None = None
+    """Описание промпта."""
+    
+    messages: list[dict[str, Any]]
+    """Список сообщений промпта."""
+
+
 # ===== MCP Tool Call Models =====
 
 
@@ -344,19 +463,60 @@ class MCPServerConfig(BaseModel):
     """Конфигурация MCP сервера из параметров session/new.
     
     Описывает как запустить и подключиться к MCP серверу.
+    Поддерживает три типа транспорта: stdio, http, sse.
     """
+    
+    model_config = ConfigDict(populate_by_name=True)
     
     name: str
     """Уникальное имя сервера (идентификатор)."""
     
-    command: str
-    """Команда для запуска сервера."""
+    type: str = "stdio"
+    """Тип транспорта: stdio, http, sse."""
+    
+    # Stdio transport параметры
+    command: str | None = None
+    """Команда для запуска сервера (для stdio)."""
     
     args: list[str] = Field(default_factory=list)
-    """Аргументы командной строки."""
+    """Аргументы командной строки (для stdio)."""
     
     env: list[dict[str, str]] = Field(default_factory=list)
     """Переменные окружения как список {name: value}."""
+    
+    # HTTP/SSE transport параметры
+    url: str | None = None
+    """URL MCP сервера (для http/sse)."""
+    
+    headers: list[dict[str, str]] = Field(default_factory=list)
+    """HTTP headers для запросов (для http/sse)."""
+    
+    # Retry configuration
+    max_retries: int = 5
+    """Максимальное количество попыток переподключения."""
+    
+    initial_delay: float = 1.0
+    """Начальная задержка между попытками (секунды)."""
+    
+    max_delay: float = 30.0
+    """Максимальная задержка между попытками (секунды)."""
+    
+    backoff_multiplier: float = 2.0
+    """Множитель для exponential backoff."""
+    
+    def model_post_init(self, __context) -> None:
+        """Валидация конфигурации после инициализации."""
+        # Stdio требует command
+        if self.type == "stdio" and not self.command:
+            raise ValueError(
+                "MCPServerConfig: type='stdio' requires 'command' field"
+            )
+        
+        # HTTP/SSE требует url
+        if self.type in ("http", "sse") and not self.url:
+            raise ValueError(
+                f"MCPServerConfig: type='{self.type}' requires 'url' field"
+            )
     
     def get_env_dict(self) -> dict[str, str]:
         """Преобразовать список env в словарь.
@@ -372,3 +532,39 @@ class MCPServerConfig(BaseModel):
             else:
                 result.update(item)
         return result
+    
+    def get_connection_params(self) -> dict[str, Any]:
+        """Получить параметры подключения в зависимости от типа транспорта.
+        
+        Returns:
+            Словарь параметров для транспорта.
+        
+        Raises:
+            ValueError: Если тип транспорта не поддерживается.
+        """
+        if self.type == "stdio":
+            return {
+                "command": self.command,
+                "args": self.args,
+                "env": self.get_env_dict(),
+            }
+        elif self.type in ("http", "sse"):
+            return {
+                "url": self.url,
+                "headers": self.headers,
+            }
+        else:
+            raise ValueError(f"Unsupported transport type: {self.type}")
+    
+    def get_retry_config(self) -> dict[str, float | int]:
+        """Получить конфигурацию retry.
+        
+        Returns:
+            Словарь с retry parameters.
+        """
+        return {
+            "max_retries": self.max_retries,
+            "initial_delay": self.initial_delay,
+            "max_delay": self.max_delay,
+            "backoff_multiplier": self.backoff_multiplier,
+        }

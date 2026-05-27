@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from enum import Enum
 from typing import Any
@@ -15,9 +17,15 @@ from .models import (
     MCPCallToolResult,
     MCPCapabilities,
     MCPClientInfo,
+    MCPGetPromptResult,
     MCPInitializeParams,
     MCPInitializeResult,
+    MCPListPromptsResult,
+    MCPListResourcesResult,
     MCPListToolsResult,
+    MCPPrompt,
+    MCPReadResourceResult,
+    MCPResource,
     MCPServerConfig,
     MCPTool,
 )
@@ -111,6 +119,15 @@ class MCPClient:
         self._capabilities: MCPCapabilities | None = None
         self._server_info: dict[str, str] | None = None
         self._tools: list[MCPTool] = []
+        self._resources: list[MCPResource] = []
+        self._prompts: list[MCPPrompt] = []
+        self._resources_cache: dict[str, MCPReadResourceResult] = {}
+        self._prompts_cache: dict[str, MCPGetPromptResult] = {}
+        
+        # Notification handling
+        self._notification_queue: asyncio.Queue = asyncio.Queue()
+        self._notification_handlers: dict[str, list] = {}
+        self._notification_task: asyncio.Task | None = None
     
     @property
     def state(self) -> MCPClientState:
@@ -159,6 +176,7 @@ class MCPClient:
         
         try:
             self._transport = StdioTransport()
+            assert self.config.command is not None, "Command must be set for stdio transport"
             await self._transport.start(
                 command=self.config.command,
                 args=self.config.args,
@@ -295,6 +313,212 @@ class MCPClient:
         except StdioTransportError as e:
             raise MCPClientError(f"Failed to list tools: {e}") from e
     
+    async def list_resources(self) -> list[MCPResource]:
+        """Получить список доступных ресурсов от MCP сервера.
+        
+        Вызывает resources/list и кэширует результат.
+        
+        Returns:
+            Список определений ресурсов.
+        
+        Raises:
+            MCPClientError: Если клиент не готов или запрос не удался.
+        """
+        if self._state != MCPClientState.READY:
+            raise MCPClientError(f"Cannot list resources in state {self._state}")
+        
+        if not self._transport:
+            raise MCPClientError("Transport not available")
+        
+        # Проверяем, поддерживает ли сервер resources
+        if self._capabilities and not self._capabilities.resources:
+            logger.debug(
+                "MCP server %s does not support resources",
+                self.config.name
+            )
+            return []
+        
+        logger.debug("Requesting resources list from: %s", self.config.name)
+        
+        try:
+            result_data = await self._transport.send_request(
+                method="resources/list",
+                timeout=30.0,
+            )
+            
+            result = MCPListResourcesResult.model_validate(result_data)
+            self._resources = result.resources
+            
+            logger.info(
+                "MCP server %s provides %d resources",
+                self.config.name,
+                len(self._resources)
+            )
+            
+            return self._resources
+            
+        except StdioTransportError as e:
+            raise MCPClientError(f"Failed to list resources: {e}") from e
+    
+    async def read_resource(self, uri: str) -> MCPReadResourceResult:
+        """Прочитать содержимое ресурса по URI.
+        
+        Args:
+            uri: URI ресурса для чтения.
+        
+        Returns:
+            Содержимое ресурса.
+        
+        Raises:
+            MCPClientError: Если клиент не готов или запрос не удался.
+        """
+        if self._state != MCPClientState.READY:
+            raise MCPClientError(f"Cannot read resource in state {self._state}")
+        
+        if not self._transport:
+            raise MCPClientError("Transport not available")
+        
+        # Проверяем кэш
+        if uri in self._resources_cache:
+            logger.debug("Returning cached resource: %s", uri)
+            return self._resources_cache[uri]
+        
+        logger.debug(
+            "Reading MCP resource: %s (server=%s)",
+            uri, self.config.name
+        )
+        
+        try:
+            result_data = await self._transport.send_request(
+                method="resources/read",
+                params={"uri": uri},
+                timeout=30.0,
+            )
+            
+            result = MCPReadResourceResult.model_validate(result_data)
+            
+            # Кэшируем результат
+            self._resources_cache[uri] = result
+            
+            logger.debug(
+                "MCP resource %s read successfully (%d contents)",
+                uri, len(result.contents)
+            )
+            
+            return result
+            
+        except StdioTransportError as e:
+            raise MCPClientError(f"Failed to read resource {uri}: {e}") from e
+    
+    async def list_prompts(self) -> list[MCPPrompt]:
+        """Получить список доступных промптов от MCP сервера.
+        
+        Вызывает prompts/list и кэширует результат.
+        
+        Returns:
+            Список определений промптов.
+        
+        Raises:
+            MCPClientError: Если клиент не готов или запрос не удался.
+        """
+        if self._state != MCPClientState.READY:
+            raise MCPClientError(f"Cannot list prompts in state {self._state}")
+        
+        if not self._transport:
+            raise MCPClientError("Transport not available")
+        
+        # Проверяем, поддерживает ли сервер prompts
+        if self._capabilities and not self._capabilities.prompts:
+            logger.debug(
+                "MCP server %s does not support prompts",
+                self.config.name
+            )
+            return []
+        
+        logger.debug("Requesting prompts list from: %s", self.config.name)
+        
+        try:
+            result_data = await self._transport.send_request(
+                method="prompts/list",
+                timeout=30.0,
+            )
+            
+            result = MCPListPromptsResult.model_validate(result_data)
+            self._prompts = result.prompts
+            
+            logger.info(
+                "MCP server %s provides %d prompts",
+                self.config.name,
+                len(self._prompts)
+            )
+            
+            return self._prompts
+            
+        except StdioTransportError as e:
+            raise MCPClientError(f"Failed to list prompts: {e}") from e
+    
+    async def get_prompt(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> MCPGetPromptResult:
+        """Получить конкретный промпт с аргументами.
+        
+        Args:
+            name: Имя промпта.
+            arguments: Аргументы для промпта.
+        
+        Returns:
+            Промпт с заполненными placeholder'ами.
+        
+        Raises:
+            MCPClientError: Если клиент не готов или запрос не удался.
+        """
+        if self._state != MCPClientState.READY:
+            raise MCPClientError(f"Cannot get prompt in state {self._state}")
+        
+        if not self._transport:
+            raise MCPClientError("Transport not available")
+        
+        # Создаём cache key
+        cache_key = f"{name}:{sorted((arguments or {}).items())}"
+        
+        # Проверяем кэш
+        if cache_key in self._prompts_cache:
+            logger.debug("Returning cached prompt: %s", name)
+            return self._prompts_cache[cache_key]
+        
+        logger.debug(
+            "Getting MCP prompt: %s (server=%s)",
+            name, self.config.name
+        )
+        
+        try:
+            params: dict[str, Any] = {"name": name}
+            if arguments:
+                params["arguments"] = arguments
+            
+            result_data = await self._transport.send_request(
+                method="prompts/get",
+                params=params,
+                timeout=30.0,
+            )
+            
+            result = MCPGetPromptResult.model_validate(result_data)
+            
+            # Кэшируем результат
+            self._prompts_cache[cache_key] = result
+            
+            logger.debug(
+                "MCP prompt %s retrieved successfully (%d messages)",
+                name, len(result.messages)
+            )
+            
+            return result
+            
+        except StdioTransportError as e:
+            raise MCPClientError(f"Failed to get prompt {name}: {e}") from e
+    
     async def call_tool(
         self,
         name: str,
@@ -396,3 +620,110 @@ class MCPClient:
         Выполняет отключение.
         """
         await self.disconnect()
+    
+    # ===== Notification Handling =====
+    
+    def register_handler(self, method: str, callback) -> None:
+        """Зарегистрировать обработчик для notification.
+        
+        Args:
+            method: Имя метода notification.
+            callback: Функция для вызова при получении notification.
+        """
+        if method not in self._notification_handlers:
+            self._notification_handlers[method] = []
+        self._notification_handlers[method].append(callback)
+        
+        logger.debug(
+            "Registered notification handler for: %s",
+            method
+        )
+    
+    async def start_notification_processing(self) -> None:
+        """Запустить фоновую задачу обработки notifications."""
+        if self._notification_task is not None:
+            return
+        
+        self._notification_task = asyncio.create_task(
+            self._process_notifications(),
+            name=f"mcp_notification_processor_{self.config.name}"
+        )
+        
+        logger.debug(
+            "Started notification processing for: %s",
+            self.config.name
+        )
+    
+    async def _process_notifications(self) -> None:
+        """Фоновая задача обработки notifications."""
+        while self._state == MCPClientState.READY:
+            try:
+                notification = await asyncio.wait_for(
+                    self._notification_queue.get(),
+                    timeout=1.0,
+                )
+                
+                method = notification.get("method", "unknown")
+                
+                logger.debug(
+                    "Processing MCP notification: method=%s server=%s",
+                    method,
+                    self.config.name
+                )
+                
+                # Вызываем зарегистрированные handlers
+                handlers = self._notification_handlers.get(method, [])
+                for handler in handlers:
+                    try:
+                        if asyncio.iscoroutinefunction(handler):
+                            await handler(notification.get("params", {}))
+                        else:
+                            handler(notification.get("params", {}))
+                    except Exception as e:
+                        logger.error(
+                            "Error in notification handler for %s: %s",
+                            method, e
+                        )
+                
+                self._notification_queue.task_done()
+                
+            except TimeoutError:
+                # Таймаут — продолжаем цикл
+                continue
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(
+                    "Error processing notification: %s",
+                    e
+                )
+    
+    async def handle_notification(self, notification_data: dict) -> None:
+        """Обработать входящую notification.
+        
+        Args:
+            notification_data: Данные notification.
+        """
+        method = notification_data.get("method", "unknown")
+        
+        logger.debug(
+            "Received MCP notification: method=%s server=%s",
+            method,
+            self.config.name
+        )
+        
+        # Помещаем в очередь
+        await self._notification_queue.put(notification_data)
+    
+    async def stop_notification_processing(self) -> None:
+        """Остановить фоновую задачу обработки notifications."""
+        if self._notification_task is not None:
+            self._notification_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._notification_task
+            self._notification_task = None
+            
+            logger.debug(
+                "Stopped notification processing for: %s",
+                self.config.name
+            )
