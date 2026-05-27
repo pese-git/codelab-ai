@@ -345,6 +345,7 @@ sequenceDiagram
     participant AO as AgentOrchestrator
     participant LLM as LLM Provider
     participant TR as ToolRegistry
+    participant Storage[(SessionStorage)]
 
     U->>C: Вводит prompt
     C->>S: session/prompt
@@ -360,15 +361,53 @@ sequenceDiagram
             LL-->>PO: stop_reason=end_turn
         else stop_reason = tool_use
             loop Для каждого tool call
-                LL->>TR: execute_tool() или request_permission
-                TR-->>LL: ToolResult
+                LL->>LL: decide_tool_execution()
+                
+                alt policy = allow
+                    LL->>TR: execute_tool()
+                    TR-->>LL: ToolResult
+                else policy = ask
+                    LL->>LL: build_permission_request()
+                    Note over LL: active_turn.permission_request_id = msg.id
+                    LL-->>PO: pending_permission=True
+                    PO-->>S: ProtocolOutcome(notifications)
+                    S->>Storage: save_session(session)
+                    S-->>C: session/request_permission
+                    Note over C: UI: permission widget
+                    C->>S: response (id=permission_request_id)
+                    S->>S: _resolve_permission_response()
+                    S->>Storage: find_session_by_permission_request_id()
+                    Note over S: permission_request_id совпадает → session found
+                    S->>S: resolve_permission_response_impl()
+                    Note over S: pending_tool_execution → background task
+                    S->>S: _execute_tool_in_background()
+                    S->>PO: execute_pending_tool()
+                    PO->>LL: execute_pending_tool()
+                    LL->>TR: execute_tool()
+                    TR-->>LL: ToolResult
+                    LL->>LLM: continue_turn(tool_results)
+                    LLM-->>LL: next response
+                    
+                    alt LLM вернул ещё tool с permission
+                        LL->>LL: build_permission_request()
+                        Note over LL: НОВЫЙ permission_request_id
+                        LL-->>PO: pending_permission=True
+                        PO-->>S: LLMLoopResult
+                        S->>Storage: save_session(session)
+                        Note over Storage: НОВЫЙ permission_request_id сохранён
+                    end
+                else policy = reject
+                    LL->>LL: mark tool as failed
+                    LL->>LLM: continue_turn(failed_result)
+                end
+                
                 S-->>C: session/update
             end
-            LL->>LL: continue_turn с tool_results
         end
     end
     
     PO-->>S: ProtocolOutcome
+    S->>Storage: save_session(session)
     S-->>C: session/update + result
     C-->>U: Показывает ответ
 ```

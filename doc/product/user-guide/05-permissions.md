@@ -6,19 +6,85 @@
 
 CodeLab использует систему разрешений для контроля доступа агента к ресурсам клиента: файловой системе и терминалу. Это обеспечивает безопасность и контроль пользователя над действиями AI.
 
+## Поток выполнения разрешений
+
 ```mermaid
 sequenceDiagram
-    participant Agent as Агент
-    participant Server as Сервер
-    participant Client as Клиент
     participant User as Пользователь
+    participant Client as Клиент (TUI)
+    participant WS as WebSocket
+    participant ACP as ACPProtocol
+    participant PO as PromptOrchestrator
+    participant LL as LLMLoopStage
+    participant Storage[(SessionStorage)]
+    participant TR as ToolRegistry
+    participant LLM as LLM Provider
+
+    User->>Client: Вводит prompt
+    Client->>WS: session/prompt
+    WS->>ACP: handle()
+    ACP->>PO: handle_prompt()
+    PO->>LL: process(context)
+    LL->>LLM: create_completion(messages, tools)
+    LLM-->>LL: tool_call (terminal/create)
     
-    Agent->>Server: tool_call: read_file
-    Server->>Client: permission/request
-    Client->>User: Показать диалог
-    User->>Client: Allow/Deny
-    Client->>Server: permission/response
-    Server->>Agent: Результат
+    Note over LL: Проверка разрешений
+    LL->>LL: decide_tool_execution()
+    Note over LL: Нет политики → ask user
+    
+    LL->>LL: build_permission_request()
+    Note over LL: Устанавливает active_turn.permission_request_id
+    LL-->>PO: LLMLoopResult(pending_permission=True)
+    PO-->>ACP: ProtocolOutcome(notifications)
+    ACP->>Storage: save_session(session)
+    Note over Storage: permission_request_id сохранён
+    ACP-->>WS: session/request_permission
+    WS-->>Client: permission request
+    
+    Note over Client: UI: показать permission widget
+    Client->>User: Показать опции
+    
+    User->>Client: Выбрать "allow_once"
+    Client->>WS: {id: permission_request_id, result: {...}}
+    WS->>ACP: handle_client_response()
+    ACP->>ACP: _resolve_permission_response()
+    ACP->>Storage: find_session_by_permission_request_id()
+    Storage-->>ACP: SessionState (permission_request_id совпадает)
+    ACP->>ACP: resolve_permission_response_impl()
+    Note over ACP: permission_request_id очищен
+    ACP-->>WS: ProtocolOutcome(pending_tool_execution)
+    
+    Note over WS: Фоновая задача: _execute_tool_in_background
+    WS->>ACP: execute_pending_tool()
+    ACP->>Storage: load_session()
+    ACP->>PO: orchestrator.execute_pending_tool()
+    PO->>LL: execute_pending_tool()
+    LL->>TR: execute_tool(terminal/create)
+    TR-->>LL: ToolExecutionResult
+    LL->>LLM: continue_turn(tool_results)
+    LLM-->>LL: tool_call (terminal/wait_for_exit)
+    
+    alt Tool не требует permission
+        LL->>TR: execute_tool(wait_for_exit)
+        TR-->>LL: ToolExecutionResult
+        LL->>LLM: continue_turn(tool_results)
+        LLM-->>LL: final response (end_turn)
+        LL-->>PO: LLMLoopResult(stop_reason=end_turn)
+        PO-->>ACP: LLMLoopResult
+    else Tool требует permission
+        LL->>LL: build_permission_request()
+        Note over LL: Устанавливает НОВЫЙ permission_request_id
+        LL-->>PO: LLMLoopResult(pending_permission=True)
+        PO-->>ACP: LLMLoopResult
+        ACP->>Storage: save_session(session)
+        Note over Storage: НОВЫЙ permission_request_id сохранён
+    end
+    
+    ACP->>Storage: save_session(session)
+    Note over Storage: Актуальное состояние сохранено
+    ACP-->>WS: turn completion / notifications
+    WS-->>Client: updates
+    Client-->>User: Показывает результат
 ```
 
 ## Типы разрешений

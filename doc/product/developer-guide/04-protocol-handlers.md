@@ -101,23 +101,44 @@ class ToolCallHandler:
 
 ```python
 class PermissionManager:
-    async def check_permission(
-        self,
-        session_id: str,
-        tool_id: str,
-        arguments: dict,
-    ) -> PermissionResult:
-        """Проверить разрешение (global → session → ask)."""
+    def should_request_permission(session, tool_kind) -> bool:
+        """Определить, нужен ли permission request для tool_kind."""
         ...
     
-    async def allow_always(self, session_id: str, tool_id: str) -> None:
-        """Разрешить всегда."""
+    def build_permission_request(session, session_id, tool_call_id, title, kind) -> ACPMessage:
+        """Построить session/request_permission message.
+        
+        Устанавливает active_turn.permission_request_id = msg.id
+        для корреляции с ответом клиента.
+        """
         ...
     
-    async def reject_always(self, session_id: str, tool_id: str) -> None:
-        """Запретить всегда."""
+    def request_tool_permission(session, tool_call, tool_kind, session_id) -> JsonRpcId:
+        """Запросить разрешение для tool call."""
+        ...
+    
+    def extract_permission_outcome(result) -> str | None:
+        """Извлечь outcome из response (selected/cancelled)."""
+        ...
+    
+    def extract_permission_option_id(result) -> str | None:
+        """Извлечь optionId из response (allow_once, allow_always, ...)."""
+        ...
+    
+    def find_session_by_permission_request_id(permission_request_id, sessions) -> SessionState | None:
+        """Найти сессию по active_turn.permission_request_id."""
         ...
 ```
+
+**Flow разрешения:**
+
+1. `LLMLoopStage` вызывает `build_permission_request()` → устанавливает `active_turn.permission_request_id`
+2. Message отправляется клиенту через notifications
+3. `ACPProtocol.handle_client_response()` получает response с `id=permission_request_id`
+4. `_resolve_permission_response()` → `find_session_by_permission_request_id()` ищет сессию в storage
+5. `resolve_permission_response_impl()` применяет решение, возвращает `pending_tool_execution`
+6. `_execute_tool_in_background()` → `execute_pending_tool()` → выполняет tool, продолжает LLM loop
+7. **Критично:** `execute_pending_tool()` сохраняет сессию после orchestrator вызова, чтобы новый `permission_request_id` (если LLM вызвал ещё tool) был в storage
 
 ### GlobalPolicyManager
 
