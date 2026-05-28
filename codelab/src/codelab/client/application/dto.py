@@ -38,6 +38,9 @@ class CreateSessionRequest:
     auth_credentials: dict[str, Any] | None = None
     """Учетные данные для аутентификации."""
 
+    mcp_servers: list[dict[str, Any]] | None = None
+    """Список MCP-серверов для `session/new` (если None, используется пустой список)."""
+
 
 @dataclass
 class CreateSessionResponse:

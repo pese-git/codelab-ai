@@ -371,9 +371,115 @@ timeline
 
 ---
 
+---
+
+## 8. Execute Pending Tool Flow (исправление permission_request_id mismatch)
+
+**Проблема:** После выполнения инструмента LLM loop мог вызвать ещё один tool, требующий permission. Новый `permission_request_id` записывался в in-memory session, но **не сохранялся** в storage. При ответе клиента `find_session_by_permission_request_id` читал storage и находил старый ID → mismatch → сессия не найдена → агент зависал.
+
+```mermaid
+sequenceDiagram
+    participant Client as Клиент
+    participant WS as WebSocket
+    participant ACP as ACPProtocol
+    participant PO as PromptOrchestrator
+    participant LL as LLMLoopStage
+    participant Storage[(SessionStorage)]
+    participant TR as ToolRegistry
+    participant LLM as LLM Provider
+
+    Note over ACP,Storage: Фаза 1: Первый permission request
+    ACP->>Storage: save_session (permission_request_id=AAA)
+    ACP-->>Client: session/request_permission (id=AAA)
+    Client->>ACP: response (id=AAA, allow_once)
+    ACP->>ACP: _resolve_permission_response()
+    Note over ACP: permission_request_id=AAA найден в storage ✓
+    Note over ACP: pending_tool_execution → background task
+    
+    Note over ACP,Storage: Фаза 2: _execute_tool_in_background
+    ACP->>PO: execute_pending_tool()
+    PO->>Storage: load_session()
+    PO->>LL: execute_pending_tool(session)
+    LL->>TR: execute_tool(terminal/create)
+    TR-->>LL: ToolExecutionResult
+    LL->>LLM: continue_turn(tool_results)
+    LLM-->>LL: tool_call (terminal/wait_for_exit)
+    LL->>LL: execute_tool(wait_for_exit) — не требует permission
+    LL->>LLM: continue_turn(tool_results)
+    LLM-->>LL: tool_call (fs/write_text_file) — требует permission!
+    LL->>LL: build_permission_request()
+    Note over LL: active_turn.permission_request_id = BBB (НОВЫЙ)
+    LL-->>PO: LLMLoopResult(pending_permission=True)
+    PO-->>ACP: LLMLoopResult
+    
+    rect rgb(255, 255, 0)
+        Note over ACP,Storage: ✅ ИСПРАВЛЕНИЕ: save_session ПЕРЕД возвратом
+        ACP->>Storage: save_session(session)
+        Note over Storage: permission_request_id=BBB сохранён
+    end
+    
+    Note over ACP,Storage: Фаза 3: Второй permission response
+    Client->>ACP: response (id=BBB, allow_once)
+    ACP->>ACP: _resolve_permission_response()
+    ACP->>Storage: find_session_by_permission_request_id(BBB)
+    Storage-->>ACP: SessionState (permission_request_id=BBB) ✓
+    Note over ACP: Сессия найдена! ✓
+    ACP->>ACP: resolve_permission_response_impl()
+    Note over ACP: pending_tool_execution → background task
+    ACP->>PO: execute_pending_tool()
+    PO->>LL: execute_pending_tool()
+    LL->>TR: execute_tool(fs/write_text_file)
+    TR-->>LL: ToolExecutionResult
+    LL->>LLM: continue_turn(tool_results)
+    LLM-->>LL: final response (end_turn)
+    LL-->>PO: LLMLoopResult(stop_reason=end_turn)
+    ACP->>Storage: save_session(session)
+    ACP-->>Client: turn completion
+```
+
+### Ключевое изменение в `core.py`
+
+**До (сломано):**
+```python
+async def execute_pending_tool(self, session_id, tool_call_id):
+    session = await self._storage.load_session(session_id)
+    orchestrator = await self._get_prompt_orchestrator()
+    return await orchestrator.execute_pending_tool(session, ...)
+    # ❌ Сессия НЕ сохранена — новый permission_request_id потерян
+```
+
+**После (исправлено):**
+```python
+async def execute_pending_tool(self, session_id, tool_call_id):
+    session = await self._storage.load_session(session_id)
+    orchestrator = await self._get_prompt_orchestrator()
+    
+    llm_result = await orchestrator.execute_pending_tool(session, ...)
+    
+    # ✅ Сохраняем сессию — LLM loop мог установить новый permission_request_id
+    await self._storage.save_session(session)
+    
+    return llm_result
+```
+
+### Почему `load_session` в `_execute_tool_in_background` был ошибкой
+
+Предыдущая попытка исправления делала `load_session()` в `_execute_tool_in_background`:
+
+```python
+# ❌ WRONG: load_session загружает СТАРУЮ копию из storage
+session = await self._storage.load_session(session_id)
+await self._storage.save_session(session)
+```
+
+Это перезаписывало in-memory изменения (новый `permission_request_id`) старой копией из storage. Правильное решение — сохранять сессию **внутри** `execute_pending_tool()`, где in-memory session содержит актуальные изменения.
+
+---
+
 ## Заметки
 
 1. **Критическое изменение**: Строка в `ACPProtocol.handle()` меняется с `return ERROR` на `return handle_incoming_response()`
 2. **Cascade effect**: Это позволяет существующему коду обработать permission response
 3. **No breaking changes**: Все остальное работает как раньше
 4. **Tool execution resumption**: После разрешения, tool должен выполняться и результат отправляться в LLM
+5. **Session persistence**: `execute_pending_tool()` сохраняет сессию после orchestrator вызова, чтобы новый `permission_request_id` был доступен в storage

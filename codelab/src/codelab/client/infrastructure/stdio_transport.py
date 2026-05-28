@@ -40,6 +40,7 @@ class StdioClientTransport:
         command: str,
         args: list[str],
         cwd: str | None = None,
+        receive_timeout: float = 60.0,
     ) -> None:
         """Инициализирует stdio транспорт.
 
@@ -47,10 +48,13 @@ class StdioClientTransport:
             command: Команда для запуска агента (напр. "codelab").
             args: Аргументы командной строки (напр. ["serve", "--stdio"]).
             cwd: Рабочая директория для subprocess.
+            receive_timeout: Таймаут ожидания сообщения от сервера в секундах.
+                Default 60.0 — покрывает LLM запросы к удалённым API.
         """
         self._command = command
         self._args = args
         self._cwd = cwd
+        self._receive_timeout = receive_timeout
         self._process: asyncio.subprocess.Process | None = None
         self._stdout_queue: asyncio.Queue[str] = asyncio.Queue()
         self._stdout_task: asyncio.Task[None] | None = None
@@ -207,11 +211,14 @@ class StdioClientTransport:
             raise RuntimeError(msg)
 
         try:
-            message = await asyncio.wait_for(self._stdout_queue.get(), timeout=30.0)
+            message = await asyncio.wait_for(
+                self._stdout_queue.get(),
+                timeout=self._receive_timeout,
+            )
             self._logger.debug("message received", length=len(message))
             return message
         except TimeoutError:
-            msg = "Timeout waiting for message from subprocess"
+            msg = f"Timeout ({self._receive_timeout}s) waiting for message from subprocess"
             self._logger.error("receive timeout")
             raise RuntimeError(msg) from None
         except asyncio.CancelledError:

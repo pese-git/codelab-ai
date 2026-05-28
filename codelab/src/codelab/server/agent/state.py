@@ -22,3 +22,6 @@ class OrchestratorConfig:
     enable_tools: bool = True  # Использовать инструменты
     tool_timeout: float = 30.0  # Timeout для выполнения инструментов
     history_limit: int = 100  # Лимит истории сообщений
+
+    # System prompt
+    system_prompt: str = ""  # Кастомный системный промпт (пустой = default)

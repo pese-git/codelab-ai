@@ -142,10 +142,13 @@ class SessionViewModel(BaseViewModel):
         )
 
         try:
-            # Передаем cwd в координатор
-            # Удаляем cwd из kwargs, чтобы избежать дублирования параметра
-            create_kwargs = {k: v for k, v in kwargs.items() if k != "cwd"}
-            result = await self.coordinator.create_session(host, port, cwd=cwd, **create_kwargs)
+            # Передаем cwd и mcp_servers в координатор
+            # Удаляем cwd и mcp_servers из kwargs, чтобы избежать дублирования параметра
+            create_kwargs = {k: v for k, v in kwargs.items() if k not in ("cwd", "mcp_servers")}
+            mcp_servers = kwargs.get("mcp_servers")
+            result = await self.coordinator.create_session(
+                host, port, cwd=cwd, mcp_servers=mcp_servers, **create_kwargs
+            )
 
             # coordinator.create_session возвращает dict, преобразуем в объект для совместимости
             # Создаем простой объект для хранения результата сессии

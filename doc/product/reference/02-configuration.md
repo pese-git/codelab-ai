@@ -163,6 +163,94 @@ CODELAB_LLM_MODEL=anthropic/claude-3-opus
 }
 ```
 
+## Конфигурация MCP серверов
+
+### Параметры MCP сервера (TOML)
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `name` | `string` | — | Уникальное имя сервера (обязательно) |
+| `type` | `string` | `stdio` | Тип транспорта: `stdio`, `http`, `sse` |
+| `command` | `string` | — | Команда запуска (для `stdio`) |
+| `args` | `array` | `[]` | Аргументы командной строки (для `stdio`) |
+| `env` | `array` | `[]` | Переменные окружения `[{name, value}]` |
+| `url` | `string` | — | URL MCP сервера (для `http`/`sse`) |
+| `headers` | `array` | `[]` | HTTP headers `[{name, value}]` |
+
+### Параметры retry
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `max_retries` | `int` | `5` | Максимум попыток переподключения |
+| `initial_delay` | `float` | `1.0` | Начальная задержка (секунды) |
+| `max_delay` | `float` | `30.0` | Максимальная задержка (секунды) |
+| `backoff_multiplier` | `float` | `2.0` | Множитель exponential backoff |
+
+### Примеры конфигурации
+
+**Stdio транспорт:**
+```toml
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/project"]
+env = [
+  { name = "DEBUG", value = "true" }
+]
+```
+
+**HTTP транспорт:**
+```toml
+[[mcp.servers]]
+name = "github"
+type = "http"
+url = "https://api.githubcopilot.com/mcp/"
+headers = [
+  { name = "Authorization", value = "${GITHUB_TOKEN}" }
+]
+max_retries = 3
+initial_delay = 2.0
+```
+
+**SSE транспорт:**
+```toml
+[[mcp.servers]]
+name = "streaming-server"
+type = "sse"
+url = "https://mcp.example.com/sse"
+```
+
+### Параметры сессии (JSON-RPC)
+
+При создании сессии через `session/new`:
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `mcpServers` | `array` | Список MCP серверов для подключения |
+| `mcpServers[].name` | `string` | Имя сервера |
+| `mcpServers[].type` | `string` | Транспорт: `stdio`, `http`, `sse` |
+| `mcpServers[].command` | `string` | Команда (stdio) |
+| `mcpServers[].args` | `array` | Аргументы (stdio) |
+| `mcpServers[].env` | `array` | Переменные окружения `[{name, value}]` |
+| `mcpServers[].url` | `string` | URL (http/sse) |
+| `mcpServers[].headers` | `array` | HTTP headers `[{name, value}]` |
+| `mcpServers[].max_retries` | `int` | Retry попытки |
+| `mcpServers[].initial_delay` | `float` | Начальная задержка |
+| `mcpServers[].max_delay` | `float` | Максимальная задержка |
+| `mcpServers[].backoff_multiplier` | `float` | Backoff множитель |
+
+### Переменные окружения для MCP
+
+| Переменная | Описание |
+|------------|----------|
+| `${GITHUB_TOKEN}` | Токен GitHub для GitHub MCP |
+| `${OPENAI_API_KEY}` | API ключ для OpenAI MCP |
+| `${DATABASE_URL}` | URL базы данных для Database MCP |
+| `${MY_API_KEY}` | Любая кастомная переменная |
+
+> **Примечание:** Используйте синтаксис `${VAR_NAME}` в TOML для раскрытия переменных окружения.
+
 ## Структура домашней директории
 
 ```
@@ -178,9 +266,36 @@ CODELAB_LLM_MODEL=anthropic/claude-3-opus
 └── cache/                # Временные данные и кэш MCP
 ```
 
+## MCP инструменты
+
+### Именование
+
+```
+mcp:{server_id}:{tool_name}
+```
+
+### Kind Inference
+
+| MCP Annotation | ACP Kind | Описание |
+|----------------|----------|----------|
+| `readOnlyHint: true` | `read` | Только чтение |
+| `destructiveHint: true` | `execute` | Разрушительное действие |
+| `idempotentHint: true` | `edit` | Изменяемое, идемпотентное |
+| `openWorldHint: true` | `execute` | Внешний мир (API, веб) |
+
+### Эвристика по имени (если нет annotations)
+
+| Префикс | ACP Kind |
+|---------|----------|
+| `read_*`, `get_*`, `list_*`, `fetch_*` | `read` |
+| `write_*`, `create_*`, `delete_*`, `remove_*` | `execute` |
+| `update_*`, `modify_*`, `set_*` | `edit` |
+| Остальные | `other` |
+
 ## См. также
 
 - [TOML конфигурация](../user-guide/13-toml-configuration.md) — полное руководство по TOML
+- [MCP серверы](../user-guide/14-mcp-servers.md) — подключение и настройка MCP
 - [Переменные окружения](03-environment.md) — детальное описание переменных
 - [CLI команды](01-cli.md) — справочник командной строки
 - [Настройка сервера](../user-guide/03-server-setup.md) — руководство по настройке

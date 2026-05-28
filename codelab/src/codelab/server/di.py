@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 import structlog
@@ -49,6 +50,7 @@ from .protocol.handlers.slash_commands.builtin import (
 from .protocol.handlers.state_manager import StateManager
 from .protocol.handlers.tool_call_handler import ToolCallHandler
 from .protocol.handlers.turn_lifecycle_manager import TurnLifecycleManager
+from .protocol.session_runtime import SessionRuntimeRegistry
 from .rpc_holder import ClientRPCServiceHolder
 from .storage import SessionStorage
 from .storage.global_policy_storage import GlobalPolicyStorage
@@ -172,6 +174,20 @@ class ToolsProvider(Provider):
         return SimpleToolRegistry()
 
 
+class RuntimeRegistryProvider(Provider):
+    """Провайдер SessionRuntimeRegistry (REQUEST scope)."""
+
+    @provide(scope=Scope.REQUEST)
+    async def get_runtime_registry(self) -> AsyncIterator[SessionRuntimeRegistry]:
+        """Реестр runtime-состояний сессий.
+
+        Dishka автоматически вызовет cleanup() при выходе из REQUEST scope.
+        """
+        registry = SessionRuntimeRegistry()
+        yield registry
+        await registry.cleanup()
+
+
 class AgentProvider(Provider):
     """Провайдер агентов (APP scope)."""
 
@@ -191,6 +207,7 @@ class AgentProvider(Provider):
             temperature=config.llm.temperature,
             max_tokens=config.llm.max_tokens,
             llm_provider_class=config.llm.provider,
+            system_prompt=config.agent.system_prompt,
         )
 
         # Создать model resolver для multi-provider support
@@ -390,6 +407,7 @@ class RequestProvider(Provider):
         holder: ClientRPCServiceHolder,
         registry: LLMProviderRegistry,
         config_option_builder: ConfigOptionBuilder,
+        runtime_registry: SessionRuntimeRegistry,
         trace_messages: Annotated[bool, from_context(provides="trace_messages")],
     ) -> ACPProtocol:
         """Создаёт ACPProtocol для текущего соединения."""
@@ -417,6 +435,7 @@ class RequestProvider(Provider):
             llm_registry=registry,
             config_option_builder=config_option_builder,
             middleware=middleware if middleware else None,
+            runtime_registry=runtime_registry,
         )
 
 
@@ -447,6 +466,7 @@ def make_container(
         RegistryProvider(),
         LLMProvider_(),
         ToolsProvider(),
+        RuntimeRegistryProvider(),
         AgentProvider(),
         PipelineProvider(),
         PromptOrchestratorProvider(),

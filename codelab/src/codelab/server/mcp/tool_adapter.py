@@ -15,6 +15,41 @@ from .models import MCPTool
 
 logger = logging.getLogger(__name__)
 
+# Маппинг префиксов имён инструментов на ACP ToolKind
+_NAME_PREFIX_TO_KIND: list[tuple[str, str]] = [
+    ("read", "read"),
+    ("get", "read"),
+    ("list", "read"),
+    ("cat", "read"),
+    ("show", "read"),
+    ("fetch", "fetch"),
+    ("download", "fetch"),
+    ("http", "fetch"),
+    ("web", "fetch"),
+    ("url", "fetch"),
+    ("search", "search"),
+    ("find", "search"),
+    ("grep", "search"),
+    ("query", "search"),
+    ("write", "edit"),
+    ("create", "edit"),
+    ("update", "edit"),
+    ("edit", "edit"),
+    ("modify", "edit"),
+    ("append", "edit"),
+    ("delete", "delete"),
+    ("remove", "delete"),
+    ("rm", "delete"),
+    ("move", "move"),
+    ("rename", "move"),
+    ("mv", "move"),
+    ("exec", "execute"),
+    ("run", "execute"),
+    ("shell", "execute"),
+    ("command", "execute"),
+    ("terminal", "execute"),
+]
+
 
 class MCPToolAdapter:
     """Адаптер для преобразования MCP инструментов в формат ToolRegistry.
@@ -85,34 +120,76 @@ class MCPToolAdapter:
         """
         return tool_name.startswith(f"{MCPToolAdapter.NAMESPACE_PREFIX}:")
     
+    @staticmethod
+    def _infer_kind(mcp_tool: MCPTool) -> str:
+        """Вывести ACP ToolKind из MCP инструмента.
+
+        Приоритет 1: MCP ToolAnnotations (readOnlyHint, destructiveHint).
+        Приоритет 2: Эвристика по имени инструмента.
+        Приоритет 3: Фоллбэк на "other".
+
+        Args:
+            mcp_tool: Определение MCP инструмента.
+
+        Returns:
+            Валидный ACP ToolKind.
+        """
+        # Приоритет 1: Аннотации MCP
+        annotations = mcp_tool.annotations
+        if annotations is not None:
+            if annotations.read_only_hint is True:
+                return "read"
+            if annotations.destructive_hint is True:
+                # destructive + delete/remover в имени -> delete, иначе edit
+                name_lower = mcp_tool.name.lower()
+                if any(prefix in name_lower for prefix in ("delete", "remove", "rm")):
+                    return "delete"
+                return "edit"
+
+        # Приоритет 2: Эвристика по имени
+        name_lower = mcp_tool.name.lower()
+        for prefix, kind in _NAME_PREFIX_TO_KIND:
+            if name_lower.startswith(prefix):
+                return kind
+
+        # Приоритет 3: Фоллбэк
+        return "other"
+
     def mcp_tool_to_definition(self, mcp_tool: MCPTool) -> ToolDefinition:
         """Преобразовать MCPTool в ToolDefinition.
-        
+
         Args:
             mcp_tool: Определение инструмента от MCP сервера.
-        
+
         Returns:
             ToolDefinition для использования в ToolRegistry.
         """
         namespaced_name = self.get_namespaced_name(mcp_tool.name)
-        
+
         # Преобразуем input_schema в параметры
         parameters = {
             "type": mcp_tool.input_schema.type,
             "properties": mcp_tool.input_schema.properties,
             "required": mcp_tool.input_schema.required,
         }
-        
+
         # Добавляем дополнительные поля из input_schema если есть
         schema_dict = mcp_tool.input_schema.model_dump(exclude={"type", "properties", "required"})
         parameters.update(schema_dict)
-        
+
+        # Выводим kind из аннотаций или эвристики по имени
+        inferred_kind = self._infer_kind(mcp_tool)
+
+        # Добавляем тег MCP сервера в описание для идентификации LLM
+        base_description = mcp_tool.description or mcp_tool.name
+        description = f"[MCP:{self.server_id}] {base_description}"
+
         return ToolDefinition(
             name=namespaced_name,
-            description=mcp_tool.description or f"MCP tool: {mcp_tool.name}",
+            description=description,
             parameters=parameters,
-            kind="mcp",  # Специальный kind для MCP инструментов
-            requires_permission=True,  # MCP инструменты требуют разрешения
+            kind=inferred_kind,
+            requires_permission=True,
         )
     
     def adapt_tools(self, mcp_tools: list[MCPTool]) -> list[ToolDefinition]:

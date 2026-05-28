@@ -115,3 +115,37 @@ class TestRoundTrip:
         """update_plan round-trip (без изменений)."""
         acp = "update_plan"
         assert llm_name_to_acp_name(acp_name_to_llm_name(acp)) == acp
+
+
+class TestMcpNameMapping:
+    """Тесты маппинга MCP имён инструментов."""
+
+    def test_mcp_acp_to_llm(self) -> None:
+        """mcp:fs:read_file → mcp_fs_read_file."""
+        assert acp_name_to_llm_name("mcp:fs:read_file") == "mcp_fs_read_file"
+
+    def test_mcp_acp_to_llm_simple(self) -> None:
+        """mcp:tool → mcp_tool."""
+        assert acp_name_to_llm_name("mcp:tool") == "mcp_tool"
+
+    def test_mcp_llm_to_acp(self) -> None:
+        """mcp_fs_read_file → mcp:fs:read_file."""
+        assert llm_name_to_acp_name("mcp_fs_read_file") == "mcp:fs:read_file"
+
+    def test_mcp_llm_to_acp_simple(self) -> None:
+        """mcp_tool → mcp:tool."""
+        assert llm_name_to_acp_name("mcp_tool") == "mcp_tool"
+
+    def test_mcp_roundtrip(self) -> None:
+        """MCP round-trip: mcp:server:tool → mcp_server_tool → mcp:server:tool."""
+        acp = "mcp:fs:read_file"
+        assert llm_name_to_acp_name(acp_name_to_llm_name(acp)) == acp
+
+    def test_mcp_roundtrip_complex(self) -> None:
+        """MCP round-trip с复杂ным именем инструмента."""
+        acp = "mcp:filesystem:read_text_file"
+        assert llm_name_to_acp_name(acp_name_to_llm_name(acp)) == acp
+
+    def test_mcp_llm_to_acp_no_underscore(self) -> None:
+        """mcp_tool без underscore после server_id возвращается как есть."""
+        assert llm_name_to_acp_name("mcp_tool") == "mcp_tool"

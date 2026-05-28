@@ -364,45 +364,196 @@ llm_name_to_acp_name("fs_read_text_file")  # → "fs/read_text_file"
 
 ## MCP Integration
 
+### Архитектура MCP
+
+```mermaid
+graph TB
+    subgraph "MCP Layer"
+        MM[MCPManager]
+        MC[MCPClient]
+        TA[MCPToolAdapter]
+        TE[MCPToolExecutor]
+    end
+    
+    subgraph "Transports"
+        STDIO[StdioTransport]
+        HTTP[HttpTransport]
+        SSE[SseTransport]
+    end
+    
+    subgraph "Runtime"
+        SRR[SessionRuntimeRegistry]
+    end
+    
+    MM --> MC
+    MM --> TA
+    MM --> TE
+    MC --> STDIO & HTTP & SSE
+    SRR --> MM
+```
+
 ### MCPManager
 
 Управление несколькими MCP-серверами на сессию:
 
 ```python
 class MCPManager:
-    async def add_server(self, server_id: str, config: MCPServerConfig) -> None:
+    async def add_server(self, config: MCPServerConfig) -> list[ToolDefinition]:
+        """Добавить и инициализировать MCP сервер."""
         client = MCPClient(config)
         await client.connect()
-        self._servers[server_id] = client
+        await client.initialize()
+        mcp_tools = await client.list_tools()
+        
+        adapter = MCPToolAdapter(config.name, client)
+        self._clients[config.name] = client
+        self._adapters[config.name] = adapter
+        self._tools_cache[config.name] = mcp_tools
+        
+        return adapter.adapt_tools(mcp_tools)
     
-    async def get_tools(self) -> list[MCPTool]:
-        tools = []
-        for server_id, client in self._servers.items():
-            server_tools = await client.list_tools()
-            tools.extend(server_tools)
-        return tools
+    async def call_tool(self, namespaced_name: str, arguments: dict) -> ToolExecutionResult:
+        """Вызвать MCP инструмент: mcp:server_id:tool_name."""
+        prefix, server_id, tool_name = MCPToolAdapter.parse_namespaced_name(namespaced_name)
+        adapter = self._adapters[server_id]
+        return await adapter.call_tool(tool_name, arguments)
     
-    async def call_tool(self, tool_name: str, arguments: dict) -> MCPToolResult:
-        server_id, tool = tool_name.split(":", 2)[1], tool_name.split(":", 2)[2]
-        client = self._servers[server_id]
-        return await client.call_tool(tool, arguments)
+    async def reconnect_with_backoff(self, server_id: str) -> bool:
+        """Переподключение с exponential backoff + jitter."""
+        ...
+    
+    async def start_health_check(self, server_id: str, interval: float = 60.0) -> None:
+        """Periodic health check."""
+        ...
 ```
+
+### MCPClient
+
+Клиент для одного MCP-сервера:
+
+```python
+class MCPClient:
+    async def connect(self) -> None: ...
+    async def disconnect(self) -> None: ...
+    async def initialize(self) -> MCPInitializeResult: ...
+    async def list_tools(self) -> list[MCPTool]: ...
+    async def call_tool(self, name: str, arguments: dict) -> MCPCallToolResult: ...
+    async def list_resources(self) -> list[MCPResource]: ...
+    async def read_resource(self, uri: str) -> MCPReadResourceResult: ...
+    async def list_prompts(self) -> list[MCPPrompt]: ...
+    async def get_prompt(self, name: str, arguments: dict) -> MCPGetPromptResult: ...
+```
+
+### Транспорты
+
+| Транспорт | Файл | Описание |
+|-----------|------|----------|
+| `StdioTransport` | `transport.py` | Subprocess с async stdin/stdout |
+| `HttpTransport` | `transport.py` | HTTP POST с JSON-RPC, notification queue |
+| `SseTransport` | `transport.py` | Server-Sent Events (deprecated) |
 
 ### MCPToolAdapter
 
-Адаптация MCP инструментов к ACP ToolDefinition:
+Адаптация MCP инструментов к ACP ToolDefinition с kind inference:
 
 ```python
 class MCPToolAdapter:
-    def to_tool_definition(self, mcp_tool: MCPTool, server_id: str) -> ToolDefinition:
+    def adapt_tools(self, mcp_tools: list[MCPTool]) -> list[ToolDefinition]:
+        return [self._adapt_tool(tool) for tool in mcp_tools]
+    
+    def _adapt_tool(self, mcp_tool: MCPTool) -> ToolDefinition:
+        kind = self._infer_kind(mcp_tool)
         return ToolDefinition(
-            id=f"mcp:{server_id}:{mcp_tool.name}",
+            id=f"mcp:{self._server_id}:{mcp_tool.name}",
             name=mcp_tool.name,
-            description=mcp_tool.description,
-            parameters=mcp_tool.input_schema,
-            kind="execute",
+            description=f"[MCP:{self._server_id}] {mcp_tool.description}",
+            parameters=mcp_tool.input_schema.model_dump(),
+            kind=kind,
             requires_permission=True,
         )
+    
+    def _infer_kind(self, mcp_tool: MCPTool) -> str:
+        # Приоритет 1: MCP ToolAnnotations
+        if mcp_tool.annotations:
+            if mcp_tool.annotations.read_only_hint:
+                return "read"
+            if mcp_tool.annotations.destructive_hint:
+                return "execute"
+            if mcp_tool.annotations.idempotent_hint:
+                return "edit"
+            if mcp_tool.annotations.open_world_hint:
+                return "execute"
+        
+        # Приоритет 2: Эвристика по имени
+        name = mcp_tool.name.lower()
+        if any(name.startswith(p) for p in ["read_", "get_", "list_", "fetch_"]):
+            return "read"
+        if any(name.startswith(p) for p in ["write_", "create_", "delete_", "remove_"]):
+            return "execute"
+        if any(name.startswith(p) for p in ["update_", "modify_", "set_"]):
+            return "edit"
+        
+        # Приоритет 3: Fallback
+        return "other"
+```
+
+### MCPToolExecutor
+
+Executor для MCP инструментов через ToolRegistry:
+
+```python
+class MCPToolExecutor(ToolExecutor):
+    @staticmethod
+    def is_mcp_tool(tool_name: str) -> bool:
+        return tool_name.startswith("mcp:")
+    
+    async def execute(self, session: SessionState, arguments: dict) -> ToolExecutionResult:
+        tool_name = arguments.get("tool_name", "")
+        mcp_arguments = {k: v for k, v in arguments.items() if k != "tool_name"}
+        return await self._mcp_manager.call_tool(tool_name, mcp_arguments)
+```
+
+### SessionRuntimeRegistry
+
+Отделяет runtime объекты (MCP manager) от сериализуемого SessionState:
+
+```python
+class SessionRuntimeRegistry:
+    async def get_or_create(self, session_id: str) -> SessionRuntimeState: ...
+    async def set_mcp_manager(self, session_id: str, mcp_manager: MCPManager) -> None: ...
+    async def remove(self, session_id: str) -> None:  # cleanup MCP subprocesses
+    async def cleanup(self) -> None:  # shutdown всех MCP при disconnect
+```
+
+**Зачем нужен:**
+- SessionState сохраняется в JSON storage
+- MCPManager содержит subprocesses и connections — не сериализуется
+- Решение: отдельный REQUEST-scoped реестр
+
+### Интеграция в LLMLoopStage
+
+```python
+class LLMLoopStage:
+    async def process(self, context: PromptContext) -> PromptContext:
+        mcp_manager = context.meta.get("mcp_manager")
+        
+        # MCP manager передаётся в run_loop
+        result = await self.run_loop(
+            session=context.session,
+            session_id=context.session_id,
+            agent_orchestrator=agent_orchestrator,
+            mcp_manager=mcp_manager,
+        )
+```
+
+### System Message с MCP информацией
+
+LLM получает информацию о подключённых MCP серверах:
+
+```
+You have access to the following MCP servers:
+- **filesystem** (5 tools): read_file, write_file, list_directory, ...
+- **github** (12 tools): list_repositories, create_issue, ...
 ```
 
 ## Storage Layer
@@ -606,14 +757,45 @@ async def test_session_lifecycle():
 ```python
 @pytest.mark.asyncio
 async def test_mcp_manager_add_server():
-    manager = MCPManager()
-    await manager.add_server("test", MCPServerConfig(command="echo", args=[]))
-    tools = await manager.get_tools()
+    manager = MCPManager("test_session")
+    config = MCPServerConfig(name="test", command="echo", args=["hello"])
+    tools = await manager.add_server(config)
     assert len(tools) >= 0
+    await manager.shutdown()
+
+@pytest.mark.asyncio
+async def test_mcp_tool_execution():
+    manager = MCPManager("test_session")
+    config = MCPServerConfig(
+        name="filesystem",
+        command="npx",
+        args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    )
+    await manager.add_server(config)
+    
+    result = await manager.call_tool(
+        "mcp:filesystem:read_file",
+        {"path": "/tmp/test.txt"}
+    )
+    assert result.success
+    await manager.shutdown()
+
+@pytest.mark.asyncio
+async def test_reconnect_with_backoff():
+    manager = MCPManager("test_session")
+    config = MCPServerConfig(
+        name="unreliable",
+        command="false",  # всегда error
+        max_retries=3,
+        initial_delay=0.1
+    )
+    with pytest.raises(MCPManagerError):
+        await manager.add_server(config)
 ```
 
 ## См. также
 
 - [Архитектура](01-architecture.md) — общая архитектура системы
 - [Обработчики протокола](04-protocol-handlers.md) — создание новых handlers
+- [MCP разработка](08-mcp-development.md) — полное руководство по MCP
 - [Тестирование](05-testing.md) — запуск и написание тестов

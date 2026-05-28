@@ -170,6 +170,8 @@ graph TB
     subgraph MCP["MCP Layer"]
         MM[MCPManager]
         MT[MCPToolAdapter]
+        TE[MCPToolExecutor]
+        SRR[SessionRuntimeRegistry]
     end
     
     subgraph Storage["Storage Layer"]
@@ -186,6 +188,8 @@ graph TB
     LL --> AO --> AG --> LLM
     LL --> TR --> FS & TE --> Bridge
     LL --> MM --> MT
+    LL --> TE
+    SRR --> MM
     AP --> SS
     PM --> GPS
 ```
@@ -254,16 +258,120 @@ graph TD
 
 ## MCP интеграция
 
-Модуль `server/mcp/` обеспечивает подключение внешних MCP-серверов:
+Модуль `server/mcp/` обеспечивает подключение внешних MCP-серверов для расширения инструментов агента.
 
-| Компонент | Описание |
-|-----------|----------|
-| `MCPClient` | Клиент для одного MCP-сервера с state machine |
-| `MCPManager` | Управление несколькими MCP-серверами на сессию |
-| `MCPToolAdapter` | Адаптация MCP инструментов к ACP ToolDefinition |
-| `StdioTransport` | Запуск MCP-серверов через stdio subprocess |
+```mermaid
+graph TB
+    subgraph "MCP Layer"
+        MM[MCPManager]
+        MC[MCPClient]
+        TA[MCPToolAdapter]
+        TE[MCPToolExecutor]
+    end
+    
+    subgraph "Transports"
+        STDIO[StdioTransport]
+        HTTP[HttpTransport]
+        SSE[SseTransport]
+    end
+    
+    subgraph "Runtime"
+        SRR[SessionRuntimeRegistry]
+        SRS[SessionRuntimeState]
+    end
+    
+    subgraph "Protocol"
+        LL[LLMLoopStage]
+        TR[ToolRegistry]
+    end
+    
+    LL -->|mcp_manager| MM
+    MM --> MC
+    MM --> TA
+    MM --> TE
+    MC --> STDIO & HTTP & SSE
+    SRR --> SRS
+    SRS --> MM
+    TE --> TR
+```
 
-**Именование MCP инструментов:** `mcp:server_id:tool_name` (namespace для избежания конфликтов)
+### Компоненты
+
+| Компонент | Файл | Описание |
+|-----------|------|----------|
+| `MCPClient` | `client.py` | Клиент для одного MCP-сервера с state machine (Created → Connecting → Initializing → Ready) |
+| `MCPManager` | `manager.py` | Управление несколькими MCP-серверами, auto-reconnect, health check |
+| `MCPToolAdapter` | `tool_adapter.py` | Адаптация MCP инструментов к ACP ToolDefinition, kind inference |
+| `MCPToolExecutor` | `executors/mcp_executor.py` | Executor для MCP инструментов через ToolRegistry |
+| `StdioTransport` | `transport.py` | Запуск MCP-серверов через stdio subprocess |
+| `HttpTransport` | `transport.py` | HTTP POST с JSON-RPC для удалённых серверов |
+| `SseTransport` | `transport.py` | Server-Sent Events (deprecated в MCP spec) |
+| `SessionRuntimeRegistry` | `session_runtime.py` | REQUEST-scoped реестр runtime объектов (отделяет MCP manager от SessionState) |
+
+### MCP модели данных
+
+| Модель | Описание |
+|--------|----------|
+| `MCPServerConfig` | Конфигурация сервера: type, command, args, url, headers, env, retry config |
+| `MCPTool` | Определение инструмента: name, description, inputSchema, annotations |
+| `MCPToolAnnotations` | Аннотации для kind inference: readOnlyHint, destructiveHint, idempotentHint, openWorldHint |
+| `MCPResource` | Ресурс MCP: uri, name, description, mimeType |
+| `MCPPrompt` | Промпт MCP: name, description, arguments |
+
+### Именование MCP инструментов
+
+`mcp:server_id:tool_name` — namespace для избежания конфликтов с встроенными инструментами.
+
+### Kind Inference
+
+Автоматическое определение типа MCP инструмента для системы разрешений:
+
+```mermaid
+graph TD
+    A[MCP Tool] --> B{Есть annotations?}
+    B -->|Да| C[ToolAnnotations]
+    B -->|Нет| D{Анализ имени}
+    
+    C -->|readOnlyHint=true| E[read]
+    C -->|destructiveHint=true| F[execute]
+    C -->|idempotentHint=true| G[edit]
+    C -->|openWorldHint=true| F
+    
+    D -->|read_*, get_*, list_*| E
+    D -->|write_*, create_*, delete_*| F
+    D -->|update_*, modify_*| G
+    D -->|Не определено| H[other]
+```
+
+### Auto-reconnect
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ready
+    Ready --> Connected: Сервер подключён
+    Connected --> Failure: Ошибка соединения
+    Failure --> Reconnecting: Запуск reconnect
+    Reconnecting --> Connected: Успешное подключение
+    Reconnecting --> Failed: Превышены попытки
+    Failed --> [*]
+    
+    note right of Reconnecting
+      Exponential backoff:
+      1s → 2s → 4s → 8s → 16s → 30s
+      + jitter 10%
+    end note
+```
+
+### SessionRuntimeRegistry
+
+Отделяет runtime объекты (MCP manager) от сериализуемого SessionState:
+
+- **Проблема:** SessionState сохраняется в JSON, но MCPManager содержит subprocesses
+- **Решение:** SessionRuntimeRegistry хранит MCP manager отдельно
+- **Скоуп:** REQUEST-scoped через Dishka
+- **Cleanup:** Автоматический shutdown MCP subprocesses при disconnect
+
+> **Подробная документация:** [MCP серверы (user guide)](../user-guide/14-mcp-servers.md) · [MCP разработка (dev guide)](../developer-guide/08-mcp-development.md)
 
 ## Маппинг имён инструментов
 

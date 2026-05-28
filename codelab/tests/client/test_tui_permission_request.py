@@ -330,9 +330,16 @@ def test_tool_kind_to_permission_type_mapping() -> None:
     assert _TOOL_KIND_TO_PERMISSION_TYPE["execute_command"] == "execute_command"
     assert _TOOL_KIND_TO_PERMISSION_TYPE["terminal"] == "execute_command"
 
-    # MCP доступ
-    assert _TOOL_KIND_TO_PERMISSION_TYPE["mcp"] == "mcp_access"
-    assert _TOOL_KIND_TO_PERMISSION_TYPE["mcp_access"] == "mcp_access"
+    # MCP инструменты теперь имеют inferred kind (read, edit, execute и т.д.)
+    # и маппятся на соответствующие permission-типы
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["read"] == "file_read"
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["edit"] == "file_write"
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["delete"] == "file_delete"
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["execute"] == "execute_command"
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["search"] == "file_read"
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["fetch"] == "execute_command"
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["move"] == "file_write"
+    assert _TOOL_KIND_TO_PERMISSION_TYPE["other"] == "unknown"
 
 
 def test_chat_view_permission_manager_default_widget_type(

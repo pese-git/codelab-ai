@@ -489,6 +489,12 @@ class WebSocketTransport:
                     tool_call_id=pending.tool_call_id,
                 )
             )
+        else:
+            self._conn_logger.debug(
+                "_finalize_outcome_and_send: no pending_tool_execution in outcome",
+                session_id=session_id,
+                method_name=method_name,
+            )
 
         await self._send_outcome(outcome, request_id=request_id)
 

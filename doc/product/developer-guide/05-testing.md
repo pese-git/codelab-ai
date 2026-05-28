@@ -137,7 +137,7 @@ async def test_e2e_text_content():
 | Agent | `test_agent_orchestrator.py`, `test_naive_agent.py` | LLM агент |
 | Tools | `test_tool_registry.py`, `test_filesystem_executor.py`, `test_terminal_executor.py` | Инструменты |
 | Storage | `test_storage_memory.py`, `test_storage_json_file.py` | Хранилище сессий |
-| MCP | `test_mcp_client.py`, `test_mcp_manager.py`, `test_mcp_tool_adapter.py` | MCP интеграция (27 тестов) |
+| MCP | `test_mcp_client.py`, `test_mcp_manager.py`, `test_mcp_tool_adapter.py`, `test_transport_http.py`, `test_manager_reconnect.py`, `test_client_notifications.py`, `test_client_resources_prompts.py`, `test_models_config.py`, `test_mcp_integration.py`, `test_mcp_executor.py`, `test_session_runtime.py` | MCP интеграция (150+ тестов) |
 | Content | `test_content_extraction.py`, `test_content_formatting.py`, `test_content_validator.py` | Content pipeline |
 | Permissions | `test_permission_manager.py`, `test_permission_flow.py`, `test_permission_policy_persistence.py` | Система разрешений (51 тест) |
 
@@ -278,6 +278,198 @@ open htmlcov/index.html
 ```
 
 **Целевое покрытие:** 85%+ для критических путей.
+
+## MCP тестирование
+
+### Категории MCP тестов
+
+| Категория | Файлы | Описание |
+|-----------|-------|----------|
+| Client | `test_mcp_client.py` | MCPClient lifecycle, initialize, tools |
+| Manager | `test_mcp_manager.py`, `test_manager_reconnect.py` | MCPManager, add/remove server, reconnect |
+| Transport | `test_transport_http.py` | HttpTransport, SseTransport, StdioTransport |
+| Models | `test_models_config.py` | MCPServerConfig validation, retry config |
+| Notifications | `test_client_notifications.py` | MCP notification handling |
+| Resources/Prompts | `test_client_resources_prompts.py` | list_resources, read_resource, list_prompts, get_prompt |
+| Tool Adapter | `test_mcp_tool_adapter.py` | adapt_tools, kind inference, namespaced names |
+| Executor | `test_mcp_executor.py` | MCPToolExecution |
+| Integration | `test_mcp_integration.py` | End-to-end MCP с реальным stdio сервером |
+| Runtime | `test_session_runtime.py` | SessionRuntimeRegistry lifecycle |
+
+### Unit тесты MCP
+
+```python
+@pytest.mark.asyncio
+async def test_mcp_client_lifecycle():
+    config = MCPServerConfig(
+        name="test",
+        command="echo",
+        args=["hello"]
+    )
+    client = MCPClient(config)
+    await client.connect()
+    await client.initialize()
+    tools = await client.list_tools()
+    await client.disconnect()
+    assert client.state == MCPClientState.CLOSED
+
+@pytest.mark.asyncio
+async def test_mcp_tool_adapter_kind_inference():
+    adapter = MCPToolAdapter("test", mock_client)
+    
+    # ToolAnnotations
+    tool = MCPTool(
+        name="read_data",
+        annotations=MCPToolAnnotations(read_only_hint=True)
+    )
+    definition = adapter.adapt_tools([tool])[0]
+    assert definition.kind == "read"
+    
+    # Name heuristic
+    tool = MCPTool(name="create_file")
+    definition = adapter.adapt_tools([tool])[0]
+    assert definition.kind == "execute"
+    
+    # Fallback
+    tool = MCPTool(name="unknown")
+    definition = adapter.adapt_tools([tool])[0]
+    assert definition.kind == "other"
+
+@pytest.mark.asyncio
+async def test_mcp_tool_adapter_namespaced_name():
+    name = MCPToolAdapter.create_namespaced_name("filesystem", "read_file")
+    assert name == "mcp:filesystem:read_file"
+    
+    parsed = MCPToolAdapter.parse_namespaced_name(name)
+    assert parsed == ("mcp", "filesystem", "read_file")
+
+@pytest.mark.asyncio
+async def test_mcp_config_validation():
+    # Stdio требует command
+    with pytest.raises(ValueError):
+        MCPServerConfig(name="test", type="stdio")
+    
+    # HTTP требует url
+    with pytest.raises(ValueError):
+        MCPServerConfig(name="test", type="http")
+    
+    # Valid config
+    config = MCPServerConfig(name="test", type="http", url="http://localhost")
+    assert config.type == "http"
+```
+
+### Integration тесты MCP
+
+```python
+@pytest.mark.asyncio
+async def test_mcp_manager_with_real_stdio_server():
+    manager = MCPManager("test_session")
+    config = MCPServerConfig(
+        name="filesystem",
+        command="npx",
+        args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    )
+    tools = await manager.add_server(config)
+    assert len(tools) > 0
+    
+    result = await manager.call_tool(
+        "mcp:filesystem:read_file",
+        {"path": "/tmp/test.txt"}
+    )
+    assert result.success
+    await manager.shutdown()
+
+@pytest.mark.asyncio
+async def test_mcp_reconnect_with_backoff():
+    manager = MCPManager("test_session")
+    config = MCPServerConfig(
+        name="unreliable",
+        command="false",
+        max_retries=3,
+        initial_delay=0.1
+    )
+    with pytest.raises(MCPManagerError):
+        await manager.add_server(config)
+
+@pytest.mark.asyncio
+async def test_session_runtime_registry():
+    registry = SessionRuntimeRegistry()
+    
+    state = await registry.get_or_create("session_123")
+    assert state.mcp_manager is None
+    
+    manager = MCPManager("session_123")
+    await registry.set_mcp_manager("session_123", manager)
+    
+    state = await registry.get("session_123")
+    assert state.mcp_manager is manager
+    
+    await registry.remove("session_123")
+    assert await registry.get("session_123") is None
+```
+
+### Mock MCP сервер для тестов
+
+```python
+class MockMCPServer:
+    """Mock MCP сервер для интеграционных тестов."""
+    
+    async def handle_stdio(self):
+        while True:
+            line = await asyncio.stdin.readline()
+            if not line:
+                break
+            request = json.loads(line)
+            response = self._handle_request(request)
+            print(json.dumps(response), flush=True)
+    
+    def _handle_request(self, request):
+        method = request.get("method")
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "mock", "version": "1.0"}
+                }
+            }
+        elif method == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": request["id"],
+                "result": {
+                    "tools": [
+                        {
+                            "name": "echo",
+                            "description": "Echo input",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {"text": {"type": "string"}}
+                            }
+                        }
+                    ]
+                }
+            }
+```
+
+### Запуск MCP тестов
+
+```bash
+# Все MCP тесты
+uv run python -m pytest tests/server/mcp/ -v
+
+# Конкретная категория
+uv run python -m pytest tests/server/mcp/test_transport_http.py -v
+uv run python -m pytest tests/server/mcp/test_manager_reconnect.py -v
+
+# Integration тесты (могут быть медленными)
+uv run python -m pytest tests/server/mcp/test_mcp_integration.py -v
+
+# С покрытием
+uv run python -m pytest tests/server/mcp/ --cov=codelab.server.mcp
+```
 
 ## См. также
 

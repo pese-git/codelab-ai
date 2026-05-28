@@ -27,6 +27,7 @@ class TUIConfig:
     host: str = "127.0.0.1"
     port: int = 8765
     theme: TUITheme = "light"
+    receive_timeout: float = 60.0
 
 
 class TUIConfigStore:
@@ -61,6 +62,8 @@ class TUIConfigStore:
         *,
         cli_theme: TUITheme | None = None,
         env_theme: TUITheme | None = None,
+        cli_receive_timeout: float | None = None,
+        env_receive_timeout: float | None = None,
     ) -> TUIConfig:
         """Загружает конфигурацию из всех источников с учётом приоритета.
 
@@ -69,6 +72,8 @@ class TUIConfigStore:
         Args:
             cli_theme: Тема из CLI флага --theme (наивысший приоритет)
             env_theme: Тема из CODELAB_THEME env variable
+            cli_receive_timeout: Таймаут из CLI флага --receive-timeout
+            env_receive_timeout: Таймаут из CODELAB_RECEIVE_TIMEOUT env variable
 
         Returns:
             Объединённая конфигурация с учётом приоритета источников.
@@ -83,19 +88,25 @@ class TUIConfigStore:
         merged_host = toml_config.get("host", json_config.host)
         merged_port = toml_config.get("port", json_config.port)
         merged_theme: TUITheme = toml_config.get("theme", json_config.theme)
+        merged_timeout: float = toml_config.get("receive_timeout", json_config.receive_timeout)
 
         # Env variable переопределяет TOML
         if env_theme is not None:
             merged_theme = env_theme
+        if env_receive_timeout is not None:
+            merged_timeout = env_receive_timeout
 
         # CLI flag переопределяет всё
         if cli_theme is not None:
             merged_theme = cli_theme
+        if cli_receive_timeout is not None:
+            merged_timeout = cli_receive_timeout
 
         return TUIConfig(
             host=merged_host,
             port=merged_port,
             theme=merged_theme,
+            receive_timeout=merged_timeout,
         )
 
     def save(self, config: TUIConfig) -> None:
@@ -128,15 +139,22 @@ class TUIConfigStore:
         host = payload.get("host")
         port = payload.get("port")
         theme = payload.get("theme")
+        receive_timeout = payload.get("receive_timeout")
 
         normalized_host = host if isinstance(host, str) and host else "127.0.0.1"
         normalized_port = port if isinstance(port, int) and port > 0 else 8765
         normalized_theme: TUITheme = "dark" if theme == "dark" else "light"
+        normalized_timeout = (
+            receive_timeout
+            if isinstance(receive_timeout, (int, float)) and receive_timeout > 0
+            else 60.0
+        )
 
         return TUIConfig(
             host=normalized_host,
             port=normalized_port,
             theme=normalized_theme,
+            receive_timeout=normalized_timeout,
         )
 
     def _load_from_toml_chain(self) -> dict[str, Any]:
@@ -206,7 +224,7 @@ class TUIConfigStore:
             toml_tui: Сырые данные из TOML [tui] секции.
 
         Returns:
-            Dict с нормализованными ключами host, port, theme.
+            Dict с нормализованными ключами host, port, theme, receive_timeout.
         """
         result: dict[str, Any] = {}
 
@@ -227,6 +245,11 @@ class TUIConfigStore:
         elif theme is not None:
             logger.warning("invalid_toml_theme_value", theme=theme, fallback="light")
 
+        # Receive timeout
+        timeout = toml_tui.get("receive_timeout")
+        if isinstance(timeout, (int, float)) and timeout > 0:
+            result["receive_timeout"] = float(timeout)
+
         return result
 
 
@@ -235,30 +258,51 @@ def resolve_tui_connection(
     host: str | None = None,
     port: int | None = None,
     theme: TUITheme | None = None,
-) -> tuple[str, int, TUITheme]:
-    """Возвращает host/port/theme запуска TUI с fallback на сохранённый конфиг.
+    receive_timeout: float | None = None,
+) -> tuple[str, int, TUITheme, float]:
+    """Возвращает host/port/theme/receive_timeout запуска TUI с fallback на сохранённый конфиг.
 
     Args:
         host: Адрес сервера из CLI (если None, используется конфиг)
         port: Порт сервера из CLI (если None, используется конфиг)
         theme: Тема из CLI флага --theme (если None, используется конфиг)
+        receive_timeout: Таймаут из CLI флага --receive-timeout (если None, используется конфиг)
 
     Returns:
-        Кортеж (host, port, theme) с учётом приоритета источников.
+        Кортеж (host, port, theme, receive_timeout) с учётом приоритета источников.
     """
     config_store = TUIConfigStore()
 
-    # Проверяем env variable
+    # Проверяем env variables
     env_theme: TUITheme | None = None
     env_theme_value = os.getenv("CODELAB_THEME")
     if env_theme_value in ("light", "dark"):
         env_theme = cast(TUITheme, env_theme_value)
 
+    env_timeout: float | None = None
+    env_timeout_value = os.getenv("CODELAB_RECEIVE_TIMEOUT")
+    if env_timeout_value:
+        try:
+            parsed = float(env_timeout_value)
+            if parsed > 0:
+                env_timeout = parsed
+        except ValueError:
+            logger.warning(
+                "invalid_env_timeout",
+                value=env_timeout_value,
+                fallback=60.0,
+            )
+
     # Загружаем с приоритетом
-    config = config_store.load_with_priority(cli_theme=theme, env_theme=env_theme)
+    config = config_store.load_with_priority(
+        cli_theme=theme,
+        env_theme=env_theme,
+        cli_receive_timeout=receive_timeout,
+        env_receive_timeout=env_timeout,
+    )
 
     # Host и port из CLI имеют приоритет над конфигом
     resolved_host = host if isinstance(host, str) and host else config.host
     resolved_port = port if isinstance(port, int) and port > 0 else config.port
 
-    return resolved_host, resolved_port, config.theme
+    return resolved_host, resolved_port, config.theme, config.receive_timeout

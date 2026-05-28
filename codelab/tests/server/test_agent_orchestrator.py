@@ -127,9 +127,28 @@ def test_build_history_empty(
     orchestrator: AgentOrchestrator,
     session_state: SessionState,
 ) -> None:
-    """_build_history на пустой истории возвращает []."""
+    """_build_history на пустой истории возвращает [] (без system message)."""
     messages = orchestrator._build_history(session_state)
     assert messages == []
+
+
+def test_build_history_with_system_prompt(
+    config: OrchestratorConfig,
+    llm_provider: MockLLMProvider,
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """_build_history включает system message при наличии system_prompt."""
+    config.system_prompt = "You are a helpful assistant."
+    orc = AgentOrchestrator(
+        config=config,
+        llm_provider=llm_provider,
+        tool_registry=tool_registry,
+    )
+    messages = orc._build_history(session_state)
+    assert len(messages) == 1
+    assert messages[0].role == "system"
+    assert messages[0].content == "You are a helpful assistant."
 
 
 def test_build_history_user_and_assistant(
@@ -143,11 +162,64 @@ def test_build_history_user_and_assistant(
     ]
     messages = orchestrator._build_history(session_state)
 
+    # System message не добавляется (нет system_prompt и MCP)
     assert len(messages) == 2
     assert messages[0].role == "user"
     assert messages[0].content == "Привет"
     assert messages[1].role == "assistant"
     assert messages[1].content == "Привет! Чем могу помочь?"
+
+
+def test_build_history_with_mcp_info(
+    config: OrchestratorConfig,
+    llm_provider: MockLLMProvider,
+    tool_registry: SimpleToolRegistry,
+    session_state: SessionState,
+) -> None:
+    """_build_history включает MCP информацию в system message."""
+    from unittest.mock import MagicMock
+
+    from codelab.server.mcp.models import MCPTool, MCPToolInputSchema
+    from codelab.server.mcp.tool_adapter import MCPToolAdapter
+
+    # Создаём mock MCPManager
+    mock_mcp_manager = MagicMock()
+    mock_mcp_manager.server_count = 1
+    mock_mcp_manager.server_ids = ["test-server"]
+
+    # Создаём реальные MCP инструменты
+    mock_mcp_tools = [
+        MCPTool(
+            name="read_file",
+            description="Reads a file",
+            input_schema=MCPToolInputSchema(),
+        ),
+        MCPTool(
+            name="write_file",
+            description="Writes a file",
+            input_schema=MCPToolInputSchema(),
+        ),
+    ]
+    mock_mcp_manager.get_tools_for_server.return_value = [
+        MCPToolAdapter("test-server", MagicMock()).mcp_tool_to_definition(t)
+        for t in mock_mcp_tools
+    ]
+
+    session_state.mcp_manager = mock_mcp_manager
+
+    orc = AgentOrchestrator(
+        config=config,
+        llm_provider=llm_provider,
+        tool_registry=tool_registry,
+    )
+    messages = orc._build_history(session_state)
+
+    assert len(messages) == 1
+    assert messages[0].role == "system"
+    assert "MCP (Model Context Protocol) servers" in messages[0].content
+    assert "test-server" in messages[0].content
+    assert "read_file" in messages[0].content
+    assert "write_file" in messages[0].content
 
 
 def test_build_history_with_tool_calls(

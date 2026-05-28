@@ -10,15 +10,12 @@ tool calls, и других компонентов протокола.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from ..messages import ACPMessage, JsonRpcId
 from ..models import AvailableCommand, HistoryMessage, PlanStep
-
-if TYPE_CHECKING:
-    from ..mcp.manager import MCPManager
 
 
 class SessionState(BaseModel):
@@ -79,11 +76,6 @@ class SessionState(BaseModel):
     # История событий: session/update, permission requests и т.д.
     # Используется для полного восстановления истории при перезагрузке сессии.
     events_history: list[dict[str, Any]] = Field(default_factory=list)
-    # MCPManager для управления подключёнными MCP серверами.
-    # Используется для интеграции с внешними MCP серверами и их инструментами.
-    # Runtime-поле: не сериализуется, пересоздаётся при session/load.
-    # Строковая аннотация т.к. MCPManager импортируется только под TYPE_CHECKING.
-    mcp_manager: "MCPManager | None" = Field(default=None, exclude=True)  # noqa: UP037
 
     @field_serializer("cancelled_permission_requests", "cancelled_client_rpc_requests")
     def serialize_set(self, value: set) -> list:
@@ -317,15 +309,9 @@ class ProtocolOutcome(BaseModel):
 
 
 # Разрешаем forward references для Pydantic v2.
-# SessionState ссылается на ActiveTurnState, PendingClientRequestState и MCPManager,
-# которые определены ниже или импортированы только под TYPE_CHECKING.
 def _rebuild_models() -> None:
     """Разрешает forward references после определения всех моделей."""
-    # MCPManager нужен для model_rebuild, но импортируется только под TYPE_CHECKING.
-    # Импортируем здесь, чтобы избежать циклических зависимостей.
-    from ..mcp.manager import MCPManager  # noqa: F401
-
-    SessionState.model_rebuild(_types_namespace={"MCPManager": MCPManager})
+    SessionState.model_rebuild()
 
 
 _rebuild_models()

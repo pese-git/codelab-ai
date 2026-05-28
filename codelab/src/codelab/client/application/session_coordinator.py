@@ -83,6 +83,7 @@ class SessionCoordinator:
         server_port: int,
         cwd: str | None = None,
         client_capabilities: dict[str, Any] | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Создает новую сессию на сервере.
 
@@ -91,6 +92,7 @@ class SessionCoordinator:
             server_port: Порт сервера
             cwd: Абсолютный путь рабочей директории (если None, используется текущая директория)
             client_capabilities: Возможности клиента (опционально)
+            mcp_servers: Список MCP-серверов из TOML конфигурации
 
         Возвращает:
             Объект созданной сессии с ID и capabilities
@@ -102,6 +104,7 @@ class SessionCoordinator:
             server_port=server_port,
             cwd=session_cwd,
             client_capabilities=client_capabilities,
+            mcp_servers=mcp_servers,
         )
 
         self._logger.info("creating_session")

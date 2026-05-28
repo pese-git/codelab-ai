@@ -19,6 +19,7 @@ from codelab.server.protocol.handlers.state_manager import StateManager
 from codelab.server.protocol.handlers.tool_call_handler import ToolCallHandler
 from codelab.server.protocol.state import LLMLoopResult, SessionState, ToolResult
 from codelab.server.tools.base import ToolRegistry
+from codelab.server.tools.executors.mcp_executor import MCPToolExecutor
 from codelab.server.tools.mapping import llm_name_to_acp_name
 
 from ..base import PromptStage
@@ -82,11 +83,14 @@ class LLMLoopStage(PromptStage):
             # context.stop_reason остаётся тем, что было установлено ранее (по умолчанию "end_turn")
             return context
 
+        mcp_manager = self._get_mcp_manager(context)
+
         result = await self.run_loop(
             session=context.session,
             session_id=context.session_id,
             agent_orchestrator=agent_orchestrator,
             initial_prompt_text=context.raw_text,
+            mcp_manager=mcp_manager,
         )
 
         context.notifications.extend(result.notifications)
@@ -98,6 +102,10 @@ class LLMLoopStage(PromptStage):
 
         return context
 
+    def _get_mcp_manager(self, context: PromptContext):
+        """Получить MCP manager из PromptContext.meta."""
+        return context.meta.get("mcp_manager")
+
     async def run_loop(
         self,
         session: SessionState,
@@ -105,6 +113,7 @@ class LLMLoopStage(PromptStage):
         agent_orchestrator: AgentOrchestrator,
         initial_prompt_text: str | None = None,
         tool_results: list[ToolResult] | None = None,
+        mcp_manager: Any | None = None,
     ) -> LLMLoopResult:
         """Запустить LLM loop. Используется как из process(), так и из execute_pending_tool."""
         return await self._run_llm_loop(
@@ -113,6 +122,7 @@ class LLMLoopStage(PromptStage):
             agent_orchestrator=agent_orchestrator,
             initial_prompt_text=initial_prompt_text,
             tool_results=tool_results,
+            mcp_manager=mcp_manager,
         )
 
     async def execute_pending_tool(
@@ -121,6 +131,7 @@ class LLMLoopStage(PromptStage):
         session_id: str,
         tool_call_id: str,
         agent_orchestrator: AgentOrchestrator,
+        mcp_manager: Any | None = None,
     ) -> LLMLoopResult:
         """Выполняет pending tool после permission approval и продолжает LLM loop."""
         notifications: list[ACPMessage] = []
@@ -155,9 +166,18 @@ class LLMLoopStage(PromptStage):
         )
 
         try:
-            result = await self._tool_registry.execute_tool(
-                session_id, tool_name, tool_arguments, session=session
-            )
+            # MCP инструменты выполняются через MCPExecutor
+            if MCPToolExecutor.is_mcp_tool(tool_name):
+                if mcp_manager is None:
+                    raise RuntimeError("MCP manager not available for session")
+                mcp_executor = MCPToolExecutor(mcp_manager)
+                result = await mcp_executor.execute_tool(
+                    session_id, tool_name, tool_arguments, session=session
+                )
+            else:
+                result = await self._tool_registry.execute_tool(
+                    session_id, tool_name, tool_arguments, session=session
+                )
 
             extracted_content = await self._content_extractor.extract_from_result(
                 tool_call_id, result
@@ -275,6 +295,7 @@ class LLMLoopStage(PromptStage):
         agent_orchestrator: AgentOrchestrator,
         initial_prompt_text: str | None = None,
         tool_results: list[ToolResult] | None = None,
+        mcp_manager: Any | None = None,
     ) -> LLMLoopResult:
         notifications: list[ACPMessage] = []
         max_iterations = 10
@@ -292,11 +313,11 @@ class LLMLoopStage(PromptStage):
                 # Запускаем agent call как задачу для возможности отмены
                 if iteration == 1 and initial_prompt_text:
                     agent_task = asyncio.create_task(
-                        agent_orchestrator.process_prompt(session, initial_prompt_text)
+                        agent_orchestrator.process_prompt(session, initial_prompt_text, mcp_manager)
                     )
                 else:
                     agent_task = asyncio.create_task(
-                        agent_orchestrator.continue_with_tool_results(session, tool_results or [])
+                        agent_orchestrator.continue_with_tool_results(session, tool_results or [], mcp_manager)
                     )
 
                 # Мониторим флаг отмены параллельно с выполнением задачи
@@ -365,7 +386,7 @@ class LLMLoopStage(PromptStage):
             })
 
             loop_result = await self._process_tool_calls_for_llm_loop(
-                session, session_id, agent_response.tool_calls, notifications
+                session, session_id, agent_response.tool_calls, notifications, mcp_manager
             )
 
             if loop_result.pending_permission:
@@ -392,6 +413,7 @@ class LLMLoopStage(PromptStage):
         session_id: str,
         tool_calls: list[Any],
         notifications: list[ACPMessage],
+        mcp_manager: Any | None = None,
     ) -> LLMLoopResult:
         tool_results: list[ToolResult] = []
 
@@ -411,7 +433,12 @@ class LLMLoopStage(PromptStage):
             # Конвертируем LLM имя обратно в ACP формат
             acp_tool_name = llm_name_to_acp_name(tool_name)
 
+            # Определяем тип инструмента
+            # MCP инструменты теперь имеют inferred kind (read, edit, execute и т.д.)
+            # вместо отдельного kind="mcp"
             tool_kind = "other"
+            is_mcp = MCPToolExecutor.is_mcp_tool(acp_tool_name)
+
             tool_definition = self._tool_registry.get(acp_tool_name)
             if tool_definition is not None:
                 tool_kind = tool_definition.kind
@@ -435,7 +462,10 @@ class LLMLoopStage(PromptStage):
                 session=session, tool_call_id=tool_call_id, title=acp_tool_name, kind=tool_kind, status="pending"
             )
 
-            if tool_definition is not None and not tool_definition.requires_permission:
+            # MCP инструменты всегда требуют разрешения (по умолчанию)
+            if is_mcp:
+                decision = await self._decide_tool_execution(session, tool_kind)
+            elif tool_definition is not None and not tool_definition.requires_permission:
                 decision = "allow"
             else:
                 decision = await self._decide_tool_execution(session, tool_kind)
@@ -451,6 +481,14 @@ class LLMLoopStage(PromptStage):
                     if session.active_turn:
                         session.active_turn.phase = "awaiting_permission"
                         session.active_turn.permission_tool_call_id = tool_call_id
+                        logger.debug(
+                            "permission request built and active_turn updated",
+                            session_id=session_id,
+                            tool_call_id=tool_call_id,
+                            permission_request_id=session.active_turn.permission_request_id,
+                            permission_msg_id=permission_msg.id,
+                            active_turn_phase=session.active_turn.phase,
+                        )
 
                 logger.debug("permission request sent, pausing llm loop", session_id=session_id, tool_call_id=tool_call_id)
                 return LLMLoopResult(tool_results=tool_results, pending_permission=True)
@@ -487,9 +525,18 @@ class LLMLoopStage(PromptStage):
                     session=session, tool_call_id=tool_call_id, status="in_progress"
                 )
 
-                result = await self._tool_registry.execute_tool(
-                    session_id, acp_tool_name, tool_arguments, session=session
-                )
+                # MCP инструменты выполняются через MCPExecutor
+                if is_mcp:
+                    if mcp_manager is None:
+                        raise RuntimeError("MCP manager not available for session")
+                    mcp_executor = MCPToolExecutor(mcp_manager)
+                    result = await mcp_executor.execute_tool(
+                        session_id, acp_tool_name, tool_arguments, session=session
+                    )
+                else:
+                    result = await self._tool_registry.execute_tool(
+                        session_id, acp_tool_name, tool_arguments, session=session
+                    )
 
                 extracted_content = await self._content_extractor.extract_from_result(tool_call_id, result)
 

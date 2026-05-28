@@ -21,6 +21,7 @@ from textual.app import App, ComposeResult
 from codelab.client.application.session_coordinator import SessionCoordinator
 from codelab.client.domain.services import TransportService
 from codelab.client.infrastructure.container_factory import create_client_container
+from codelab.client.infrastructure.mcp_config_loader import MCPConfigLoader
 from codelab.client.infrastructure.services.acp_transport_service import ACPTransportService
 from codelab.client.messages import PermissionOption, PermissionToolCall
 from codelab.client.presentation.chat_view_model import ChatViewModel
@@ -105,6 +106,7 @@ class ACPClientApp(App[None]):
         stdio_command: str | None = None,
         stdio_args: list[str] | None = None,
         theme: str | None = None,
+        receive_timeout: float = 60.0,
     ) -> None:
         """Инициализирует приложение с Clean Architecture.
 
@@ -119,6 +121,7 @@ class ACPClientApp(App[None]):
             stdio_command: Команда для запуска агента (для stdio режима)
             stdio_args: Аргументы команды (для stdio режима)
             theme: Тема интерфейса ("light" или "dark", если None — из конфига)
+            receive_timeout: Таймаут ожидания сообщения от сервера (секунды)
         """
         super().__init__()
         self._host = host
@@ -134,6 +137,21 @@ class ACPClientApp(App[None]):
         self._cwd = cwd
         self._config_store = TUIConfigStore()
         self._app_logger = structlog.get_logger("acp_client.tui.app")
+
+        # Загружаем MCP серверы из TOML конфигурации
+        self._mcp_servers: list[dict[str, Any]] = []
+        try:
+            mcp_loader = MCPConfigLoader(cwd=Path(cwd))
+            self._mcp_servers = mcp_loader.load_mcp_servers()
+            self._app_logger.info(
+                "mcp_servers_loaded_from_toml",
+                count=len(self._mcp_servers),
+            )
+        except Exception as e:
+            self._app_logger.warning(
+                "failed_to_load_mcp_servers",
+                error=str(e),
+            )
 
         # ThemeManager для переключения тем
         self._theme_manager = ThemeManager(app=self)
@@ -166,6 +184,8 @@ class ACPClientApp(App[None]):
                 transport_mode=transport_mode,
                 stdio_command=stdio_command,
                 stdio_args=stdio_args,
+                mcp_servers=self._mcp_servers,
+                receive_timeout=receive_timeout,
             )
             self._app_logger.info("di_container_built_successfully", cwd=cwd)
         except Exception as e:
@@ -441,12 +461,13 @@ class ACPClientApp(App[None]):
     def action_new_session(self) -> None:
         """Создает новую сессию по горячей клавише Ctrl+N."""
         self._app_logger.info("new_session_requested", cwd=self._cwd)
-        # Передаем cwd при создании новой сессии для инициализации рабочей директории
+        # Передаем cwd и MCP серверы при создании новой сессии
         self.run_worker(
             self._session_vm.create_session_cmd.execute(
                 self._host,
                 self._port,
                 cwd=self._cwd,
+                mcp_servers=self._mcp_servers,
             ),
             exclusive=False,
         )
@@ -745,7 +766,7 @@ class ACPClientApp(App[None]):
                     self._host,
                     self._port,
                     cwd=self._cwd,
-                    mcp_servers=[],
+                    mcp_servers=self._mcp_servers,
                 )
                 replay_updates = loaded.get("replay_updates", [])
                 if isinstance(replay_updates, list):
@@ -974,6 +995,7 @@ def run_tui_app(
     stdio_command: str | None = None,
     stdio_args: list[str] | None = None,
     theme: str | None = None,
+    receive_timeout: float | None = None,
 ) -> None:
     """Запускает TUI приложение с параметрами подключения и рабочей директории.
 
@@ -986,9 +1008,11 @@ def run_tui_app(
         stdio_command: Команда для запуска агента (для stdio режима)
         stdio_args: Аргументы команды (для stdio режима)
         theme: Тема интерфейса ("light" или "dark", если None — из конфига)
+        receive_timeout: Таймаут ожидания сообщения от сервера (секунды)
     """
-    resolved_host, resolved_port, resolved_theme = resolve_tui_connection(
-        host=host, port=port, theme=cast(TUITheme, theme) if theme in ("light", "dark") else None
+    resolved_host, resolved_port, resolved_theme, resolved_timeout = resolve_tui_connection(
+        host=host, port=port, theme=cast(TUITheme, theme) if theme in ("light", "dark") else None,
+        receive_timeout=receive_timeout,
     )
     app = ACPClientApp(
         host=resolved_host,
@@ -999,5 +1023,6 @@ def run_tui_app(
         stdio_command=stdio_command,
         stdio_args=stdio_args,
         theme=resolved_theme,
+        receive_timeout=resolved_timeout,
     )
     app.run()

@@ -25,6 +25,7 @@ from .handlers import (
 )
 from .pending_registry import PendingRequestRegistry
 from .session_factory import SessionFactory
+from .session_runtime import SessionRuntimeRegistry
 from .state import (
     ClientRuntimeCapabilities,
     LLMLoopResult,
@@ -89,6 +90,7 @@ class ACPProtocol:
         send_callback: Callable[[ACPMessage], Awaitable[None]] | None = None,
         llm_registry: LLMProviderRegistry | None = None,
         config_option_builder: ConfigOptionBuilder | None = None,
+        runtime_registry: SessionRuntimeRegistry | None = None,
     ) -> None:
         """Инициализирует протокол и хранилище сессий.
 
@@ -105,6 +107,7 @@ class ACPProtocol:
             send_callback: Callback для отправки сообщений транспортом (опционально).
             llm_registry: Реестр LLM провайдеров для dynamic config options (опционально).
             config_option_builder: Билдер config options из Registry (опционально).
+            runtime_registry: Реестр runtime-состояний сессий (опционально).
 
         Пример использования:
             protocol = ACPProtocol()
@@ -184,6 +187,9 @@ class ACPProtocol:
         # LLM Registry и ConfigOptionBuilder для dynamic config options
         self._llm_registry = llm_registry
         self._config_option_builder = config_option_builder
+
+        # Реестр runtime-состояний сессий (REQUEST-scoped)
+        self._runtime_registry = runtime_registry or SessionRuntimeRegistry()
 
         # Config specs — строятся динамически из Registry если доступен
         self._config_specs: dict[str, dict[str, Any]] = self._build_config_specs()
@@ -386,6 +392,10 @@ class ACPProtocol:
             for notification in llm_result.notifications:
                 await self._send_message(notification)
 
+            # Сессия уже сохранена в execute_pending_tool() —
+            # там save_session вызывается после orchestrator.execute_pending_tool(),
+            # поэтому здесь в in-memory session актуальный permission_request_id.
+
             # Если LLM loop снова ожидает permission — просто выходим
             if llm_result.pending_permission:
                 logger.debug(
@@ -472,7 +482,14 @@ class ACPProtocol:
         """
 
         if message.id is None:
+            logger.debug("handle_client_response: ignoring message with no id")
             return ProtocolOutcome()
+
+        logger.debug(
+            "handle_client_response: routing response",
+            request_id=message.id,
+            has_result=message.result is not None,
+        )
 
         resolved_client_rpc = await self._resolve_pending_client_rpc_response(
             request_id=message.id,
@@ -482,6 +499,10 @@ class ACPProtocol:
             else None,
         )
         if resolved_client_rpc is not None:
+            logger.debug(
+                "handle_client_response: resolved as pending client RPC",
+                request_id=message.id,
+            )
             return resolved_client_rpc
 
         if self._client_rpc_service is not None and self._client_rpc_service.has_pending_request(
@@ -499,16 +520,36 @@ class ACPProtocol:
 
         if await permissions.consume_cancelled_client_rpc_response(message.id, self._storage):
             # Late response на отмененный agent->client RPC считаем no-op.
+            logger.debug(
+                "handle_client_response: consumed cancelled client RPC response",
+                request_id=message.id,
+            )
             return ProtocolOutcome()
 
         if await permissions.consume_cancelled_permission_response(message.id, self._storage):
             # Late response на уже отмененный permission-request считаем
             # корректно обработанным no-op, чтобы избежать race-эффектов.
+            logger.debug(
+                "handle_client_response: consumed cancelled permission response",
+                request_id=message.id,
+            )
             return ProtocolOutcome()
 
+        logger.debug(
+            "handle_client_response: attempting to resolve permission response",
+            request_id=message.id,
+        )
         resolved = await self._resolve_permission_response(message.id, message.result)
         if resolved is None:
+            logger.debug(
+                "handle_client_response: _resolve_permission_response returned None",
+                request_id=message.id,
+            )
             return ProtocolOutcome()
+        logger.debug(
+            "handle_client_response: permission response resolved successfully",
+            request_id=message.id,
+        )
         return resolved
 
     async def _resolve_pending_client_rpc_response(
@@ -553,12 +594,32 @@ class ACPProtocol:
             )
         """
 
+        logger.debug(
+            "_resolve_permission_response: searching for session",
+            permission_request_id=permission_request_id,
+        )
         session = await permissions.find_session_by_permission_request_id(
             permission_request_id, self._storage
         )
         if session is None:
+            logger.debug(
+                "_resolve_permission_response: session not found for permission_request_id",
+                permission_request_id=permission_request_id,
+            )
             return None
 
+        logger.debug(
+            "_resolve_permission_response: session found, resolving",
+            permission_request_id=permission_request_id,
+            session_id=session.session_id,
+            active_turn_exists=session.active_turn is not None,
+            active_turn_perm_request_id=(
+                session.active_turn.permission_request_id if session.active_turn else None
+            ),
+            active_turn_perm_tool_call_id=(
+                session.active_turn.permission_tool_call_id if session.active_turn else None
+            ),
+        )
         return prompt.resolve_permission_response_impl(
             session=session,
             permission_request_id=permission_request_id,
@@ -851,17 +912,32 @@ class ACPProtocol:
         # и блокирует новые запросы. Новый turn создаст свой active_turn.
         session.active_turn = None
 
+        # Получить MCP manager из registry
+        mcp_manager = None
+        runtime = await self._runtime_registry.get(session.session_id)
+        if runtime:
+            mcp_manager = runtime.mcp_manager
+
         outcome = await orchestrator.handle_prompt(
             request_id=message.id,
             params=params,
             session=session,
             storage=self._storage,
             agent_orchestrator=self._agent_orchestrator,  # type: ignore[arg-type]
+            mcp_manager=mcp_manager,
         )
 
         # Сохраняем сессию (критично для permission flow)
         try:
             await self._storage.save_session(session)
+            logger.debug(
+                "session saved after prompt",
+                session_id=session_id,
+                active_turn_exists=session.active_turn is not None,
+                active_turn_perm_request_id=(
+                    session.active_turn.permission_request_id if session.active_turn else None
+                ),
+            )
         except Exception as e:
             logger.error(
                 "failed_to_save_session_after_prompt",
@@ -985,8 +1061,15 @@ class ACPProtocol:
         Вызывается из session/new и session/load.
         """
         mcp_servers = params.get("mcpServers", [])
-        if mcp_servers and isinstance(mcp_servers, list):
-            await self._initialize_mcp_servers(session_state, mcp_servers)
+        if not mcp_servers or not isinstance(mcp_servers, list):
+            return
+
+        # Проверить есть ли уже MCP в registry
+        runtime = await self._runtime_registry.get(session_state.session_id)
+        if runtime and runtime.mcp_manager is not None:
+            return  # Уже инициализирован
+
+        await self._initialize_mcp_servers(session_state, mcp_servers)
 
     async def _handle_permission_response(
         self,
@@ -1147,6 +1230,12 @@ class ACPProtocol:
             )
             return LLMLoopResult(notifications=[], stop_reason="end_turn")
 
+        # Получить MCP manager из runtime registry
+        mcp_manager = None
+        runtime = await self._runtime_registry.get(session_id)
+        if runtime:
+            mcp_manager = runtime.mcp_manager
+
         # Получить или создать PromptOrchestrator (переиспользуется)
         orchestrator = await self._get_prompt_orchestrator()
         if orchestrator is None:
@@ -1157,12 +1246,36 @@ class ACPProtocol:
             )
             return LLMLoopResult(notifications=[], stop_reason="end_turn")
 
-        return await orchestrator.execute_pending_tool(
+        llm_result = await orchestrator.execute_pending_tool(
             session=session,
             session_id=session_id,
             tool_call_id=tool_call_id,
             agent_orchestrator=self._agent_orchestrator,
+            mcp_manager=mcp_manager,
         )
+
+        # Сохраняем сессию — критично для permission flow, т.к.
+        # LLM loop мог установить новый permission_request_id
+        # (агент вызвал ещё tool после выполнения предыдущего).
+        try:
+            await self._storage.save_session(session)
+            logger.debug(
+                "session saved after execute_pending_tool",
+                session_id=session_id,
+                active_turn_perm_request_id=(
+                    session.active_turn.permission_request_id
+                    if session.active_turn
+                    else None
+                ),
+            )
+        except Exception as save_exc:
+            logger.error(
+                "failed_to_save_session_after_execute_pending_tool",
+                session_id=session_id,
+                error=str(save_exc),
+            )
+
+        return llm_result
 
     async def _initialize_mcp_servers(
         self,
@@ -1187,7 +1300,9 @@ class ACPProtocol:
         
         # Создаём MCPManager для этой сессии
         mcp_manager = MCPManager(session_state.session_id)
-        session_state.mcp_manager = mcp_manager
+        await self._runtime_registry.set_mcp_manager(
+            session_state.session_id, mcp_manager
+        )
         
         for server_config_dict in mcp_servers:
             # Пропускаем невалидные конфигурации

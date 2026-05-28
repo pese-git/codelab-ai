@@ -43,18 +43,27 @@ class PermissionWidgetType(Enum):
 
 
 # Маппинг tool_call.kind -> PermissionType
+# MCP инструменты теперь имеют inferred kind (read, edit, execute и т.д.)
+# и маппятся на соответствующие permission-типы вместе с нативными инструментами.
 _TOOL_KIND_TO_PERMISSION_TYPE: dict[str, PermissionType] = {
     "read_file": "file_read",
     "file_read": "file_read",
+    "read": "file_read",
     "write_file": "file_write",
     "file_write": "file_write",
+    "edit": "file_write",
     "delete_file": "file_delete",
     "file_delete": "file_delete",
+    "delete": "file_delete",
     "execute": "execute_command",
     "execute_command": "execute_command",
     "terminal": "execute_command",
-    "mcp": "mcp_access",
-    "mcp_access": "mcp_access",
+    "search": "file_read",
+    "fetch": "execute_command",
+    "move": "file_write",
+    "think": "unknown",
+    "switch_mode": "unknown",
+    "other": "unknown",
 }
 
 

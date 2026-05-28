@@ -302,8 +302,79 @@ order = ["openai", "openrouter", "ollama"]
 
 > **Подробное руководство:** [TOML конфигурация](13-toml-configuration.md)
 
+## MCP серверы
+
+CodeLab поддерживает подключение MCP (Model Context Protocol) серверов для расширения возможностей агента. MCP серверы предоставляют дополнительные инструменты, ресурсы и промпты.
+
+### Конфигурация в TOML
+
+MCP серверы настраиваются в `codelab.toml`:
+
+```toml
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/project"]
+
+[[mcp.servers]]
+name = "playwright"
+type = "stdio"
+command = "npx"
+args = ["@anthropic/mcp-playwright"]
+
+[[mcp.servers]]
+name = "github"
+type = "http"
+url = "https://api.githubcopilot.com/mcp/"
+headers = [
+  { name = "Authorization", value = "Bearer ${GITHUB_TOKEN}" }
+]
+```
+
+### Типы транспортов
+
+| Тип | Описание | Параметры |
+|-----|----------|-----------|
+| `stdio` | Запуск как subprocess | `command`, `args`, `env` |
+| `http` | HTTP POST с JSON-RPC | `url`, `headers` |
+| `sse` | Server-Sent Events | `url`, `headers` |
+
+### Параметры retry
+
+```toml
+[[mcp.servers]]
+name = "my-server"
+type = "stdio"
+command = "my-mcp-server"
+max_retries = 5
+initial_delay = 1.0
+max_delay = 30.0
+backoff_multiplier = 2.0
+```
+
+### Переменные окружения для MCP
+
+```toml
+[[mcp.servers]]
+name = "database"
+type = "stdio"
+command = "mcp-server-db"
+env = [
+  { name = "DATABASE_URL", value = "${DATABASE_URL}" },
+  { name = "DB_HOST", value = "localhost" }
+]
+```
+
+### Health Check
+
+CodeLab автоматически проверяет здоровье подключённых MCP серверов каждые 60 секунд и выполняет автоматическое переподключение при обнаружении проблем.
+
+> **Подробное руководство:** [MCP серверы](14-mcp-servers.md)
+
 ## См. также
 
 - [TOML конфигурация](13-toml-configuration.md) — полное руководство по TOML
+- [MCP серверы](14-mcp-servers.md) — подключение и настройка MCP
 - [Настройка сервера](03-server-setup.md) — параметры запуска
 - [Разрешения](05-permissions.md) — политики безопасности

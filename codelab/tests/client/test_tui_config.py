@@ -35,7 +35,9 @@ def test_resolve_tui_connection_uses_store_values_when_args_missing(monkeypatch)
         lambda _self: TUIConfig(host="127.0.0.8", port=8800, theme="light"),
     )
 
-    host, port = resolve_tui_connection(host=None, port=None)
+    host, port, theme, timeout = resolve_tui_connection(host=None, port=None)
 
     assert host == "127.0.0.8"
     assert port == 8800
+    assert theme == "light"
+    assert timeout == 60.0

@@ -143,3 +143,46 @@ theme = "light"
 
 # Порт сервера (опционально, можно указать через CLI --port)
 # port = 8765
+
+# Таймаут ожидания ответа от сервера в секундах (по умолчанию: 60)
+# Увеличьте при работе с медленными LLM API или stdio транспортом
+# receive_timeout = 60
+
+# ============================================================================
+# Конфигурация MCP серверов
+# ============================================================================
+# MCP (Model Context Protocol) серверы подключаются автоматически при создании
+# или загрузке сессии. Поддерживаемые типы: "stdio" и "http".
+#
+# ВАЖНО: Не храните API keys напрямую в TOML файлах.
+# Используйте переменные окружения: ${API_KEY}
+#
+# Переменные окружения в формате ${VAR_NAME} раскрываются автоматически.
+# Если переменная не установлена, она заменяется на пустую строку.
+
+# Пример: stdio MCP сервер (локальный процесс)
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "${PROJECT_ROOT}"]
+
+# Пример: HTTP MCP сервер (удалённый)
+[[mcp.servers]]
+name = "github"
+type = "http"
+url = "https://api.githubcopilot.com/mcp"
+headers = [
+    { name = "Authorization", value = "Bearer ${GITHUB_TOKEN}" },
+]
+
+# Пример: stdio сервер с переменными окружения
+[[mcp.servers]]
+name = "database"
+type = "stdio"
+command = "python"
+args = ["-m", "mcp_server_database"]
+env = [
+    { name = "DATABASE_URL", value = "${DATABASE_URL}" },
+    { name = "DEBUG", value = "true" },
+]

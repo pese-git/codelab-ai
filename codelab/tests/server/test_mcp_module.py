@@ -25,6 +25,7 @@ from codelab.server.mcp.models import (
     MCPCapabilities,
     MCPServerConfig,
     MCPTool,
+    MCPToolAnnotations,
     MCPToolInputSchema,
 )
 from codelab.server.mcp.tool_adapter import MCPToolAdapter
@@ -142,8 +143,9 @@ class TestMCPToolAdapter:
         # Проверяем преобразованное определение
         assert isinstance(tool_def, ToolDefinition)
         assert tool_def.name == "mcp:fs-server:read_file"
-        assert tool_def.description == "Читает содержимое файла"
-        assert tool_def.kind == "mcp"  # MCP инструменты имеют kind="mcp"
+        assert tool_def.description == "[MCP:fs-server] Читает содержимое файла"
+        # Kind выводится из имени инструмента (read_file -> read)
+        assert tool_def.kind == "read"
         assert tool_def.requires_permission is True
 
     def test_adapt_tools(self, sample_mcp_tools: list[MCPTool]) -> None:
@@ -155,11 +157,133 @@ class TestMCPToolAdapter:
 
         # Проверяем количество инструментов
         assert len(tool_defs) == 2
-        
+
         # Проверяем namespaced имена
         names = [td.name for td in tool_defs]
         assert "mcp:fs-server:read_file" in names
         assert "mcp:fs-server:write_file" in names
+
+    def test_infer_kind_heuristic_read(self) -> None:
+        """Проверяет эвристику kind для read-инструментов."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["read_file", "get_content", "list_directory", "cat_file", "show_info"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "read", f"Failed for {name}"
+
+    def test_infer_kind_heuristic_edit(self) -> None:
+        """Проверяет эвристику kind для edit-инструментов."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["write_file", "create_file", "update_content", "edit_text", "modify_data", "append_log"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "edit", f"Failed for {name}"
+
+    def test_infer_kind_heuristic_delete(self) -> None:
+        """Проверяет эвристику kind для delete-инструментов."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["delete_file", "remove_item", "rm_temp"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "delete", f"Failed for {name}"
+
+    def test_infer_kind_heuristic_move(self) -> None:
+        """Проверяет эвристику kind для move-инструментов."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["move_file", "rename_item", "mv_dir"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "move", f"Failed for {name}"
+
+    def test_infer_kind_heuristic_search(self) -> None:
+        """Проверяет эвристику kind для search-инструментов."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["search_text", "find_pattern", "grep_log", "query_db"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "search", f"Failed for {name}"
+
+    def test_infer_kind_heuristic_execute(self) -> None:
+        """Проверяет эвристику kind для execute-инструментов."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["exec_command", "run_script", "shell_exec", "command_run", "terminal_open"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "execute", f"Failed for {name}"
+
+    def test_infer_kind_heuristic_fetch(self) -> None:
+        """Проверяет эвристику kind для fetch-инструментов."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["fetch_url", "download_file", "http_request", "web_scrape", "url_get"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "fetch", f"Failed for {name}"
+
+    def test_infer_kind_heuristic_fallback_other(self) -> None:
+        """Проверяет фоллбэк на 'other' для неизвестных имён."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        for name in ["unknown_tool", "do_something", "magic", "analyze"]:
+            tool = MCPTool(name=name, description="test")
+            assert adapter._infer_kind(tool) == "other", f"Failed for {name}"
+
+    def test_infer_kind_annotations_read_only(self) -> None:
+        """Проверяет приоритет аннотации readOnlyHint."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        # readOnlyHint=True должен вернуть "read" даже если имя похоже на write
+        tool = MCPTool(
+            name="write_file",
+            description="test",
+            annotations=MCPToolAnnotations(read_only_hint=True),
+        )
+        assert adapter._infer_kind(tool) == "read"
+
+    def test_infer_kind_annotations_destructive_delete(self) -> None:
+        """Проверяет destructiveHint + delete имя -> 'delete'."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        tool = MCPTool(
+            name="delete_item",
+            description="test",
+            annotations=MCPToolAnnotations(destructive_hint=True),
+        )
+        assert adapter._infer_kind(tool) == "delete"
+
+    def test_infer_kind_annotations_destructive_edit(self) -> None:
+        """Проверяет destructiveHint + не-delete имя -> 'edit'."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        tool = MCPTool(
+            name="modify_config",
+            description="test",
+            annotations=MCPToolAnnotations(destructive_hint=True),
+        )
+        assert adapter._infer_kind(tool) == "edit"
+
+    def test_infer_kind_annotations_priority_over_heuristic(self) -> None:
+        """Проверяет что аннотации имеют приоритет над эвристикой."""
+        mock_client = MagicMock()
+        adapter = MCPToolAdapter("test", mock_client)
+
+        # Имя "delete_file" -> heuristic "delete", но readOnlyHint=True -> "read"
+        tool = MCPTool(
+            name="delete_file",
+            description="test",
+            annotations=MCPToolAnnotations(read_only_hint=True),
+        )
+        assert adapter._infer_kind(tool) == "read"
 
 
 # ===== Тесты MCPClient =====
@@ -492,6 +616,64 @@ class TestMCPModels:
 
         assert caps.tools == {"listChanged": True}
         assert caps.resources is None
+
+    def test_mcp_tool_annotations(self) -> None:
+        """Проверяет создание аннотаций инструмента."""
+        annotations = MCPToolAnnotations(
+            title="Read File",
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+
+        assert annotations.title == "Read File"
+        assert annotations.read_only_hint is True
+        assert annotations.destructive_hint is False
+        assert annotations.idempotent_hint is True
+        assert annotations.open_world_hint is False
+
+    def test_mcp_tool_with_annotations(self) -> None:
+        """Проверяет создание инструмента с аннотациями."""
+        tool = MCPTool(
+            name="read_file",
+            description="Reads a file",
+            input_schema=MCPToolInputSchema(
+                type="object",
+                properties={"path": {"type": "string"}},
+                required=["path"],
+            ),
+            annotations=MCPToolAnnotations(
+                title="Read File",
+                read_only_hint=True,
+            ),
+        )
+
+        assert tool.name == "read_file"
+        assert tool.annotations is not None
+        assert tool.annotations.title == "Read File"
+        assert tool.annotations.read_only_hint is True
+
+    def test_mcp_tool_annotations_from_dict(self) -> None:
+        """Проверяет парсинг аннотаций из dict (camelCase aliases)."""
+        tool_data = {
+            "name": "write_file",
+            "description": "Writes a file",
+            "inputSchema": {"type": "object"},
+            "annotations": {
+                "title": "Write File",
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False,
+                "openWorldHint": False,
+            },
+        }
+
+        tool = MCPTool(**tool_data)
+        assert tool.annotations is not None
+        assert tool.annotations.title == "Write File"
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is True
 
 
 # ===== Тесты интеграции с session/new =====

@@ -22,6 +22,8 @@ class ClientConfig:
         transport_mode: Режим транспорта ("websocket" или "stdio")
         stdio_command: Команда для запуска агента (для stdio режима)
         stdio_args: Аргументы команды (для stdio режима)
+        mcp_servers: Конфигурация MCP серверов из TOML файлов
+        receive_timeout: Таймаут ожидания сообщения от сервера (секунды)
     """
 
     host: str
@@ -32,3 +34,5 @@ class ClientConfig:
     transport_mode: str = "websocket"
     stdio_command: str | None = None
     stdio_args: list[str] = field(default_factory=list)
+    mcp_servers: list[dict[str, Any]] = field(default_factory=list)
+    receive_timeout: float = 60.0

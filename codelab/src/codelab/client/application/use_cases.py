@@ -250,6 +250,7 @@ class CreateSessionUseCase(UseCase):
             session_params = {
                 "cwd": request.cwd,  # Обязательный параметр протокола ACP
                 "clientCapabilities": request.client_capabilities or {},
+                "mcpServers": request.mcp_servers or [],
             }
 
             # DEBUG: Логируем параметры запроса session/new

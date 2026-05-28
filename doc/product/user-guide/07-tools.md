@@ -1,10 +1,10 @@
 # Работа с инструментами
 
-> Руководство по инструментам агента: File System и Terminal.
+> Руководство по инструментам агента: File System, Terminal и MCP.
 
 ## Обзор
 
-Инструменты (tools) позволяют агенту взаимодействовать с локальной средой клиента. CodeLab реализует два типа инструментов согласно ACP протоколу:
+Инструменты (tools) позволяют агенту взаимодействовать с локальной средой клиента. CodeLab реализует три типа инструментов:
 
 ```mermaid
 graph LR
@@ -12,21 +12,34 @@ graph LR
         LLM[LLM]
     end
     
-    subgraph "Инструменты"
+    subgraph "Встроенные инструменты"
         FS[File System]
         TERM[Terminal]
+    end
+    
+    subgraph "MCP инструменты"
+        MCP[MCP Servers]
     end
     
     subgraph "Клиент"
         Files[(Файлы)]
         Shell[Shell]
+        External[(Внешние API)]
     end
     
     LLM -->|tool_call| FS
     LLM -->|tool_call| TERM
+    LLM -->|tool_call| MCP
     FS -->|read/write| Files
     TERM -->|execute| Shell
+    MCP -->|api calls| External
 ```
+
+| Тип | Описание | Примеры |
+|-----|----------|---------|
+| **File System** | Чтение/запись файлов | `read_text_file`, `write_text_file` |
+| **Terminal** | Выполнение команд | `terminal/create`, `terminal/output` |
+| **MCP** | Внешние сервисы через MCP | `mcp:github:create_issue` |
 
 ## File System
 
@@ -417,9 +430,133 @@ Error: Command timed out after 30s
 
 Увеличьте timeout или используйте background режим.
 
+## MCP инструменты
+
+MCP (Model Context Protocol) инструменты предоставляют доступ к внешним сервисам и API.
+
+### Именование
+
+MCP инструменты имеют namespaced имена:
+
+```
+mcp:{server_id}:{tool_name}
+```
+
+**Примеры:**
+- `mcp:filesystem:read_file`
+- `mcp:github:create_issue`
+- `mcp:playwright:navigate`
+
+### Определение типа (Kind Inference)
+
+CodeLab автоматически определяет тип MCP инструмента для системы разрешений:
+
+```mermaid
+graph TD
+    A[MCP Tool] --> B{Есть annotations?}
+    B -->|Да| C[readOnlyHint/destructiveHint]
+    B -->|Нет| D{Анализ имени}
+    
+    C -->|readOnlyHint=true| E[read]
+    C -->|destructiveHint=true| F[execute]
+    C -->|open_world_hint=true| G[execute]
+    
+    D -->|read_*, get_*, list_*| E
+    D -->|write_*, create_*, delete_*| F
+    D -->|update_*, modify_*| H[edit]
+    
+    D -->|Не определено| I[other]
+```
+
+**Приоритет:**
+1. **MCP ToolAnnotations** — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`
+2. **Эвристика по имени** — префиксы `read_`, `write_`, `create_`, и т.д.
+3. **Fallback** — `other`
+
+### Отображение в UI
+
+```
+🔧 [MCP:filesystem] read_file: src/main.py
+   Status: ✅ Completed
+   ─────────────────────────
+   Contents of src/main.py:
+   ...
+
+🔧 [MCP:github] list_repositories
+   Status: ✅ Completed (15 repos)
+   ─────────────────────────
+   - user/repo1
+   - user/repo2
+   ...
+```
+
+### Конфигурация MCP серверов
+
+В `codelab.toml`:
+
+```toml
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/project"]
+
+[[mcp.servers]]
+name = "github"
+type = "http"
+url = "https://api.githubcopilot.com/mcp/"
+headers = [
+  { name = "Authorization", value = "${GITHUB_TOKEN}" }
+]
+```
+
+### Разрешения MCP
+
+MCP инструменты проходят через ту же систему разрешений:
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  🔒 Запрос разрешения                                      │
+│                                                            │
+│  Операция: [MCP:filesystem] write_file                     │
+│  Путь: /project/src/main.py                                │
+│                                                            │
+│  [Allow]  [Allow All]  [Always Allow]  [Deny]             │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Автоматическое переподключение
+
+CodeLab автоматически восстанавливает соединение с MCP серверами:
+
+- Health check каждые 60 секунд
+- Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s
+- Jitter 10% для предотвращения thundering herd
+- Максимум 5 попыток (настраивается)
+
+### MCP ресурсы и промпты
+
+Помимо инструментов, MCP серверы могут предоставлять:
+
+**Ресурсы** — данные, доступные по URI:
+```
+- config://app/settings
+- docs://api/reference
+```
+
+**Промпты** — шаблоны для специфичных задач:
+```
+- code-review
+- generate-tests
+- explain-code
+```
+
+> **Подробное руководство:** [MCP серверы](14-mcp-servers.md)
+
 ## См. также
 
 - [Разрешения](05-permissions.md) — политики инструментов
+- [MCP серверы](14-mcp-servers.md) — подключение и настройка MCP
 - [План агента](08-agent-plan.md) — планирование использования инструментов
 - [Спецификация File System](../../Agent%20Client%20Protocol/protocol/09-File%20System.md) — протокол
 - [Спецификация Terminal](../../Agent%20Client%20Protocol/protocol/10-Terminal.md) — протокол

@@ -5,7 +5,7 @@
 
 Основные компоненты:
 - MCPClient: Клиент для взаимодействия с MCP сервером
-- StdioTransport: Stdio транспорт для коммуникации
+- Транспорты: StdioTransport, HttpTransport, SseTransport
 - Модели данных для MCP протокола
 
 Example:
@@ -58,8 +58,14 @@ from .models import (
 )
 from .tool_adapter import MCPToolAdapter
 from .transport import (
+    HttpConnectionError,
+    HttpTimeoutError,
+    HttpTransport,
+    HttpTransportError,
     ProcessExitedError,
     ProcessNotStartedError,
+    SseTransport,
+    SseTransportError,
     StdioTransport,
     StdioTransportError,
 )
@@ -83,7 +89,13 @@ __all__ = [
     "StdioTransportError",
     "ProcessNotStartedError",
     "ProcessExitedError",
-    # Models - Core JSON-RPC
+    "HttpTransport",
+    "HttpTransportError",
+    "HttpConnectionError",
+    "HttpTimeoutError",
+    "SseTransport",
+    "SseTransportError",
+    # Models - core JSON-RPC
     "MCPRequest",
     "MCPResponse",
     "MCPNotification",

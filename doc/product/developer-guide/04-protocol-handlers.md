@@ -101,23 +101,44 @@ class ToolCallHandler:
 
 ```python
 class PermissionManager:
-    async def check_permission(
-        self,
-        session_id: str,
-        tool_id: str,
-        arguments: dict,
-    ) -> PermissionResult:
-        """Проверить разрешение (global → session → ask)."""
+    def should_request_permission(session, tool_kind) -> bool:
+        """Определить, нужен ли permission request для tool_kind."""
         ...
     
-    async def allow_always(self, session_id: str, tool_id: str) -> None:
-        """Разрешить всегда."""
+    def build_permission_request(session, session_id, tool_call_id, title, kind) -> ACPMessage:
+        """Построить session/request_permission message.
+        
+        Устанавливает active_turn.permission_request_id = msg.id
+        для корреляции с ответом клиента.
+        """
         ...
     
-    async def reject_always(self, session_id: str, tool_id: str) -> None:
-        """Запретить всегда."""
+    def request_tool_permission(session, tool_call, tool_kind, session_id) -> JsonRpcId:
+        """Запросить разрешение для tool call."""
+        ...
+    
+    def extract_permission_outcome(result) -> str | None:
+        """Извлечь outcome из response (selected/cancelled)."""
+        ...
+    
+    def extract_permission_option_id(result) -> str | None:
+        """Извлечь optionId из response (allow_once, allow_always, ...)."""
+        ...
+    
+    def find_session_by_permission_request_id(permission_request_id, sessions) -> SessionState | None:
+        """Найти сессию по active_turn.permission_request_id."""
         ...
 ```
+
+**Flow разрешения:**
+
+1. `LLMLoopStage` вызывает `build_permission_request()` → устанавливает `active_turn.permission_request_id`
+2. Message отправляется клиенту через notifications
+3. `ACPProtocol.handle_client_response()` получает response с `id=permission_request_id`
+4. `_resolve_permission_response()` → `find_session_by_permission_request_id()` ищет сессию в storage
+5. `resolve_permission_response_impl()` применяет решение, возвращает `pending_tool_execution`
+6. `_execute_tool_in_background()` → `execute_pending_tool()` → выполняет tool, продолжает LLM loop
+7. **Критично:** `execute_pending_tool()` сохраняет сессию после orchestrator вызова, чтобы новый `permission_request_id` (если LLM вызвал ещё tool) был в storage
 
 ### GlobalPolicyManager
 
@@ -211,7 +232,10 @@ class SlashCommandStage(PipelineStage):
 
 ```python
 class LLMLoopStage(PipelineStage):
-    async def execute(self, context: PipelineContext) -> StageResult:
+    async def execute(self, context: PromptContext) -> StageResult:
+        # Получаем MCP manager из context.meta
+        mcp_manager = context.meta.get("mcp_manager")
+        
         for iteration in range(self._max_iterations):
             # Вызов LLM
             response = await self._agent_orchestrator.process_prompt(context)
@@ -222,24 +246,31 @@ class LLMLoopStage(PipelineStage):
             if response.stop_reason == "tool_use":
                 tool_results = []
                 for tool_call in response.tool_calls:
-                    # Проверка разрешений
-                    permission = await self._permission_manager.check_permission(
-                        context.session_id, tool_call.name, tool_call.arguments
-                    )
-                    
-                    if permission == "allow":
-                        result = await self._tool_registry.execute_tool(tool_call)
-                        tool_results.append(result)
-                    elif permission == "ask":
-                        # Запрос разрешения у клиента
-                        user_decision = await self._request_permission(tool_call)
-                        if user_decision == "allow":
+                    # Проверка: MCP инструмент или встроенный
+                    if MCPToolExecutor.is_mcp_tool(tool_call.name):
+                        # MCP инструмент
+                        result = await self._mcp_executor.execute(
+                            session=context.session,
+                            arguments={"tool_name": tool_call.name, **tool_call.arguments}
+                        )
+                    else:
+                        # Встроенный инструмент
+                        permission = await self._permission_manager.check_permission(
+                            context.session_id, tool_call.name, tool_call.arguments
+                        )
+                        
+                        if permission == "allow":
                             result = await self._tool_registry.execute_tool(tool_call)
-                            tool_results.append(result)
-                        else:
-                            tool_results.append(ToolResult.failed("permission denied"))
-                    else:  # reject
-                        tool_results.append(ToolResult.failed("policy reject"))
+                        elif permission == "ask":
+                            user_decision = await self._request_permission(tool_call)
+                            if user_decision == "allow":
+                                result = await self._tool_registry.execute_tool(tool_call)
+                            else:
+                                result = ToolResult.failed("permission denied")
+                        else:  # reject
+                            result = ToolResult.failed("policy reject")
+                    
+                    tool_results.append(result)
                 
                 # Продолжение с результатами
                 context = context.with_tool_results(tool_results)
@@ -249,6 +280,12 @@ class LLMLoopStage(PipelineStage):
         
         return StageResult.success(stop_reason="max_turn_requests")
 ```
+
+**MCP интеграция:**
+- MCP manager передаётся через `PromptContext.meta["mcp_manager"]`
+- MCPToolExecutor проверяет инструменты по префиксу `mcp:`
+- Kind inference определяет тип разрешения из MCP ToolAnnotations
+- System message включает информацию о MCP серверах для LLM
 
 ## Slash Commands
 
@@ -413,4 +450,5 @@ async def handle_session_new(self, message: ACPMessage) -> ProtocolOutcome:
 
 - [Архитектура](01-architecture.md) — общая архитектура системы
 - [Разработка сервера](03-server-development.md) — детали реализации сервера
+- [MCP разработка](08-mcp-development.md) — MCP интеграция в pipeline
 - [Тестирование](05-testing.md) — запуск и написание тестов

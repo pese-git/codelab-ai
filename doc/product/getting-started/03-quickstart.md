@@ -181,9 +181,62 @@ codelab connect --stdio --cwd /project
 > /load <session_id>
 ```
 
+## Подключение MCP серверов
+
+CodeLab поддерживает MCP (Model Context Protocol) серверы для расширения возможностей агента.
+
+### Через TOML конфигурацию
+
+Добавьте в `codelab.toml`:
+
+```toml
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/project"]
+```
+
+### Через сессию
+
+При создании сессии укажите MCP серверы:
+
+```json
+{
+  "method": "session/new",
+  "params": {
+    "mcpServers": [
+      {
+        "name": "filesystem",
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/project"]
+      }
+    ]
+  }
+}
+```
+
+### Пример использования MCP
+
+После подключения MCP сервера агент может использовать новые инструменты:
+
+```
+> Прочитай файл README.md через MCP filesystem
+
+🔧 [MCP:filesystem] read_file: README.md
+   Status: ✅ Completed
+   ─────────────────────────
+   # My Project
+   ...
+```
+
+> **Подробное руководство:** [MCP серверы](../user-guide/14-mcp-servers.md)
+
 ## Следующие шаги
 
 - [Первый проект](04-first-project.md) — полноценный пример работы
+- [MCP серверы](../user-guide/14-mcp-servers.md) — подключение внешних инструментов
 - [Сценарии использования](../overview/03-use-cases.md) — что ещё умеет CodeLab
 - [Архитектура](../overview/02-architecture.md) — как это работает
 

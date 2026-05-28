@@ -38,9 +38,11 @@ TOOL_ICONS: dict[str, str] = {
     "execute_command": "⚡",
     "terminal": "💻",
     "search": "🔍",
-    "mcp": "🔌",
     "default": "🔧",
 }
+
+# Иконка для MCP инструментов (определяется по namespace-префиксу)
+MCP_TOOL_ICON = "🔌"
 
 # Иконки для статусов
 STATUS_ICONS: dict[ToolCallStatus, str] = {
@@ -288,7 +290,11 @@ class ToolCallCard(Static):
     def compose(self) -> ComposeResult:
         """Создаёт структуру карточки."""
         # Определяем иконку инструмента
-        icon = TOOL_ICONS.get(self._tool_name, TOOL_ICONS["default"])
+        # MCP инструменты детектируются по namespace-префиксу "mcp:"
+        if self._tool_name.startswith("mcp:"):
+            icon = MCP_TOOL_ICON
+        else:
+            icon = TOOL_ICONS.get(self._tool_name, TOOL_ICONS["default"])
         
         # Заголовок с иконкой, названием и статусом
         with Vertical(id="tool-header"):
