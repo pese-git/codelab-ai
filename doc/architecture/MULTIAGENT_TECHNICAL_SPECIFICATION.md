@@ -28,6 +28,7 @@ MVP (Minimum Viable Product). Все компоненты работают в о
 3. **Dynamic agents** — состав агентов меняется на лету через `agents.yaml` hot reload.
 4. **Observability by design** — tracing, timeline, metrics встроены через DI, не добавлены постфактум.
 5. **Strategy pattern** — три режима выполнения: single, multi_orchestrated, multi_choreographed.
+6. **ACP compliance** — все кастомные элементы используют префикс `_` согласно ACP Extensibility spec.
 
 ---
 
@@ -70,7 +71,7 @@ MVP (Minimum Viable Product). Все компоненты работают в о
 | **ACP Layer** | ACPProtocol, PromptOrchestrator, Pipeline | Внешний контракт — НЕ меняется |
 | **Agent Layer** | ExecutionEngine, AgentEventBus, LLMAdapter | Мультиагентность — НОВЫЙ |
 | **Observability** | Tracer, EventTimeline, MetricsTracker | Наблюдаемость — НОВЫЙ |
-| **Configuration** | AgentSystemLoader, AgentFactory | Динамическая конфигурация — НОВЫЙ |
+| **Configuration** | AgentSystemLoader, AgentFactory, ConfigOptionBuilder | Динамическая конфигурация — НОВЫЙ |
 | **Storage** | SessionStorage, MetricsRepository, ObservabilityStorage | Персистентность — РАСШИРЯЕТСЯ |
 
 ### 2.3. Режимы выполнения (Strategy Pattern)
@@ -477,13 +478,74 @@ def migrate_schema(cls, data: dict) -> dict:
 
 **Клиент НЕ знает о мультиагентности.** Для клиента сервер = один агент. ACP контракт не меняется.
 
+Все кастомные config options используют префикс `_` согласно ACP Extensibility (15-Extensibility.md):
+> *"The protocol reserves any method name starting with an underscore (`_`) for custom extensions."*
+
 ### 6.2. session/set_config_option
 
 | configId | Single режим | Multi режим | Описание |
 |---|---|---|---|
 | `"model"` | Модель единственного агента | Модель **оркестратора** (для RouteDecision) | Существующая |
-| `"routing_mode"` | N/A | `"single"` / `"multi_orchestrated"` / `"multi_choreographed"` | **НОВАЯ** |
+| `"_routing_mode"` | N/A | `"single"` / `"multi_orchestrated"` / `"multi_choreographed"` | **НОВАЯ** (кастомная) |
 | `"mode"` | Режим работы (code/ask) | Режим работы (code/ask) | Существующая |
+
+### 6.2.1. Спецификация `_routing_mode`
+
+Config option `_routing_mode` — кастомное расширение ACP для выбора режима выполнения агента.
+
+**Формат (ACP config option):**
+```json
+{
+  "id": "_routing_mode",
+  "name": "Routing Mode",
+  "description": "Agent execution mode: single, multi-orchestrated, or multi-choreographed",
+  "type": "select",
+  "currentValue": "single",
+  "options": [
+    {"value": "single", "name": "Single Agent", "description": "Direct LLM call"},
+    {"value": "multi_orchestrated", "name": "Multi-Agent (Orchestrator)", "description": "Centralized routing via orchestrator"},
+    {"value": "multi_choreographed", "name": "Multi-Agent (Choreography)", "description": "Decentralized broadcast to all agents"}
+  ]
+}
+```
+
+**Без категории** — избегаем конфликта с зарезервированной категорией `mode` (ACP spec 13-Session Config Options.md):
+> *"Category names that do not begin with `_` are reserved for the ACP spec."*
+
+**Поток данных в ACP:**
+
+1. **`session/new`** — сервер возвращает `_routing_mode` в `configOptions` (дефолт из `agents.yaml`)
+2. **`session/set_config_option`** — клиент меняет режим: `{"configId": "_routing_mode", "value": "multi_orchestrated"}`
+3. **`session/prompt`** — `StrategySelectionStage` читает `config_values["_routing_mode"]` и выбирает стратегию
+
+### 6.2.2. Slash Command override
+
+Slash commands `/single`, `/multi`, `/choreography` — **one-shot override** для одного промпта.
+
+**Приоритет разрешения режима:**
+```
+1. Slash command override (context.meta["routing_mode"]) — если есть
+2. Config value (config_values["_routing_mode"]) — persistent режим сессии
+3. Default ("single") — fallback
+```
+
+**Пример использования:**
+```
+# Сессия в режиме multi_orchestrated (дефолт из agents.yaml)
+Привет!                              → multi_orchestrated
+
+/single Объясни этот код             → single (one-shot, не меняет config)
+Напиши тесты                         → multi_orchestrated (вернулся к дефолту)
+
+# Пользователь хочет сменить дефолт:
+set_config_option(_routing_mode=multi_choreographed)
+Теперь все промпты → multi_choreographed
+```
+
+**Реализация:**
+- `SlashCommandStage` распознаёт `/single`, `/multi`, `/choreography` → записывает в `context.meta["routing_mode"]`
+- `StrategySelectionStage` читает `meta` → `config_values` → `default`
+- Slash command **не мутирует** `config_values` — только override на один prompt turn
 
 ### 6.3. Модели субагентов
 
@@ -616,14 +678,14 @@ def migrate_schema(cls, data: dict) -> dict:
 
 | # | Файл | Описание |
 |---|---|---|
-| 5.1 | `server/protocol/handlers/pipeline/stages/strategy_selection.py` | `StrategySelectionStage` — читает routing_mode |
+| 5.1 | `server/protocol/handlers/pipeline/stages/strategy_selection.py` | `StrategySelectionStage` — читает `_routing_mode` с приоритетом: slash override > config_values > default |
 | 5.2 | `server/protocol/handlers/pipeline/stages/llm_loop.py` | РЕФАКТОРИНГ: делегирует ExecutionEngine + StrategyDispatcher |
 | 5.3 | `server/di.py` | Новые провайдеры: AgentEventBus, AgentSystemLoader, ExecutionEngine, ObservabilityFactory |
-| 5.4 | `server/protocol/handlers/config.py` | Обработка `routing_mode`, расширенная обработка `model` |
-| 5.5 | `server/protocol/handlers/config_option_builder.py` | `build_routing_mode_config_option()` |
-| 5.6 | `server/protocol/handlers/slash_commands/routing.py` | Slash commands `/single`, `/multi`, `/choreography` |
+| 5.4 | `server/protocol/handlers/config.py` | Обработка `_routing_mode`, расширенная обработка `model` |
+| 5.5 | `server/protocol/handlers/config_option_builder.py` | `build_routing_mode_config_option()` — spec для `_routing_mode` |
+| 5.6 | `server/protocol/handlers/slash_commands/routing.py` | Slash commands `/single`, `/multi`, `/choreography` (one-shot override) |
 | 5.7 | `server/protocol/handlers/slash_commands/agent_config.py` | `/config agent <name> model <ref>` |
-| 5.8 | `tests/server/protocol/` | Integration tests pipeline + strategies |
+| 5.8 | `tests/server/protocol/` | Integration tests pipeline + strategies + slash commands |
 
 ### Фаза 6: TUI — live observability view
 
@@ -668,27 +730,28 @@ def migrate_schema(cls, data: dict) -> dict:
 | 4 | В режиме Orchestrator модель строго подчиняется списку активных агентов | Unit test |
 | 5 | Cancellation (`session/cancel`) работает во всех режимах | Integration test |
 | 6 | `session/set_config_option(model=...)` меняет модель оркестратора | Unit test |
-| 7 | `session/set_config_option(routing_mode=...)` переключает режим | Unit test |
-| 8 | ~1800 существующих тестов не сломаны | `make check` |
+| 7 | `session/set_config_option(_routing_mode=...)` переключает режим | Unit test |
+| 8 | Slash commands `/single`, `/multi`, `/choreography` работают как one-shot override | Integration test |
+| 9 | ~1800 существующих тестов не сломаны | `make check` |
 
 ### 9.2. Observability критерии
 
 | # | Критерий | Проверка |
 |---|---|---|
-| 9 | Correlation ID присутствует во всех логах prompt turn | Log grep test |
-| 10 | Distributed trace содержит spans для всех операций | Trace validation |
-| 11 | Event Timeline записывает все события сессии | Timeline validation |
-| 12 | Debug mode экспортирует trace + timeline в JSON | File existence test |
-| 13 | TUI показывает live timeline и метрики | Manual / visual test |
+| 10 | Correlation ID присутствует во всех логах prompt turn | Log grep test |
+| 11 | Distributed trace содержит spans для всех операций | Trace validation |
+| 12 | Event Timeline записывает все события сессии | Timeline validation |
+| 13 | Debug mode экспортирует trace + timeline в JSON | File existence test |
+| 14 | TUI показывает live timeline и метрики | Manual / visual test |
 
 ### 9.3. Performance критерии
 
 | # | Критерий | Ожидание |
 |---|---|---|
-| 14 | Single Agent latency ≤ baseline (текущий NaiveAgent) | Benchmark |
-| 15 | Orchestrated overhead ≤ 2x Single Agent | Benchmark |
-| 16 | Choreography overhead ≤ 3x Single Agent | Benchmark |
-| 17 | EventBus dispatch latency ≤ 10ms | Benchmark |
+| 15 | Single Agent latency ≤ baseline (текущий NaiveAgent) | Benchmark |
+| 16 | Orchestrated overhead ≤ 2x Single Agent | Benchmark |
+| 17 | Choreography overhead ≤ 3x Single Agent | Benchmark |
+| 18 | EventBus dispatch latency ≤ 10ms | Benchmark |
 
 ---
 
@@ -714,6 +777,7 @@ def migrate_schema(cls, data: dict) -> dict:
 | Бесконечные циклы в хореографии | Низкая | Высокое | max_steps предохранитель (7) |
 | Потеря метрик при краше | Средняя | Среднее | Append-only write + atomic rename |
 | Leaky ACP boundary | Средняя | Высокое | Code review, тесты на изоляцию клиента |
+| Конфликт имён с будущими ACP версиями | Низкая | Высокое | Все кастомные элементы с префиксом `_` |
 
 ---
 
@@ -732,3 +796,5 @@ def migrate_schema(cls, data: dict) -> dict:
 | **Hot Reload** | Перезагрузка конфигурации без перезапуска |
 | **LLMAdapter** | Адаптер LLM провайдера → Agent Protocol (замена NaiveAgent) |
 | **ExecutionEngine** | Композиция компонентов для выполнения turn (замена AgentOrchestrator) |
+| **`_routing_mode`** | Кастомная config option для выбора режима выполнения (ACP-compliant) |
+| **Slash Override** | One-shot override режима через `/single`, `/multi`, `/choreography` |
