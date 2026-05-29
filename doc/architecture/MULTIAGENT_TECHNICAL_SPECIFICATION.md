@@ -27,8 +27,10 @@ MVP (Minimum Viable Product). Все компоненты работают в о
 2. **EventBus-first** — всё межагентское общение проходит через шину событий.
 3. **Dynamic agents** — состав агентов меняется на лету через `agents.yaml` hot reload.
 4. **Observability by design** — tracing, timeline, metrics встроены через DI, не добавлены постфактум.
-5. **Strategy pattern** — три режима выполнения: single, multi_orchestrated, multi_choreographed.
-6. **ACP compliance** — все кастомные элементы используют префикс `_` согласно ACP Extensibility spec.
+5. **Strategy pattern** — четыре режима выполнения: single, multi_orchestrated, multi_choreographed, hierarchical.
+6. **Hybrid context** — Token-Slicing для координатора + Child Sessions для деталей.
+7. **Pure uniformity** — все стратегии используют единый путь через EventBus для консистентной observability и архитектуры.
+8. **ACP compliance** — все кастомные элементы используют префикс `_` согласно ACP Extensibility spec.
 
 ---
 
@@ -76,12 +78,22 @@ MVP (Minimum Viable Product). Все компоненты работают в о
 
 ### 2.3. Режимы выполнения (Strategy Pattern)
 
+Четыре стратегии выполнения:
+
+| Стратегия | Коммуникация | Контекст | Когда использовать |
+|---|---|---|---|
+| **Single** | EventBus (send_request) | Единый | Простые задачи, бенчмарк |
+| **Orchestrated** | EventBus (point-to-point) | Гибрид (sliced + child) | Сложные последовательные задачи |
+| **Choreography** | EventBus (broadcast) | Гибрид (опционально) | Параллельный анализ, исследование |
+| **Hierarchical** | EventBus (point-to-point + child session) | Гибрид (нативный) | Делегирование с навигацией |
+
 ```mermaid
 flowchart LR
     subgraph Single["Single Agent"]
-        S1[User prompt] --> S2[LLMAdapter]
-        S2 --> S3[LLM Provider]
-        S3 --> S4[Response]
+        S1[User prompt] --> S2[AgentEventBus<br/>send_request]
+        S2 -->|request| S3[LLMAdapter single]
+        S3 -->|response| S2
+        S2 --> S4[Response]
     end
 
     subgraph Orchestrated["Multi-Agent (Orchestrator)"]
@@ -100,6 +112,22 @@ flowchart LR
         C4 -->|winner| C5[Update context]
         C5 -->|next step| C2
     end
+
+    subgraph Hierarchical["Hierarchical (OpenCode-style)"]
+        H1[User prompt] --> H2[Primary LLMAdapter]
+        H2 -->|TaskInvocation| H3[AgentEventBus<br/>point-to-point]
+        H3 -->|create child session| H4[Sub-Agent LLMAdapter]
+        H4 -->|TaskResult| H3
+        H3 -->|sliced summary| H2
+        H2 -->|continue or delegate| H3
+    end
+```
+
+**Приоритет выбора режима:**
+```
+1. Slash command override (context.meta["routing_mode"]) — если есть
+2. Config value (config_values["_routing_mode"]) — persistent режим сессии
+3. Default ("single") — fallback
 ```
 
 ---
@@ -127,6 +155,71 @@ class AgentEventBus(AbstractEventBus):
 | **Point-to-Point** | `send_request()` → `AgentResponse` | Оркестратор → субагент |
 | **Broadcast** | `broadcast()` → `list[ChoreographyAnswer]` | Хореография → все агенты |
 | **Fire-and-forget** | `publish()` → `None` | Уведомления, метрики, логирование |
+
+### 3.1.1. Коммуникация между агентами
+
+**Принцип чистой uniformity:** все стратегии используют единый путь через EventBus.
+Это обеспечивает консистентную observability, единообразную архитектуру и упрощает
+разработку, отладку и тестирование всех стратегий.
+
+#### Единый путь через EventBus
+
+```python
+# Все стратегии — один паттерн вызова
+response = await event_bus.send_request(
+    AgentRequest(target_agent=agent_name, ...),
+    parent_span=context.span
+)
+```
+
+**Почему все через EventBus:**
+- **Uniformity** — один паттерн для всех стратегий, не нужно держать в голове "какой путь у этой"
+- **Observability** — одинаковая структура трейсов: `strategy_execution → bus_request → llm_call`
+- **Cross-cutting features** — rate limiting, retry, circuit breaker в одном месте
+- **Testing** — один паттерн моков для всех стратегий
+- **Debugging** — всегда одинаковые span'ы, проще анализировать
+- **Extensibility** — добавление нового агента = регистрация в шине, без изменений стратегий
+
+**Tradeoff:**
+- ~10ms dispatch overhead для SingleStrategy
+- Bus = single point of failure (митигируется тестами и мониторингом)
+- Benchmark contamination (решается вычитанием baseline bus latency)
+
+#### AgentCaller — единый интерфейс
+
+```python
+class AgentCaller:
+    """Единый интерфейс для вызова агентов через EventBus."""
+
+    async def call(
+        self,
+        agent_name: str,
+        messages: list[Message],
+        tools: list[ToolDefinition],
+        parent_span: SpanContext,
+        session_id: str | None = None,
+    ) -> AgentResult:
+        # Всегда через EventBus — uniformity
+        return await self.event_bus.send_request(
+            AgentRequest(
+                target_agent=agent_name,
+                messages=messages,
+                tools=tools,
+                correlation_id=self.correlation_id,
+                session_id=session_id,
+            ),
+            parent_span=parent_span
+        )
+```
+
+#### Матрица коммуникации по стратегиям
+
+| Стратегия | Путь | Метод | Observability |
+|---|---|---|---|
+| **Single** | EventBus | `send_request()` | Tracer + Timeline + Metrics |
+| **Orchestrated** | EventBus | `send_request()` | Tracer + Timeline + Metrics |
+| **Choreography** | EventBus | `broadcast()` | Tracer + Timeline + Metrics |
+| **Hierarchical** | EventBus | `send_request()` + child session | Tracer + Timeline + Metrics |
 
 ### 3.2. Контракты сообщений
 
@@ -269,7 +362,22 @@ agents:
 ### 3.7. Execution Strategies
 
 #### SingleStrategy
-Прямой вызов `LLMAdapter` без EventBus. Минимальная задержка, базовый бенчмарк.
+
+Вызов единственного агента через EventBus. Минимальная задержка, базовый бенчмарк.
+
+```
+1. User prompt → SingleStrategy
+2. AgentRequest(target_agent="single") → EventBus.send_request()
+3. LLMAdapter обрабатывает запрос
+4. AgentResponse → возвращается в стратегию
+5. Ответ пользователю
+```
+
+**Почему через EventBus:**
+- Uniformity — один паттерн для всех стратегий
+- Observability — одинаковая структура трейсов
+- Testing — один паттерн моков
+- Extensibility — легко добавить агентов без изменений стратегии
 
 #### OrchestratedStrategy
 ```
@@ -296,6 +404,190 @@ class RouteDecision(BaseModel):
 4. coordination_overhead_tokens: токены холостых опросов
 5. max_steps предохранитель
 ```
+
+#### HierarchicalStrategy
+
+Стратегия иерархического делегирования (OpenCode-style Primary + Subagent):
+
+```
+1. Primary Agent получает пользовательский запрос
+2. Primary LLM решает: ответить самому или делегировать через Task tool
+3. При делегировании:
+   a. CHECK task permissions (caller может вызывать target?)
+   b. Если "ask" → session/request_permission пользователю
+   c. Создать child session (изолированный контекст)
+   d. TaskInvocation через EventBus.send_request()
+4. Subagent выполняет в child session:
+   a. Свой system prompt
+   b. Свой набор инструментов
+   c. Свой permissions
+   d. Своя история сообщений
+5. Subagent возвращает TaskResult
+6. Token-Slicer суммаризует результат для parent context
+7. Primary интегрирует summary, продолжает или завершает
+
+**TaskInvocation (через EventBus):**
+```python
+@dataclass(frozen=True)
+class TaskInvocation(DomainEvent):
+    target_agent: str
+    prompt: str
+    tools: list[ToolDefinition]
+    permission_override: dict | None = None
+    correlation_id: str
+    session_id: str           # parent session
+    parent_span: SpanContext | None
+
+@dataclass(frozen=True)
+class TaskResult(DomainEvent):
+    invocation_id: str
+    success: bool
+    output: str
+    tool_calls: list[ToolCall]
+    usage: TokenUsage
+    agent_name: str
+    child_session_id: str     # ID изолированной child session
+```
+
+**Конфигурация агента для HierarchicalStrategy:**
+```yaml
+agents:
+  - name: "coder"
+    mode: "primary"           # primary | subagent | hidden
+    model: "anthropic/claude-3-5-sonnet"
+    tools: ["fs/*", "terminal/*"]
+    permission:
+      task:                   # task permissions
+        "*": "deny"
+        "tester": "allow"
+        "reviewer": "ask"
+      edit: "ask"
+      bash:
+        "git *": "allow"
+        "*": "ask"
+
+  - name: "tester"
+    mode: "subagent"
+    description: "Writes and runs tests"
+    model: "openai/gpt-4o-mini"
+    tools: ["terminal/*"]
+    hidden: false
+
+  - name: "compact"
+    mode: "subagent"
+    hidden: true              # системный агент, не виден пользователю
+    model: "openai/gpt-4o-mini"
+```
+
+**Когда использовать:**
+- Субагенту нужен большой контекст (Token-Slicing обрезает детали)
+- Пользователь хочет видеть детали работы субагентов
+- Итеративная работа с субагентом (рефоллоуап в child session)
+- Чёткое разделение ответственности между агентами
+
+### 3.8. Управление контекстом (Hybrid Context Management)
+
+Для балансировки между скоростью выполнения и сохранностью деталей применяется
+гибридный подход к управлению контекстом.
+
+#### Три подхода
+
+| Подход | Описание | Плюсы | Минусы |
+|---|---|---|---|
+| **Token-Slicing** | Суммаризация ответов субагентов перед добавлением в контекст координатора | Компактный контекст, быстрые решения | Потеря деталей, нельзя рефоллоуап |
+| **Child Sessions** | Каждый субагент в изолированной сессии с полным контекстом | Полные детали, навигация | Больше storage, сложнее |
+| **Гибрид** | Token-Slicing для координатора + Child Sessions для деталей | И скорость, и observability | Средняя сложность |
+
+#### Гибридный подход (рекомендуемый)
+
+```
+┌─────────────────────────────────────────────────┐
+│  Parent Session (с Token-Slicing summaries)     │
+│  Для быстрых RouteDecision координатора         │
+│  Для основного потока ACP history               │
+└─────────────────────────────────────────────────┘
+                      +
+┌─────────────────────────────────────────────────┐
+│  Child Sessions (полный контекст, сохранены)    │
+│  Для TUI navigation и отладки                   │
+│  Для рефоллоуап с субагентами                   │
+│  TUI-only, не раскрывает ACP boundary           │
+└─────────────────────────────────────────────────┘
+```
+
+#### Применимость по стратегиям
+
+| Стратегия | Token-Slicing | Child Sessions | Гибрид | Ценность |
+|---|---|---|---|---|
+| **Single** | ❌ | ❌ | ❌ | Не нужен |
+| **Orchestrated** | ✅ | ✅ | ✅ | **Высокая** |
+| **Choreography** | ✅ | ✅ | ✅ | Средняя |
+| **Hierarchical** | ✅ | ✅ | ✅ | **Высокая** |
+
+#### TokenSlicer компонент
+
+```python
+@dataclass(frozen=True)
+class SlicedResult:
+    summary: str               # суммаризированный ответ для parent context
+    child_session_id: str      # ссылка на child session с полным контекстом
+    original_tokens: int       # количество токенов до сжатия
+    sliced_tokens: int         # количество токенов после сжатия
+
+class TokenSlicer:
+    async def summarize(
+        self,
+        full_output: str,
+        child_session_id: str,
+        max_tokens: int = 120
+    ) -> SlicedResult:
+        """Суммаризует ответ субагента, сохраняя ссылку на child session."""
+        summary = await self.llm.summarize(full_output, max_tokens)
+        return SlicedResult(
+            summary=summary,
+            child_session_id=child_session_id,
+            original_tokens=count_tokens(full_output),
+            sliced_tokens=count_tokens(summary)
+        )
+```
+
+#### SessionState для иерархии
+
+```python
+class SessionState(BaseModel):
+    # ... существующие поля ...
+    parent_session_id: str | None = None
+    child_session_ids: list[str] = Field(default_factory=list)
+    is_child_session: bool = False
+    task_result: str | None = None
+    sliced_summary: str | None = None
+```
+
+#### ACP Boundary и навигация
+
+Session navigation — **TUI-only фича**. Сервер хранит иерархию сессий
+internally, но через ACP отдаёт только merged history родительской сессии.
+
+Через ACP (merged history):
+```json
+{
+  "history": [
+    {"role": "user", "text": "Напиши CRUD API"},
+    {"role": "assistant", "text": "Делегирую coder...", "agent_name": "primary"},
+    {"role": "assistant", "text": "Создал 5 файлов", "agent_name": "coder"},
+    {"role": "assistant", "text": "Делегирую tester...", "agent_name": "primary"},
+    {"role": "assistant", "text": "Написал 20 тестов", "agent_name": "tester"}
+  ]
+}
+```
+
+Только в TUI:
+- Навигация parent ↔ child sessions (Leader+Left/Right)
+- Просмотр полной child session history
+- Debug panel с деталями субагентов
+
+**Обоснование:** Клиент НЕ знает о мультиагентности (принцип 1). Навигация —
+это UI-фича для observability, не раскрытие внутренней архитектуры.
 
 ---
 
@@ -393,6 +685,16 @@ class TimelineEvent:
 │ ─────────────────────────────────────────────────────────────── │
 │ 💰 $0.042 | 8400 tokens | 12.3s | 3 LLM calls                  │
 └─────────────────────────────────────────────────────────────────┘
+
+TUI Navigation (Leader+Right/Left):
+┌─────────────────────────────────────────────────────────────────┐
+│ [Child: coder] session/child_1                                  │
+│ System: Ты — Senior Python Developer...                         │
+│ Task: Напиши валидатор email                                    │
+│ [полный код, tool calls, результаты]                            │
+│                                                                 │
+│ [Leader+Right] → [Child: tester]  |  [Leader+Left] → [Parent]  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -404,6 +706,7 @@ class TimelineEvent:
 | Данные | Где | Формат | Когда сохраняется |
 |---|---|---|---|
 | **Session state + history** | `~/.codelab/sessions/{id}.json` | Pydantic model_dump | После каждого turn |
+| **Child sessions** | `~/.codelab/sessions/{id}/children/` | Pydantic model_dump | При создании child session |
 | **Session metrics** | `storage/benchmarks/run_{id}.json` | ExecutionMetrics | По завершении turn |
 | **Event timeline** | `storage/debug/timeline_{id}.json` | list[TimelineEvent] | Только debug mode |
 | **Trace spans** | `storage/debug/trace_{id}.json` | list[Span] | Только debug mode |
@@ -416,10 +719,16 @@ class TimelineEvent:
 ```python
 class SessionState(BaseModel):
     # ... существующие поля ...
-    execution_mode: str = "single"                    # single | multi_orchestrated | multi_choreographed
+    execution_mode: str = "single"                    # single | multi_orchestrated | multi_choreographed | hierarchical
     active_agents: list[str] = Field(default_factory=list)
     session_metrics: SessionMetrics | None = None
     current_correlation_id: str | None = None
+    # Иерархия сессий (для HierarchicalStrategy и гибридного контекста)
+    parent_session_id: str | None = None
+    child_session_ids: list[str] = Field(default_factory=list)
+    is_child_session: bool = False
+    task_result: str | None = None
+    sliced_summary: str | None = None
 
 class SessionMetrics(BaseModel):
     total_time_sec: float = 0.0
@@ -462,11 +771,16 @@ session.history = [
 @classmethod
 def migrate_schema(cls, data: dict) -> dict:
     version = data.get("schema_version", 0)
-    if version < 2:
+    if version < 3:
         data.setdefault("execution_mode", "single")
         data.setdefault("active_agents", [])
         data.setdefault("session_metrics", None)
-        data["schema_version"] = 2
+        data.setdefault("parent_session_id", None)
+        data.setdefault("child_session_ids", [])
+        data.setdefault("is_child_session", False)
+        data.setdefault("task_result", None)
+        data.setdefault("sliced_summary", None)
+        data["schema_version"] = 3
     return data
 ```
 
@@ -498,13 +812,14 @@ Config option `_routing_mode` — кастомное расширение ACP д
 {
   "id": "_routing_mode",
   "name": "Routing Mode",
-  "description": "Agent execution mode: single, multi-orchestrated, or multi-choreographed",
+  "description": "Agent execution mode: single, multi-orchestrated, multi-choreographed, or hierarchical",
   "type": "select",
   "currentValue": "single",
   "options": [
     {"value": "single", "name": "Single Agent", "description": "Direct LLM call"},
     {"value": "multi_orchestrated", "name": "Multi-Agent (Orchestrator)", "description": "Centralized routing via orchestrator"},
-    {"value": "multi_choreographed", "name": "Multi-Agent (Choreography)", "description": "Decentralized broadcast to all agents"}
+    {"value": "multi_choreographed", "name": "Multi-Agent (Choreography)", "description": "Decentralized broadcast to all agents"},
+    {"value": "hierarchical", "name": "Hierarchical (OpenCode-style)", "description": "Primary-Subagent hierarchy with child sessions and navigation"}
   ]
 }
 ```
@@ -520,7 +835,7 @@ Config option `_routing_mode` — кастомное расширение ACP д
 
 ### 6.2.2. Slash Command override
 
-Slash commands `/single`, `/multi`, `/choreography` — **one-shot override** для одного промпта.
+Slash commands `/single`, `/multi`, `/choreography`, `/hierarchical` — **one-shot override** для одного промпта.
 
 **Приоритет разрешения режима:**
 ```
@@ -535,6 +850,7 @@ Slash commands `/single`, `/multi`, `/choreography` — **one-shot override** д
 Привет!                              → multi_orchestrated
 
 /single Объясни этот код             → single (one-shot, не меняет config)
+/hierarchical Напиши валидатор и тесты → hierarchical (one-shot)
 Напиши тесты                         → multi_orchestrated (вернулся к дефолту)
 
 # Пользователь хочет сменить дефолт:
@@ -543,7 +859,7 @@ set_config_option(_routing_mode=multi_choreographed)
 ```
 
 **Реализация:**
-- `SlashCommandStage` распознаёт `/single`, `/multi`, `/choreography` → записывает в `context.meta["routing_mode"]`
+- `SlashCommandStage` распознаёт `/single`, `/multi`, `/choreography`, `/hierarchical` → записывает в `context.meta["routing_mode"]`
 - `StrategySelectionStage` читает `meta` → `config_values` → `default`
 - Slash command **не мутирует** `config_values` — только override на один prompt turn
 
@@ -671,13 +987,16 @@ set_config_option(_routing_mode=multi_choreographed)
 |---|---|---|
 | 2.1 | `server/agent/config.py` | `AgentConfig`, `MultiAgentConfig` — Pydantic для agents.yaml |
 | 2.2 | `server/agent/loader.py` | `AgentSystemLoader` — парсинг YAML, watchdog hot reload, публикация событий |
-| 2.3 | `server/agent/strategies/base.py` | `ExecutionStrategy` ABC — parent_span propagation |
+| 2.3 | `server/agent/strategies/base.py` | `ExecutionStrategy` ABC — parent_span propagation, hybrid context support |
 | 2.4 | `server/agent/strategies/single.py` | `SingleStrategy` — прямой вызов LLMAdapter |
 | 2.5 | `server/agent/strategies/orchestrated.py` | `OrchestratedStrategy` — RouteDecision, point-to-point, Token-Slicing, max_steps |
 | 2.6 | `server/agent/strategies/choreography.py` | `ChoreographyStrategy` — broadcast, parallel, Conflict Resolution |
-| 2.7 | `server/agent/strategies/models.py` | `RouteDecision`, `ChoreographyAnswer` — Pydantic |
+| 2.7 | `server/agent/strategies/models.py` | `RouteDecision`, `ChoreographyAnswer`, `TaskInvocation`, `TaskResult` — Pydantic |
 | 2.8 | `server/agent/strategies/token_slicer.py` | `TokenSlicer` — суммаризация, tracer span с diff |
-| 2.9 | `tests/server/agent/strategies/` | Unit-тесты всех 3 стратегий |
+| 2.9 | `server/agent/strategies/hierarchical.py` | `HierarchicalStrategy` — Primary-Subagent, Task tool, child sessions, task permissions |
+| 2.10 | `server/agent/core/caller.py` | `AgentCaller` — единый интерфейс вызова через EventBus |
+| 2.11 | `server/agent/core/context_manager.py` | `HybridContextManager` — Token-Slicing + Child Sessions, SessionState hierarchy |
+| 2.12 | `tests/server/agent/strategies/` | Unit-тесты всех 4 стратегий |
 
 ### Фаза 3: MetricsTracker (cross-cutting observability)
 
@@ -704,12 +1023,13 @@ set_config_option(_routing_mode=multi_choreographed)
 |---|---|---|
 | 5.1 | `server/protocol/handlers/pipeline/stages/strategy_selection.py` | `StrategySelectionStage` — читает `_routing_mode` с приоритетом: slash override > config_values > default |
 | 5.2 | `server/protocol/handlers/pipeline/stages/llm_loop.py` | РЕФАКТОРИНГ: делегирует ExecutionEngine + StrategyDispatcher |
-| 5.3 | `server/di.py` | Новые провайдеры: AgentEventBus, AgentSystemLoader, ExecutionEngine, ObservabilityFactory |
+| 5.3 | `server/di.py` | Новые провайдеры: AgentEventBus, AgentSystemLoader, ExecutionEngine, ObservabilityFactory, AgentCaller |
 | 5.4 | `server/protocol/handlers/config.py` | Обработка `_routing_mode`, расширенная обработка `model` |
 | 5.5 | `server/protocol/handlers/config_option_builder.py` | `build_routing_mode_config_option()` — spec для `_routing_mode` |
-| 5.6 | `server/protocol/handlers/slash_commands/routing.py` | Slash commands `/single`, `/multi`, `/choreography` (one-shot override) |
+| 5.6 | `server/protocol/handlers/slash_commands/routing.py` | Slash commands `/single`, `/multi`, `/choreography`, `/hierarchical` (one-shot override) |
 | 5.7 | `server/protocol/handlers/slash_commands/agent_config.py` | `/config agent <name> model <ref>` |
-| 5.8 | `tests/server/protocol/` | Integration tests pipeline + strategies + slash commands |
+| 5.8 | `server/protocol/handlers/permissions.py` | Task permissions resolution для HierarchicalStrategy |
+| 5.9 | `tests/server/protocol/` | Integration tests pipeline + strategies + slash commands |
 
 ### Фаза 6: TUI — live observability view
 
@@ -719,7 +1039,8 @@ set_config_option(_routing_mode=multi_choreographed)
 | 6.2 | `client/tui/components/agent_status.py` | Widget: список активных агентов |
 | 6.3 | `client/tui/components/step_logger.py` | Live timeline мультиагентности |
 | 6.4 | `client/tui/components/trace_viewer.py` | Debug panel: просмотр spans |
-| 6.5 | `client/tui/app.py` | Hotkey для переключения режимов + toggle debug panel |
+| 6.5 | `client/tui/components/session_navigation.py` | Навигация parent ↔ child sessions (Leader+Left/Right) |
+| 6.6 | `client/tui/app.py` | Hotkey для переключения режимов + toggle debug panel + session navigation |
 
 ### Фаза 7: Debug Mode + Export
 
@@ -749,13 +1070,13 @@ set_config_option(_routing_mode=multi_choreographed)
 | # | Критерий | Проверка |
 |---|---|---|
 | 1 | Приложение считывает `agents.yaml`, отключает/включает агентов без падения | Hot reload test |
-| 2 | Прогон задачи во всех 3 режимах завершается успешно | Integration test |
+| 2 | Прогон задачи во всех 4 режимах завершается успешно | Integration test |
 | 3 | Генерируются валидные JSON-файлы метрик в `storage/benchmarks/` | File validation |
 | 4 | В режиме Orchestrator модель строго подчиняется списку активных агентов | Unit test |
 | 5 | Cancellation (`session/cancel`) работает во всех режимах | Integration test |
 | 6 | `session/set_config_option(model=...)` меняет модель оркестратора | Unit test |
 | 7 | `session/set_config_option(_routing_mode=...)` переключает режим | Unit test |
-| 8 | Slash commands `/single`, `/multi`, `/choreography` работают как one-shot override | Integration test |
+| 8 | Slash commands `/single`, `/multi`, `/choreography`, `/hierarchical` работают как one-shot override | Integration test |
 | 9 | ~1800 существующих тестов не сломаны | `make check` |
 
 ### 9.2. Observability критерии
@@ -767,15 +1088,18 @@ set_config_option(_routing_mode=multi_choreographed)
 | 12 | Event Timeline записывает все события сессии | Timeline validation |
 | 13 | Debug mode экспортирует trace + timeline в JSON | File existence test |
 | 14 | TUI показывает live timeline и метрики | Manual / visual test |
+| 15 | Child sessions сохраняются и доступны для навигации | Integration test |
+| 16 | Token-Slicing корректно суммаризирует ответы | Unit test |
 
 ### 9.3. Performance критерии
 
 | # | Критерий | Ожидание |
 |---|---|---|
-| 15 | Single Agent latency ≤ baseline (текущий NaiveAgent) | Benchmark |
-| 16 | Orchestrated overhead ≤ 2x Single Agent | Benchmark |
-| 17 | Choreography overhead ≤ 3x Single Agent | Benchmark |
-| 18 | EventBus dispatch latency ≤ 10ms | Benchmark |
+| 15 | EventBus dispatch latency ≤ 10ms | Benchmark |
+| 16 | Single Agent latency ≤ baseline + bus overhead | Benchmark |
+| 17 | Orchestrated overhead ≤ 2x Single Agent | Benchmark |
+| 18 | Choreography overhead ≤ 3x Single Agent | Benchmark |
+| 19 | Hierarchical overhead ≤ 2x Single Agent | Benchmark |
 
 ---
 
@@ -797,11 +1121,14 @@ set_config_option(_routing_mode=multi_choreographed)
 |---|---|---|---|
 | Поломка существующих тестов | Высокая | Среднее | Поэтапный рефакторинг, тесты на каждом шаге |
 | Race condition при hot reload | Средняя | Высокое | asyncio.Lock, проверка available_agents перед каждым шагом |
-| Переполнение контекста оркестратора | Средняя | Среднее | Token-Slicing на каждом шаге |
+| Переполнение контекста координатора | Средняя | Среднее | Token-Slicing на каждом шаге |
 | Бесконечные циклы в хореографии | Низкая | Высокое | max_steps предохранитель (7) |
 | Потеря метрик при краше | Средняя | Среднее | Append-only write + atomic rename |
-| Leaky ACP boundary | Средняя | Высокое | Code review, тесты на изоляцию клиента |
+| Leaky ACP boundary | Средняя | Высокое | Code review, тесты на изоляцию клиента, navigation только в TUI |
 | Конфликт имён с будущими ACP версиями | Низкая | Высокое | Все кастомные элементы с префиксом `_` |
+| Утечка памяти в child sessions | Средняя | Среднее | TTL для child sessions, cleanup по завершении turn |
+| Конфликт danger_level vs permissions | Средняя | Высокое | Чёткий priority: deny > ask > allow |
+| EventBus single point of failure | Низкая | Высокое | Тесты, мониторинг, graceful degradation |
 
 ---
 
@@ -813,7 +1140,11 @@ set_config_option(_routing_mode=multi_choreographed)
 | **EventBus** | In-Memory шина для межагентского общения |
 | **Orchestrator** | Агент-маршрутизатор (централизованное управление) |
 | **Choreography** | Децентрализованное взаимодействие агентов |
-| **Token-Slicing** | Суммаризация ответов субагентов для контекста оркестратора |
+| **Hierarchical** | Иерархическое делегирование Primary → Subagent с child sessions |
+| **Token-Slicing** | Суммаризация ответов субагентов для контекста координатора |
+| **Child Session** | Изолированная сессия субагента с полным контекстом |
+| **Hybrid Context** | Token-Slicing для координатора + Child Sessions для деталей |
+| **AgentCaller** | Единый интерфейс вызова агентов через EventBus |
 | **Correlation ID** | Сквозной ID для observability одного prompt turn |
 | **Span** | Единица distributed tracing (операция с duration) |
 | **Timeline** | Хронология всех событий сессии |
@@ -821,4 +1152,6 @@ set_config_option(_routing_mode=multi_choreographed)
 | **LLMAdapter** | Адаптер LLM провайдера → Agent Protocol (замена NaiveAgent) |
 | **ExecutionEngine** | Композиция компонентов для выполнения turn (замена AgentOrchestrator) |
 | **`_routing_mode`** | Кастомная config option для выбора режима выполнения (ACP-compliant) |
-| **Slash Override** | One-shot override режима через `/single`, `/multi`, `/choreography` |
+| **Slash Override** | One-shot override режима через `/single`, `/multi`, `/choreography`, `/hierarchical` |
+| **Task tool** | Инструмент делегирования Primary → Subagent в HierarchicalStrategy |
+| **Task Permissions** | Контроль каких субагентов агент может вызывать |
