@@ -214,12 +214,12 @@ class AgentCaller:
 
 #### Матрица коммуникации по стратегиям
 
-| Стратегия | Путь | Метод | Observability |
-|---|---|---|---|
-| **Single** | EventBus | `send_request()` | Tracer + Timeline + Metrics |
-| **Orchestrated** | EventBus | `send_request()` | Tracer + Timeline + Metrics |
-| **Choreography** | EventBus | `broadcast()` | Tracer + Timeline + Metrics |
-| **Hierarchical** | EventBus | `send_request()` + child session | Tracer + Timeline + Metrics |
+| Стратегия | Метод EventBus | LLM calls | Структура трейса | Child Sessions | Контекст |
+|---|---|---|---|---|---|
+| **Single** | `send_request()` | 1 | Плоская: `bus_request → llm_call` | ❌ | Единый |
+| **Orchestrated** | `send_request()` | 1 + N×steps | Вложенная: `route_decision → bus_request → llm_call` (повторяется) | ✅ | Hybrid (sliced + child) |
+| **Choreography** | `broadcast()` | N параллельно | Веерная: `broadcast → N×llm_call → conflict_resolution` | ✅ | Hybrid (опционально) |
+| **Hierarchical** | `send_request()` | 1 + N×delegations | Дерево: `primary → task_invocation → child_session → llm_call` | ✅ | Hybrid (нативный) |
 
 ### 3.2. Контракты сообщений
 
